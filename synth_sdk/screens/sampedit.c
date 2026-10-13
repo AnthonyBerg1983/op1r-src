@@ -737,11 +737,13 @@ void se_draw(sampedit *e, void *r)
     }
     static const char *const shift_lbl[4] = { "dc", "fade", 0, 0 }, *const shift_lbl_d[4] = { "dc", "fade", "auto", 0 };
     static const char *const drum_lbl[4] = { "fit", "zero", "norm", "rev" }, *const ac_lbl[2] = { "hits", "equal" };
+    static const char *const hits_lbl[7] = { "hits 1", "hits 2", "hits 3", "hits 4", "hits 5", "hits 6", "hits 7" };
     static const char *const fd_shape_lbl[3] = { "in", "out", "both" }, *const fd_curve_lbl[3] = { "linear", "power", "exp" };
     int shift = se_shift_held();
     for (int k = 0; k < 4; k++) {
         const char *l = e->mode == 1 ? (k == 0 ? "ok" : k == 1 ? fd_shape_lbl[e->fd_shape] : k == 2 ? fd_curve_lbl[e->fd_curve] : "cancel")
-                      : e->mode == 2 ? (k == 0 ? "ok" : k == 1 ? ac_lbl[e->ac_method] : k == 2 ? 0 : "cancel")
+                      : e->mode == 2 ? (k == 0 ? "ok" : k == 1 ? (e->ac_method ? ac_lbl[1] : hits_lbl[8 - (e->ac_sens ? e->ac_sens : 4)])   /* hits N: sensitivity, blue */
+                                       : k == 2 ? 0 : "cancel")
                       : shift ? (e->drum ? shift_lbl_d[k] : shift_lbl[k]) : e->drum ? drum_lbl[k] : se_label[k];
         if (!l) continue;
         if (l != se_shown_lbl[k]) { op1_text_set(se_txt[SE_T_KEY + k], l); se_shown_lbl[k] = l; }
