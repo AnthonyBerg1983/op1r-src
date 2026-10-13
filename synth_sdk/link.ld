@@ -6,8 +6,11 @@ SECTIONS {
   .text   : { KEEP(*(.l1vec)) *(.text*) }       /* .l1vec first: fixed L1 entry points (hook.S) */
   .rodata : { *(.rodata*) }
   .data   : { *(.data*) }
-  .bss    : { *(.bss*) *(COMMON) }
   __image_end = .;
+  /* zero-initialised data lives apart from the code block, as an LDR FILL block (no bytes in the image): the loaded
+     image stays below 0x01E40000, which another project's module uses (user request, docs/30). 0x01EC0000.. is free
+     SDRAM (stock image ends 0x01DFFF34; heaps at 0x100.. and 0x03040000..); make_firmware asserts the end. */
+  .bss 0x01EC0000 (NOLOAD) : { __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(4); __bss_end = .; }
   .l1tramp 0xFFA0BFB4 : { KEEP(*(.l1tramp)) }    /* free end of L1 instruction SRAM (image ends 0xFFA0BFB4) */
   .hook_namecmp 0x019B975C : { KEEP(*(.hook_namecmp)) }
   .hook_samplecheck 0x01A01844 : { KEEP(*(.hook_samplecheck)) }
@@ -50,6 +53,7 @@ SECTIONS {
   .hook_usbiso2 0x019E161C : { KEEP(*(.hook_usbiso2)) }
   .hook_usbiso3 0x019E1812 : { KEEP(*(.hook_usbiso3)) }
   .hook_ciservice 0x019F0A24 : { KEEP(*(.hook_ciservice)) }
+  .hook_sqlcache 0x0196F942 : { KEEP(*(.hook_sqlcache)) }
   .hook_usbbuf1 0x01A69730 : { KEEP(*(.hook_usbbuf1)) }
   .hook_usbbuf2 0x01A69740 : { KEEP(*(.hook_usbbuf2)) }
   .hook_opzget 0x019E0CFC : { KEEP(*(.hook_opzget)) }

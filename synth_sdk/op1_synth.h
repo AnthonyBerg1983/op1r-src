@@ -4,10 +4,12 @@
 #include "op1_plugin.h"
 
 /* ---- writing long SQL statements safely ----
- * db2::exec (0x0196F950) asserts on any sqlite error and formats the failing statement into a 296-byte stack buffer
- * (0x01919AA8, "db2.cpp:165 %s\n%s"): a long statement then overwrites that stack and the OP-1 crashes (user report:
- * dots save, SEQSTAT 0x24 at 0x019199C0). This calls sqlite3_exec directly under db2's own lock and returns the
- * error code instead. op1_db_last_err keeps the last nonzero code (shown on the monitor page). */
+ * db2::exec (0x0196F950) asserts on any sqlite error (0x01919AA8, "db2.cpp:165 %s\n%s", bounded to 256 bytes). The
+ * assert's stack printer (0x0191995C) follows FP as a frame chain; our -O2 code uses FP as a normal register (here:
+ * the dots SQL buffer), so it read SQL text as a frame and faulted (user report: SEQSTAT 0x24 at 0x019199C0) instead
+ * of showing the assert. The sqlite error itself was "out of memory" (fixed heap, page cache never capped: see
+ * sqlite_cache_hook in dispatcher.c). This calls sqlite3_exec directly under db2's own lock and returns the error
+ * code instead of asserting. op1_db_last_err keeps the last nonzero code (shown on the monitor page). */
 extern int32_t op1_db_last_err;
 #ifndef OP1_HOST
 static inline int op1_db_write(void *db2_handle, const char *sql)

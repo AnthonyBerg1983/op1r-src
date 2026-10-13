@@ -280,6 +280,23 @@ static int ql_scr_ready;
 
 int32_t op1_db_last_err;                                           /* op1_synth.h: op1_db_write */
 
+/* SQLite page-cache cap (fix from a user's analysis, docs/17). R246 gives SQLite a fixed 0x110000-byte heap
+ * (sqlite3_config(SQLITE_CONFIG_HEAP, 0x01BB0500, 0x110000) at 0x0196F93E) and sets no cache_size, so the page cache
+ * keeps every page it reads until the heap is full; from then on statements fail with "out of memory" (dots / euclid
+ * saves with many user presets) and keep failing. Replaces the CALL 0x0196F6B4 (open all databases) at 0x0196F942:
+ * open them, then cap each connection's cache (pages) through the stock exec wrapper 0x0196F950. Connections at
+ * 0x01BAB720: +0 op1.db, +4 op1_factory.db, +8 kerntable.db, +0xC tape.db. About 400 KB of the 1.06 MB heap. */
+void sqlite_cache_hook(void)
+{
+    static const char *const pragma[4] = { "PRAGMA cache_size=110", "PRAGMA cache_size=60",
+                                           "PRAGMA cache_size=8", "PRAGMA cache_size=24" };
+    ((void (*)(void))0x0196F6B4)();
+    for (int i = 0; i < 4; i++) {
+        void *conn = ((void *const *)0x01BAB720)[i];
+        if (conn) ((void (*)(void *, const char *))0x0196F950)(conn, pragma[i]);
+    }
+}
+
 /* ---- resource monitor (screens/sysmon.c, docs/18): clock mode (Shift+help) + T1 swaps it into the clock slot ---- */
 extern const op1_screen_t SCREEN_sysmon;
 #define CLOCK_SCREEN_ID 0x2A

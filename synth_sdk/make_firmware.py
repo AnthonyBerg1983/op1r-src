@@ -23,6 +23,8 @@ SRC_FW = os.path.join(ROOT, 'op1_246')
 OUT_FW = os.path.join(ROOT, 'op1_246_custom')
 REPACKER = os.path.join(ROOT, 'op1repacker', '.venv', 'bin', 'op1repacker')
 CODE_BASE = 0x01E00000
+CODE_LIMIT = 0x01E40000   # loaded image must end below (another project's module starts here, docs/30)
+BSS_LIMIT = 0x01EF0000    # .bss at 0x01EC0000 (link.ld) must end below
 MAGIC = 0x5300
 BUILTIN = {'fm','digital','drwave','string','cluster','pulse','sampler','phase','drum','dbox',
            'ls','dna','dsynth','voltage','iter'}
@@ -79,6 +81,7 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x019E161C: ('hook_usbiso2', bytes.fromhex('04e32c47')),        # .. iso IN (data)
          0x019E1812: ('hook_usbiso3', bytes.fromhex('04e33146')),        # .. iso IN (start-up, zero-filled)
          0x019F0A24: ('hook_ciservice', bytes.fromhex('03e3761e')),      # main loop tape_c::service(0): count-in PLAY
+         0x0196F942: ('hook_sqlcache', bytes.fromhex('ffe3b9fe')),       # sqlite init: open all DBs, then cap page caches
          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer
 # data words: address -> (symbol, expected original value)
@@ -173,8 +176,7 @@ def build(engs, fxs):
                     f'-Wall -I. -c {s} -o {o}')
     cmds.append('bfin-elf-as -mcpu=bf524 hook.S -o build/hook.o'); objs.append('build/hook.o')
     cmds.append(f'bfin-elf-ld -T link.ld {" ".join(objs)} $(bfin-elf-gcc -print-libgcc-file-name) -o build/synth.elf')
-    cmds.append('bfin-elf-objcopy -O binary -j .text -j .rodata -j .data -j .bss '
-                '--set-section-flags .bss=alloc,load,contents build/synth.elf build/synth.bin')
+    cmds.append('bfin-elf-objcopy -O binary -j .text -j .rodata -j .data build/synth.elf build/synth.bin')
     for sec, _ in list(HOOKS.values()) + list(OPZ_HOOKS.values()):
         cmds.append(f'bfin-elf-objcopy -O binary -j .{sec} build/synth.elf build/{sec}.bin')
     cmds.append('bfin-elf-objcopy -O binary -j .l1tramp build/synth.elf build/l1tramp.bin')
@@ -301,6 +303,10 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     apply_l1(d, pokes)
     fin = [o for o, c, a, n, g in ldr_blocks(d) if c & 0x8000][0]
     blk = ldr_hdr(0x0006, CODE_BASE, len(code), 0) + code
+    bss, bss_end = syms['bss_start'], syms['bss_end']        # .bss: zero FILL block (link.ld), no payload
+    assert CODE_BASE + len(code) <= CODE_LIMIT <= bss and bss_end <= BSS_LIMIT, (hex(CODE_BASE + len(code)), hex(bss_end))
+    if bss_end > bss:
+        blk += ldr_hdr(0x0106, bss, bss_end - bss, 0)
     tramp = open(os.path.join(HERE, 'build', 'l1tramp.bin'), 'rb').read()
     if tramp:                                                   # L1 trampolines: plain block in free L1 instruction SRAM
         assert len(tramp) <= L1_TRAMP_MAX, len(tramp)

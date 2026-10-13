@@ -340,6 +340,10 @@ __hook_usbiso1:
 	.global __hook_ciservice
 __hook_ciservice:
 	call _ci_service;
+	.section .hook_sqlcache,"ax"
+	.global __hook_sqlcache
+__hook_sqlcache:
+	call _sqlite_cache_hook;
 	.section .hook_usbiso2,"ax"
 	.global __hook_usbiso2
 __hook_usbiso2:
