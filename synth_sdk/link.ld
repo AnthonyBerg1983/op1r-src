@@ -54,6 +54,7 @@ SECTIONS {
   .hook_usbiso3 0x019E1812 : { KEEP(*(.hook_usbiso3)) }
   .hook_ciservice 0x019F0A24 : { KEEP(*(.hook_ciservice)) }
   .hook_sqlcache 0x0196F942 : { KEEP(*(.hook_sqlcache)) }
+  .hook_taperase 0x0191B9F0 : { KEEP(*(.hook_taperase)) }
   .hook_usbbuf1 0x01A69730 : { KEEP(*(.hook_usbbuf1)) }
   .hook_usbbuf2 0x01A69740 : { KEEP(*(.hook_usbbuf2)) }
   .hook_opzget 0x019E0CFC : { KEEP(*(.hook_opzget)) }

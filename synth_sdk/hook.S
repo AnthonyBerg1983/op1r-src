@@ -340,6 +340,10 @@ __hook_usbiso1:
 	.global __hook_ciservice
 __hook_ciservice:
 	call _ci_service;
+	.section .hook_taperase,"ax"
+	.global __hook_taperase
+__hook_taperase:
+	call _fast_tape_erase;
 	.section .hook_sqlcache,"ax"
 	.global __hook_sqlcache
 __hook_sqlcache:
