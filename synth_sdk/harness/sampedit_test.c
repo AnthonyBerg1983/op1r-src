@@ -56,6 +56,9 @@ int main(int argc, char **argv)
         e.view_len = se_w2s(9600); se_move(&e, 0, 0, 0);
         w[0] = (int16_t)se_s2w(24000, 0); w[3] = (int16_t)se_s2w(44100 * 2 + 30000, 0);
         frame(&e, "markers: start 0.54 s, end 2.68 s (view 0..2.6 s)");
+        w[1] = (int16_t)se_s2w(30870, 0); w[2] = (int16_t)se_s2w(61740, 0);       /* loop 0.7 .. 1.4 s */
+        frame(&e, "loop points (words 1 / 2): grey [ ] at the bottom, display only");
+        w[1] = w0[1]; w[2] = w0[2];
         e.snap = 1; e.last = 0; e.view_len = 4096; e.view0 = se_w2s(w[0]) - 2048; se_move(&e, 0, 0, 0);
         frame(&e, "zoomed on start, ZC snap on");
         e.snap = 2; e.view0 = 0; e.view_len = se_w2s(9600); w[0] = 0; se_move(&e, 0, 1, 1);
@@ -63,6 +66,7 @@ int main(int argc, char **argv)
         se_tr_sens(&e, 2); frame(&e, "tr sensitivity 7 (Shift + red): label tr 7"); se_tr_sens(&e, -2);
         e.snap = 0; w[0] = (int16_t)se_s2w(24000, 0); w[3] = (int16_t)se_s2w(44100 * 2 + 30000, 0);
         se_host_shift = 1; frame(&e, "Shift held: alternate labels"); se_host_shift = 0;
+        se_attenuate(&e, -12); frame(&e, "red right past 0 dB: +6.0 db (louder, clipped peaks)"); se_attenuate(&e, 12);
         e.mode = 1; e.fd_shape = 2; e.fd_curve = 1; e.fd_pct = 60;
         frame(&e, "fade mode: both, power, 60 % (blue), preview + curve");
         e.fd_shape = 0; e.fd_curve = 2; e.fd_pct = 100; e.view0 = 0; e.view_len = 44100 * 3; se_move(&e, 0, 0, 0);
@@ -225,13 +229,23 @@ int main(int argc, char **argv)
     se_attenuate(&e, 12);                                           /* 6 dB */
     { double g = (double)w[7] / w0[7]; assert(fabs(g * g - 0.5012) < 0.003); assert(abs(e.att_amp - 32845) < 40); }
     assert(buf[1000] == ref[1000]);                                 /* not applied yet */
-    se_attenuate(&e, -100); assert(e.att == 0 && w[7] == w0[7]);    /* back to 0 dB */
+    se_attenuate(&e, -12); assert(e.att == 0 && w[7] == w0[7]);     /* back to 0 dB */
     se_attenuate(&e, 500); assert(e.att == SE_ATT_MAX);
     se_attenuate(&e, -(SE_ATT_MAX - 12));
     assert(se_apply_att(&e) && w[7] == w0[7]);
     for (int i = 0; i < SE_N; i += 101) assert(abs(buf[i] - (int)lround(ref[i] * 0.50119)) <= 2);
     for (int i = 0; i < 8; i++) assert((uint16_t)buf[SE_N + i] == 0x5A5A);   /* nothing written past the audio */
     assert(!se_apply_att(&e));
+    /* louder (red right past 0 dB): +6 dB = x2 on close, saturating; preview word x sqrt(2); limit +24 dB */
+    memcpy(buf, ref, SE_N * sizeof *buf); memcpy(w, w0, sizeof w); se_open(&e, buf, w);
+    buf[100] = 10000; buf[101] = -12000; buf[102] = 30000; buf[103] = -30000;
+    se_attenuate(&e, -12); assert(e.att == -12 && abs(e.att_amp - 130762) < 100);
+    { double g = (double)w[7] / w0[7]; assert(fabs(g * g - 1.9953) < 0.01); }
+    assert(se_apply_att(&e) && w[7] == w0[7]);
+    assert(abs(buf[100] - 19953) <= 3 && abs(buf[101] + 23944) <= 3 && buf[102] == 32767 && buf[103] == -32768);
+    se_attenuate(&e, -500); assert(e.att == -SE_BOOST_MAX && w[7] <= 32767 && w[7] > w0[7]);
+    se_attenuate(&e, 500 + SE_BOOST_MAX); assert(e.att == SE_ATT_MAX);
+    e.att = 0; e.att_amp = 65536; w[7] = w0[7];
     /* ---- drum ---- */
     {
         static int16_t tab[24 * 8];

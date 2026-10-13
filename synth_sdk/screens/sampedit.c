@@ -36,7 +36,7 @@ typedef struct {
     int32_t acc[4];
     int16_t col_min[SE_COLS], col_max[SE_COLS];
     int32_t shown_cs;                        /* length text currently set (centiseconds, -1: none) */
-    int32_t att;                             /* attenuation in 0.5 dB steps (0 .. SE_ATT_MAX), applied on close */
+    int32_t att;                             /* attenuation in 0.5 dB steps (-SE_BOOST_MAX .. SE_ATT_MAX; < 0 = louder), applied on close */
     int32_t att_amp;                         /* audio factor, Q16 */
     int16_t w7;                              /* sampler gain word before the preview */
     int32_t shown_att;
@@ -165,30 +165,40 @@ void se_finalize(sampedit *e)
     e->trimmed = 0; e->cache_len = -1;
 }
 
-/* red: attenuation of the whole sample. Preview: the stock sampler gain (word 7; playback gain ~ word^2,
- * SamplerScreen shows 20 log10(16 p^2) dB) set to w7 * sqrt(A); applied to the audio when the editor closes. */
-#define SE_ATT_MAX  120                      /* 60 dB */
-#define SE_AMP_STEP 61870                    /* 10^(-0.5/20), Q16 */
+/* red: gain of the whole sample, -60 .. +24 dB in 0.5 dB steps. Preview: the stock sampler gain (word 7; playback
+ * gain ~ word^2, SamplerScreen shows 20 log10(16 p^2) dB) set to w7 * sqrt(A) (capped at the word's maximum);
+ * applied to the audio when the editor closes (louder: saturating, peaks above full scale clip). */
+#define SE_ATT_MAX   120                     /* 60 dB down */
+#define SE_BOOST_MAX 48                      /* 24 dB up */
+#define SE_AMP_STEP  61870                   /* 10^(-0.5/20), Q16 */
 #define SE_WORD_STEP 63677                   /* 10^(-0.5/40), Q16 */
+#define SE_AMP_UP    69419                   /* 10^(0.5/20), Q16 */
+#define SE_WORD_UP   67450                   /* 10^(0.5/40), Q16 */
 void se_attenuate(sampedit *e, int32_t steps)
 {
     int32_t a = e->att + steps;
-    a = a < 0 ? 0 : a > SE_ATT_MAX ? SE_ATT_MAX : a;
+    a = a < -SE_BOOST_MAX ? -SE_BOOST_MAX : a > SE_ATT_MAX ? SE_ATT_MAX : a;
     if (a == e->att) return;
     e->att = a;
-    int32_t amp = 65536, wf = 65536;
-    for (int32_t i = 0; i < a; i++) {
-        amp = (int32_t)(((int64_t)amp * SE_AMP_STEP + 0x8000) >> 16);
-        wf = (int32_t)(((int64_t)wf * SE_WORD_STEP + 0x8000) >> 16);
+    int32_t amp = 65536, wf = 65536, n = a < 0 ? -a : a;
+    for (int32_t i = 0; i < n; i++) {
+        amp = (int32_t)(((int64_t)amp * (a < 0 ? SE_AMP_UP : SE_AMP_STEP) + 0x8000) >> 16);
+        wf = (int32_t)(((int64_t)wf * (a < 0 ? SE_WORD_UP : SE_WORD_STEP) + 0x8000) >> 16);
     }
     e->att_amp = amp;
-    if (!e->drum) e->w[7] = (int16_t)(((int32_t)e->w7 * wf + 0x8000) >> 16);   /* drum: preview on screen only */
+    if (!e->drum) {                                               /* drum: preview on screen only */
+        int32_t w = (int32_t)(((int64_t)e->w7 * wf + 0x8000) >> 16);
+        e->w[7] = (int16_t)(w > 32767 ? 32767 : w);
+    }
 }
-/* closing: bake the attenuation into the audio, the gain word back as it was */
+/* closing: bake the gain into the audio (saturating), the gain word back as it was */
 int se_apply_att(sampedit *e)
 {
     if (!e->att) return 0;
-    for (int32_t i = 0; i < SE_N; i++) e->d[i] = (int16_t)(((int32_t)e->d[i] * e->att_amp + 0x8000) >> 16);
+    for (int32_t i = 0; i < SE_N; i++) {
+        int32_t v = (int32_t)(((int64_t)e->d[i] * e->att_amp + 0x8000) >> 16);
+        e->d[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
     if (!e->drum) e->w[7] = e->w7;
     e->att = 0; e->att_amp = 65536; e->cache_len = -1;           /* (scaling keeps the transient positions) */
     return 1;
@@ -607,7 +617,7 @@ static int se_shift_held(void) { return *(volatile uint8_t *)0x01DD7F78; }
 static const int32_t se_ident[9] = { 1024, 0, 0, 0, 1024, 0, 0, 0, 1024 };
 static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00, 0xED, 0x95, 0xFF },
                      c_white[4] = { 0xFF, 0xFF, 0xFF, 0xFF }, c_grey[4] = { 0x6F, 0x71, 0x73, 0xFF },
-                     c_red[4] = { 0xFF, 0x3A, 0x5D, 0xFF };
+                     c_red[4] = { 0xFF, 0x3A, 0x5D, 0xFF }, c_loop[4] = { 0xAE, 0xB1, 0xDC, 0xFF };
 static void se_ln(void *r, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t w, const uint8_t *c)
 {
     op1_pt a = { x0, y0 }, b = { x1, y1 };
@@ -628,11 +638,26 @@ void se_draw(sampedit *e, void *r)
         int32_t amp = e->att_amp;
         if (e->mode == 1 && s >= a && s < b) amp = (int32_t)(((int64_t)amp * se_fade_gain(e, s, a, b)) >> 15);
         int32_t hi = (int32_t)(((int64_t)e->col_max[c] * amp) >> 16), lo = (int32_t)(((int64_t)e->col_min[c] * amp) >> 16);
+        hi = hi > 32767 ? 32767 : hi; lo = lo < -32768 ? -32768 : lo;  /* louder: clipped peaks stay in the area */
         int32_t y0 = OP1_Q10(SE_YMID) - (hi * SE_YAMP >> 5);         /* * 1024 / 32768 */
         int32_t y1 = OP1_Q10(SE_YMID) - (lo * SE_YAMP >> 5);
         if (y1 - y0 < 0x400) { y0 -= 0x200; y1 += 0x200; }        /* >= 1 px: zero-length lines are dropped */
         int32_t x = OP1_Q10(SE_X0 + c) + 0x200;
         se_ln(r, x, y0, x, y1, 0x400, col);
+    }
+    if (!e->drum) {                                                /* sampler loop points (words 1 / 2): display only */
+        int32_t ls = se_w2s(e->w[1]), le = se_w2s(e->w[2]), yb = OP1_Q10(SE_YMID + SE_YAMP + 2);
+        if (le > ls) {
+            int32_t xs = se_x(e, ls), xe = se_x(e, le), x0 = OP1_Q10(SE_X0), x1 = OP1_Q10(SE_X1);
+            int32_t ca = xs < x0 ? x0 : xs, cb = xe > x1 ? x1 : xe;
+            if (cb > ca) se_ln(r, ca, yb, cb, yb, 0x300, c_loop);   /* loop span along the bottom */
+            for (int m = 0; m < 2; m++) {                          /* line + flag at the bottom: [ ... ] */
+                int32_t x = m ? xe : xs;
+                if (x < x0 || x > x1) continue;
+                se_ln(r, x, OP1_Q10(SE_YMID - SE_YAMP), x, yb, 0x400, c_loop);
+                se_ln(r, x, yb, x + (m ? -OP1_Q10(5) : OP1_Q10(5)), yb, 0x600, c_loop);
+            }
+        }
     }
     for (int m = 0; m < 2; m++) {                                  /* markers: line + flag at the top */
         int32_t x = se_x(e, m ? b : a);
@@ -713,10 +738,10 @@ void se_draw(sampedit *e, void *r)
         }
         op1_text_draw(se_txt[SE_T_TR], r, se_ident);
     }
-    if (e->att) {                                                 /* -x.x db */
+    if (e->att) {                                                 /* -x.x db / +x.x db */
         if (e->att != e->shown_att) {
-            char t[12]; int n = 0, db10 = e->att * 5;
-            t[n++] = '-'; if (db10 >= 100) t[n++] = (char)('0' + db10 / 100);
+            char t[12]; int n = 0, db10 = (e->att < 0 ? -e->att : e->att) * 5;
+            t[n++] = e->att < 0 ? '+' : '-'; if (db10 >= 100) t[n++] = (char)('0' + db10 / 100);
             t[n++] = (char)('0' + db10 / 10 % 10); t[n++] = '.'; t[n++] = (char)('0' + db10 % 10);
             t[n++] = ' '; t[n++] = 'd'; t[n++] = 'b'; t[n] = 0;
             op1_text_set(se_txt[SE_T_ATT], t);
@@ -788,7 +813,7 @@ void se_open_drum(sampedit *e, int16_t *data, int16_t *table, int pad)
 }
 static void se_open_common(sampedit *e, int16_t *data)
 {
-    e->shown_cs = -1; e->shown_att = -1; e->shown_pad = -1; e->shown_sens = -1; e->mode = 0;
+    e->shown_cs = -1; e->shown_att = 0x7FFF; e->shown_pad = -1; e->shown_sens = -1; e->mode = 0;
     if (!e->ac_sens) e->ac_sens = 4;
     if (!e->fd_pct) e->fd_pct = 100;
     e->on_dirty = 1; e->n_on = 0;
