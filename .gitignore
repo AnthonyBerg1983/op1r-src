@@ -1,0 +1,13 @@
+# Never commit: the original firmware and anything built from it
+*.op1
+*.ldr
+*.elf
+op1_246*/
+op1repacker/
+synth_sdk/build/
+synth_sdk/harness/build/
+synth_sdk/harness/out/
+synth_sdk/third_party/
+synth_sdk/clouds_ref/
+__pycache__/
+*.pyc

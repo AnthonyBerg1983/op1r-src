@@ -1,0 +1,578 @@
+/* "quad" LFO: four LFOs in one LFO slot (6 waveforms, tempo sync, smoothing, phase offset, 6 types), each routed to a
+ * synth / drum engine knob, an envelope stage or an FX knob.
+ *
+ * Runs in the MIDI LFO class (lfo type 4): the DB row "quad" resolves to it via the lfo_types name compare hook, and
+ * the MIDI LFO vtable apply / trigger entries are redirected here (hook.S, make_firmware.py). Anything without the
+ * quad marker keeps the original MIDI LFO code.
+ *
+ * Parameter words (8 x 16 bit, saved with the patch) = one 128-bit little-endian bit stream (bit 0 = w[0] bit 0):
+ *   bits 0..119   4 LFOs x 30 bits, LFO i at bit 30 i:  rate 6 | sync 1 | wave 3 | smooth 3 | offset 3 | type 3 |
+ *                 target 5 | amount 6 (+32)
+ *                 rate 0..63: free 0.05 .. 20 Hz (exponential), sync: tempo division index (QL_DIVS)
+ *                 wave 0 sine, 1 triangle, 2 ramp up, 3 ramp down, 4 square, 5 sample & hold
+ *                 smooth 0..7: one-pole slew, 2^smooth blocks; offset 0..7: start phase in 1/8 cycles
+ *                 amount -31..31 (full = +-32767); type see QT_*
+ *                 target 0..11: synth (drum) knob blue..red, envelope A D S R, FX knob blue..red;
+ *                 12..23: LFO j (0..3) x (frequency, amount, phase offset) = 12 + 3 j + k (not its own: skipped
+ *                 by the white encoder, ignored if stored - a self target alone would reach no knob)
+ *   bits 120..127 marker 0xA5 (w[7] = 0xA5xx, negative: never a stock MIDI LFO word)
+ * Older quad formats (op1r <= 15, per-word markers) are not read any more.
+ * LFO targets (modulation from the modulator's value of the previous block, so order and feedback are harmless):
+ *   frequency  x 2^(+-2 octaves) at full amount;  amount  x (0 .. 2);  phase offset  +-1/2 cycle.
+ *   Several LFOs on the same target add up. The modulator's own amount scales its effect.
+ * Types: VOIC  per-voice phase, runs while the voice plays (never reset)
+ *        FREE  one shared free-running phase
+ *        GATE  per-voice phase, restarts at the voice's note-on
+ *        MONO  shared phase, restarts at every note-on
+ *        SHOT  per voice, restarts at note-on, stops after one cycle (holds the end value)
+ *        RAND  per voice, a new random value at each note-on, held
+ *   FX targets and drums have no per-voice state: there VOIC = FREE, GATE = MONO, 1SHT / RAND are shared.
+ * Note-on: VoiceCtl calls the voice LFO object's vt+0x1c trigger(this, words) for every synth (0x019673DC) and
+ * drum (0x0196735E) note-on while the LFO is active (lfo_active); for the MIDI LFO class these are bare RTS.
+ *
+ * Controls on the LFO page (encoder press blue..red selects LFO 1..4; turns edit the selected one):
+ *   blue frequency / division, green amount, white target (21: own F / A / O skipped, wraps), red type (6, wraps)
+ *   Shift held (table of all four): blue phase offset, green smoothing, white waveform, red sync on / off
+ *
+ * Firmware calls (fw 246, docs/10):
+ *   synth knobs   Ranges::knob_range_synth(knob, &mod, engine, 0xFF801724)   (apply pass 0)
+ *   envelope      0x019F69B0(stage, &mod, 0xFF801724)                         (apply pass 1)
+ *   FX knobs      0x01A1DE68(&mod, 0x01DE5C50 + fx_type*0x30 + knob*6, 0xFF801724 + knob*2)
+ *                 (FX-object apply, pass 2 = synth FX, 5 = drum FX)
+ *   drum knobs    Ranges 0x01A1E57C(knob, &mod, drum engine 0xFF801704[drum slot], 0xFF801724)   (pass 3)
+ *   drum env      0x01A1DE68(&mod, 0x01DE56C8 + stage*6, 0xFF801724 + stage*2)                     (pass 4)
+ * mod = signed Q15 offset in knob units. The firmware calls apply once per ACTIVE voice and block: per-voice LFOs
+ * advance there; shared LFOs advance by elapsed time from the Blackfin CYCLES counter (block length learned from
+ * the per-voice calls), so they keep running between notes (screen included). */
+#include "../op1_synth.h"
+
+#ifndef OP1_HOST
+#define KNOB_RANGE_SYNTH ((void (*)(int, int16_t *, int, void *))0x01A1DFEC)
+#define KNOB_RANGE_DRUM  ((void (*)(int, int16_t *, int, void *))0x01A1E57C)
+#define DRUM_ENGINE()    (((const int *)0xFF801704)[*(volatile int *)0xFF8016D8 & 7])
+#define DRUM_FX_TYPE()   (((const int *)0xFF801754)[*(volatile int *)0xFF8016D8 & 7])
+#define DRUM_ENV_RANGE(k) ((const int16_t *)(0x01DE56C8 + (k) * 6))
+#define FX_KNOB_MOD      ((void (*)(int16_t *, const int16_t *, int16_t *))0x01A1DE68)   /* (&mod, range, &param) */
+#define FX_RANGE(type, k) ((const int16_t *)(0x01DE5C50 + (type) * 0x30 + (k) * 6))
+#define FX_PARAM(k)      ((int16_t *)0xFF801724 + (k))
+#define ENV_MOD          ((void (*)(int, int16_t *, void *))0x019F69B0)
+#define STAGE_PARAMS     ((void *)0xFF801724)
+#define SYNTH_LFO_OBJ    ((void *const *)0x01AAAD6C)          /* [6] per-voice LFO objects */
+#define SYNTH_ENGINE()   (((const int *)0xFF8016E4)[*(volatile int *)0xFF8016D4 & 7])
+#define SYNTH_FX_TYPE()  (((const int *)0xFF801734)[*(volatile int *)0xFF8016D4 & 7])
+#define PAGE_POS()       (*(volatile int *)0x01DE4C40 == 1)
+#define PAGE_WORDS(pos)  ((const int16_t *)(((pos) ? 0xFF801644 : 0xFF8014C4) + \
+                          (*(volatile int *)((pos) ? 0xFF8016D8 : 0xFF8016D4) & 7) * 16))
+#define TEMPO_RATE()     (*(volatile uint32_t *)0x01AADAD4)   /* metronome: phase inc per block for 8 cycles per beat */
+#define SHIFT_HELD()     (*(volatile uint8_t *)0x01DD7F78)
+#else                                                          /* host test: harness/quadlfo_test.c */
+void host_knob_range_synth(int, int16_t *, int, void *);
+void host_fx_knob_mod(int16_t *, const int16_t *, int16_t *);
+extern int16_t host_fx_range[8][3], host_fx_params[8];
+void host_env_mod(int, int16_t *, void *);
+extern void *host_lfo_obj[6];
+extern int16_t host_lfo_words[8];
+#define KNOB_RANGE_SYNTH host_knob_range_synth
+void host_knob_range_drum(int, int16_t *, int, void *);
+#define KNOB_RANGE_DRUM  host_knob_range_drum
+#define DRUM_ENGINE()    3
+#define DRUM_FX_TYPE()   5
+#define DRUM_ENV_RANGE(k) ((const int16_t *)host_fx_range[k])
+#define FX_KNOB_MOD      host_fx_knob_mod
+#define FX_RANGE(type, k) ((void)(type), (const int16_t *)host_fx_range[k])
+#define FX_PARAM(k)      (&host_fx_params[k])
+#define ENV_MOD          host_env_mod
+#define STAGE_PARAMS     ((void *)0)
+#define SYNTH_LFO_OBJ    ((void *const *)host_lfo_obj)
+#define SYNTH_ENGINE()   14
+#define SYNTH_FX_TYPE()  5
+#define PAGE_POS()       (host_pos)
+#define PAGE_WORDS(pos)  ((const int16_t *)host_lfo_words)
+extern uint32_t host_cycles, host_tempo_rate; extern int host_shift, host_pos;
+#define TEMPO_RATE()     (host_tempo_rate)
+#define SHIFT_HELD()     (host_shift)
+#define READ_CYCLES()    (host_cycles)
+#endif
+#ifndef READ_CYCLES
+static inline uint32_t READ_CYCLES(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
+#endif
+enum { QL_SYNTH = 0, QL_ENV = 1, QL_FX = 2 };
+
+enum { QT_VOICE, QT_FREE, QT_GATE, QT_MONO, QT_1SHT, QT_RAND, QT_N };
+static const char *const ql_type_name[QT_N] = { "VOIC", "FREE", "GATE", "MONO", "SHOT", "RAND" };
+#define QL_NTGT 24                                           /* 12 knob / env / fx targets + 4 LFOs x 3 */
+#define QL_MARK 0xA5
+
+typedef struct { uint8_t wave, sync, smooth, off, rate, type, tgt; int8_t amt; int16_t a128; uint32_t inc, phoff; } ql_lfo;
+typedef struct { uint32_t ph, cnt; int16_t val, rnd; uint8_t done; } ql_st;
+
+static ql_st sh_st[2][4];                                     /* shared state per page (synth, drum) */
+static ql_st v_st[6][4];                                      /* per synth voice */
+static volatile int16_t disp_all[2][4];                       /* last per-voice output (before amount), screen */
+static volatile uint32_t ph_cyc_all[2];                       /* CYCLES at the last shared update per page */
+static volatile uint32_t cpb = 1161000;                       /* cycles per 128-sample block (learned; start: 400 MHz) */
+static uint32_t voice_cyc[6];
+static uint32_t ql_rng = 0x9E3779B9u;
+volatile uint8_t ql_sel[2];                                   /* selected LFO per page (synth/drum) */
+
+/* op1r <= 15 quad words: a 0x4000 / 0x6000 marker in each of words 4..7. Not decoded any more, but still a quad LFO
+ * (never handed to the MIDI LFO code, whose range asserts would lock the OP-1): they read as defaults (silent) and
+ * become the current format, all four LFOs at defaults, on the first edit. */
+static inline int ql_old_ctrl(int16_t c) { uint16_t m = (uint16_t)c & 0xE000; return m == 0x4000 || m == 0x6000; }
+static int ql_is_old(const int16_t *w)
+{
+    return ((uint16_t)w[7] >> 8) != QL_MARK && ql_old_ctrl(w[4]) && ql_old_ctrl(w[5]) && ql_old_ctrl(w[6]) && ql_old_ctrl(w[7]);
+}
+int ql_is_quad(const int16_t *w) { return ((uint16_t)w[7] >> 8) == QL_MARK || ql_is_old(w); }
+/* bit stream over the 8 words */
+static uint32_t ql_get(const int16_t *w, int pos, int n)
+{
+    uint32_t v = 0;
+    for (int k = 0; k < n; k++, pos++) v |= (uint32_t)(((uint16_t)w[pos >> 4] >> (pos & 15)) & 1) << k;
+    return v;
+}
+static void ql_put(int16_t *w, int pos, int n, uint32_t v)
+{
+    for (int k = 0; k < n; k++, pos++) {
+        uint16_t m = (uint16_t)(1u << (pos & 15)), x = (uint16_t)w[pos >> 4];
+        w[pos >> 4] = (int16_t)((v >> k) & 1 ? x | m : x & ~m);
+    }
+}
+static int clampq(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+/* tempo divisions (cycle length): shift of the metronome rate (8 cycles per beat), triplet = x 3/2 */
+#define QL_DIVS 11
+static const char *const ql_div_name[QL_DIVS] = { "4/1", "2/1", "1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32" };
+static const uint8_t ql_div_shift[QL_DIVS] = { 7, 6, 5, 4, 3, 3, 2, 2, 1, 1, 0 };
+
+/* phase increment per 128-sample block: 0.05 Hz * 400^(x/32768) */
+static uint32_t ql_inc(int32_t x)
+{
+    if (x < 0) x = 0;
+    if (x > 32767) x = 32767;
+    int32_t oct = (x * 17702) >> 10;                              /* x * log2(400) / 32768, Q16 */
+    int32_t f = oct & 0xFFFF;                                     /* 2^f ~ 1 + f (0.6565 + 0.3435 f) */
+    uint32_t frac = 65536 + (((uint32_t)f * (uint32_t)(43025 + ((f * 22511) >> 16))) >> 16);   /* < 2^32 */
+    uint32_t base = 623203;                                       /* 0.05 Hz * 2^32 * 128 / 44100 */
+    return (uint32_t)(((uint64_t)base * frac) >> 16) << (oct >> 16);
+}
+static uint32_t ql_div_inc(int r)                                /* tempo division r (cycle length) */
+{
+    if (r >= QL_DIVS) r = QL_DIVS - 1;
+    uint32_t inc = TEMPO_RATE() >> ql_div_shift[r];
+    return (r == 5 || r == 7 || r == 9) ? inc + (inc >> 1) : inc;   /* triplets: 3 per 2 */
+}
+/* waveform value, Q15 */
+static int32_t ql_shape(int wave, uint32_t phase, uint32_t cnt, int i)
+{
+    switch (wave) {
+    case 1: { int32_t q = (int32_t)((phase + 0x40000000u) >> 16); return (q < 32768 ? q : 65535 - q) * 2 - 32767; }
+    case 2: return (int32_t)phase >> 16;
+    case 3: return ~((int32_t)phase >> 16);                       /* -32768 .. 32767 */
+    case 4: return phase < 0x80000000u ? 32767 : -32767;
+    case 5: { uint32_t x = (cnt + (uint32_t)i * 0x9E37u) * 2654435761u; x ^= x >> 15; return (int16_t)(x >> 16); }
+    default: return OP1_SINE_TABLE[phase >> 19];                  /* sin(2 pi phase / 2^32) */
+    }
+}
+/* one-pole slew towards x; k = elapsed blocks Q16 */
+static int16_t ql_slew(int16_t y, int32_t x, int sm, uint32_t k)
+{
+    if (!sm) return (int16_t)x;
+    k >>= sm;
+    if (k > 65536) k = 65536;
+    return (int16_t)(y + (int32_t)(((int64_t)(x - y) * (int32_t)k) >> 16));
+}
+
+static inline int16_t ql_out(int16_t val, int a128) { return (int16_t)(((int32_t)val * a128) >> 7); }
+
+/* decode / encode LFO i (bit stream, see top) */
+static const uint8_t ql_def_rate[4] = { 19, 31, 42, 54 };       /* ~0.3 / 1 / 3 / 8 Hz (= make_firmware.py defaults) */
+static void ql_dec(const int16_t *w, int i, ql_lfo *o)
+{
+    if (ql_is_old(w)) {                                           /* old format: defaults, amount 0 */
+        o->rate = ql_def_rate[i]; o->sync = 0; o->wave = 0; o->smooth = 0; o->off = 0; o->type = QT_VOICE;
+        o->tgt = (uint8_t)i; o->amt = 0; o->a128 = 0; o->inc = ql_inc((o->rate << 9) | 0x100); o->phoff = 0;
+        return;
+    }
+    int b = 30 * i;
+    o->rate = (uint8_t)ql_get(w, b, 6); o->sync = (uint8_t)ql_get(w, b + 6, 1);
+    o->wave = (uint8_t)clampq((int)ql_get(w, b + 7, 3), 0, 5); o->smooth = (uint8_t)ql_get(w, b + 10, 3);
+    o->off = (uint8_t)ql_get(w, b + 13, 3); o->type = (uint8_t)clampq((int)ql_get(w, b + 16, 3), 0, QT_N - 1);
+    o->tgt = (uint8_t)clampq((int)ql_get(w, b + 19, 5), 0, QL_NTGT - 1);
+    o->amt = (int8_t)clampq((int)ql_get(w, b + 24, 6) - 32, -31, 31); o->a128 = (int16_t)(o->amt * 127 / 31);
+    if (o->sync) o->rate = (uint8_t)clampq(o->rate, 0, QL_DIVS - 1);
+    o->inc = o->sync ? ql_div_inc(o->rate) : ql_inc((o->rate << 9) | 0x100);
+    o->phoff = (uint32_t)o->off << 29;
+}
+static void ql_enc(const ql_lfo *o, int16_t *w, int i)
+{
+    int b = 30 * i;
+    ql_put(w, b, 6, o->rate); ql_put(w, b + 6, 1, o->sync); ql_put(w, b + 7, 3, o->wave); ql_put(w, b + 10, 3, o->smooth);
+    ql_put(w, b + 13, 3, o->off); ql_put(w, b + 16, 3, o->type); ql_put(w, b + 19, 5, o->tgt);
+    ql_put(w, b + 24, 6, (uint32_t)(o->amt + 32)); ql_put(w, 120, 8, QL_MARK);
+}
+/* LFO -> LFO modulation: src[i] = LFO i's value (before amount) in this context, from the previous block */
+static void ql_mod(ql_lfo *L, const int16_t *src)
+{
+    int32_t acc[4][3] = { { 0 } };
+    for (int i = 0; i < 4; i++)
+        if (L[i].tgt >= 12 && (L[i].tgt - 12) / 3 != i) { int t = L[i].tgt - 12; acc[t / 3][t % 3] += ql_out(src[i], L[i].a128); }
+    for (int j = 0; j < 4; j++) {
+        int32_t f = clampq(acc[j][0], -32767, 32767), a = clampq(acc[j][1], -32767, 32767), o = clampq(acc[j][2], -32767, 32767);
+        if (f) {                                                      /* 2^(f * 2 / 32768) octaves */
+            int32_t x = f * 4, e = x >> 16, fr = x & 0xFFFF;         /* Q16 octaves: integer + fraction */
+            uint32_t m = 65536 + (((uint32_t)fr * (uint32_t)(43025 + ((fr * 22511) >> 16))) >> 16);
+            uint64_t inc = ((uint64_t)L[j].inc * m) >> 16;
+            inc = e >= 0 ? inc << e : inc >> -e;
+            L[j].inc = inc > 0x7FFFFFFFu ? 0x7FFFFFFFu : (uint32_t)inc;
+        }
+        if (a) L[j].a128 = (int16_t)clampq((L[j].a128 * (32768 + a)) >> 15, -127, 127);
+        if (o) L[j].phoff += (uint32_t)o << 16;
+    }
+}
+
+static inline int ql_group(const ql_lfo *o) { return o->tgt >> 2; }
+static inline int ql_dest(const ql_lfo *o)  { return o->tgt & 3; }
+/* shared state (no per-voice phase): drums, FX targets, FREE and MONO */
+static inline int ql_shared(int pos, const ql_lfo *o) { return pos || ql_group(o) == QL_FX || o->type == QT_FREE || o->type == QT_MONO; }
+
+/* advance one state by k blocks (Q16) */
+static void ql_step(ql_st *s, const ql_lfo *o, uint32_t k, int i)
+{
+    int32_t x;
+    if (o->type == QT_RAND) x = s->rnd;
+    else {
+        if (!(o->type == QT_1SHT && s->done)) {
+            uint32_t n = s->ph + (uint32_t)(((uint64_t)o->inc * k) >> 16);
+            if (n < s->ph) { s->cnt++; if (o->type == QT_1SHT) { s->done = 1; n = 0xFFFFFFFFu; } }
+            s->ph = n;
+        }
+        x = ql_shape(o->wave, s->ph + o->phoff, s->cnt, i);
+    }
+    s->val = ql_slew(s->val, x, o->smooth, k);
+}
+static void ql_restart(ql_st *s)
+{
+    s->ph = 0; s->done = 0; s->cnt++;
+    ql_rng = ql_rng * 1664525u + 1013904223u; s->rnd = (int16_t)(ql_rng >> 16);
+}
+
+/* elapsed time since `since` in blocks, Q16 (capped at 64 blocks: no jumps after long pauses) */
+static uint32_t blocks_q16(uint32_t now, uint32_t since)
+{
+    uint32_t d = now - since, c = cpb;
+    if (d > 64 * c) d = 64 * c;
+    return (uint32_t)(((uint64_t)d << 16) / c);
+}
+/* advance the shared states of a page to now (audio thread) */
+static void ql_advance_pos(int pos, const ql_lfo *L)
+{
+    uint32_t now = READ_CYCLES(), b = blocks_q16(now, ph_cyc_all[pos]);
+    ph_cyc_all[pos] = now;
+    for (int i = 0; i < 4; i++) ql_step(&sh_st[pos][i], &L[i], b, i);
+}
+static void ql_dec_all(const int16_t *w, ql_lfo *L) { for (int i = 0; i < 4; i++) ql_dec(w, i, &L[i]); }
+/* decoded + LFO-modulated parameters for the shared states of a page (src: shared values, per-voice LFOs: last voice) */
+static void ql_dec_shared(const int16_t *w, int pos, ql_lfo *L)
+{
+    int16_t src[4];
+    ql_dec_all(w, L);
+    for (int i = 0; i < 4; i++) src[i] = ql_shared(pos, &L[i]) ? sh_st[pos][i].val : disp_all[pos][i];
+    ql_mod(L, src);
+}
+
+int ql_apply_synth(void *self, const int16_t *w, int pass)
+{
+    int engine = SYNTH_ENGINE();
+    int applied = 0, v = 0;
+    ql_lfo L[4], Lv[4]; ql_dec_shared(w, 0, L);
+    for (int k = 0; k < 6; k++) if (SYNTH_LFO_OBJ[k] == self) { v = k; break; }
+    {                                                             /* this voice's parameters (its own LFO values) */
+        int16_t src[4];
+        ql_dec_all(w, Lv);
+        for (int i = 0; i < 4; i++) src[i] = ql_shared(0, &Lv[i]) ? sh_st[0][i].val : v_st[v][i].val;
+        ql_mod(Lv, src);
+    }
+    if (pass == 0) {
+        /* learn the block length: each voice object is called once per block while active */
+        uint32_t now = READ_CYCLES(), d = now - voice_cyc[v];
+        if (d > cpb / 2 && d < cpb * 2) cpb += ((int32_t)(d - cpb)) / 16;
+        voice_cyc[v] = now;
+        ql_advance_pos(0, L);
+        for (int i = 0; i < 4; i++) if (!ql_shared(0, &Lv[i])) { ql_step(&v_st[v][i], &Lv[i], 65536, i); disp_all[0][i] = v_st[v][i].val; }
+    }
+    for (int i = 0; i < 4; i++) {
+        int sh = ql_shared(0, &L[i]), g = ql_group(&L[i]);
+        int a128 = sh ? L[i].a128 : Lv[i].a128;
+        if (!a128 || g == QL_FX || L[i].tgt >= 12) continue;
+        int16_t mod = ql_out(sh ? sh_st[0][i].val : v_st[v][i].val, a128);
+        if (g == QL_SYNTH && pass == 0) { KNOB_RANGE_SYNTH(ql_dest(&L[i]), &mod, engine, STAGE_PARAMS); applied = 1; }
+        else if (g == QL_ENV && pass == 1) { ENV_MOD(ql_dest(&L[i]), &mod, STAGE_PARAMS); applied = 1; }
+    }
+    return applied;
+}
+
+/* drums: pass 3 = drum engine knobs (per drum voice), pass 4 = drum envelope. Shared states by elapsed time. */
+static int ql_drum(const int16_t *w, int pass)
+{
+    if (pass != 3 && pass != 4) return 0;
+    ql_lfo L[4]; ql_dec_shared(w, 1, L);
+    ql_advance_pos(1, L);
+    int engine = DRUM_ENGINE(), applied = 0;
+    for (int i = 0; i < 4; i++) {
+        int g = ql_group(&L[i]);
+        if (!L[i].a128 || g == QL_FX || L[i].tgt >= 12) continue;
+        int16_t mod = ql_out(sh_st[1][i].val, L[i].a128);
+        int k = ql_dest(&L[i]);
+        if (g == QL_SYNTH && pass == 3) { KNOB_RANGE_DRUM(k, &mod, engine, STAGE_PARAMS); applied = 1; }
+        else if (g == QL_ENV && pass == 4) { FX_KNOB_MOD(&mod, DRUM_ENV_RANGE(k), FX_PARAM(k)); applied = 1; }
+    }
+    return applied;
+}
+int ql_apply_drum(void *self, const int16_t *w, int pass) { (void)self; return ql_drum(w, pass); }
+
+int ql_apply_fx(void *self, const int16_t *w, int pass)
+{
+    (void)self;
+    if (pass == 3 || pass == 4) return ql_drum(w, pass);         /* drum engine / envelope via this object */
+    if (pass != 2 && pass != 5) return 0;                         /* 2 = synth FX, 5 = drum FX */
+    int pos = pass == 5;
+    int fxtype = pos ? DRUM_FX_TYPE() : SYNTH_FX_TYPE();
+    int applied = 0;
+    ql_lfo L[4]; ql_dec_shared(w, pos, L);
+    ql_advance_pos(pos, L);
+    for (int i = 0; i < 4; i++) {
+        if (ql_group(&L[i]) != QL_FX || L[i].tgt >= 12 || !L[i].a128) continue;
+        int16_t mod = ql_out(sh_st[pos][i].val, L[i].a128);
+        int k = ql_dest(&L[i]);
+        FX_KNOB_MOD(&mod, FX_RANGE(fxtype, k), FX_PARAM(k));
+        applied = 1;
+    }
+    return applied;
+}
+
+/* note-on (LFO object vt+0x1c, called by VoiceCtl for each note-on; v = synth voice, -1 = drums) */
+static void ql_trigger(int pos, int v, const int16_t *w)
+{
+    for (int i = 0; i < 4; i++) {
+        ql_lfo o; ql_dec(w, i, &o);
+        if (o.type == QT_VOICE || o.type == QT_FREE) continue;
+        if (ql_shared(pos, &o)) ql_restart(&sh_st[pos][i]);
+        else if (v >= 0) ql_restart(&v_st[v][i]);
+    }
+}
+void ql_trig_synth(void *self, const int16_t *w)
+{
+    if (!ql_is_quad(w)) return;                                   /* MIDI LFO: original is a bare RTS */
+    int v = -1;
+    for (int k = 0; k < 6; k++) if (SYNTH_LFO_OBJ[k] == self) { v = k; break; }
+    ql_trigger(0, v, w);
+}
+void ql_trig_drum(void *self, const int16_t *w) { (void)self; if (ql_is_quad(w)) ql_trigger(1, -1, w); }
+void ql_trig_fx(void *self, const int16_t *w) { (void)self; (void)w; }   /* shared restarts happen in the voice trigger */
+
+/* ---- controls (KeyHandler thread, via dispatcher.c key/knob hooks) ---- */
+static int32_t step_acc[4];
+void ql_press(int pos, int knob) { ql_sel[pos & 1] = (uint8_t)(knob & 3); }
+static int ql_steps(int knob, int delta)                          /* one step per detent (1024) */
+{
+    int32_t *acc = &step_acc[knob & 3];
+    if ((*acc > 0 && delta < 0) || (*acc < 0 && delta > 0)) *acc = 0;
+    *acc += delta;
+    int st = *acc / 1024;
+    *acc -= st * 1024;
+    return st;
+}
+static int wrapq(int v, int n) { return ((v % n) + n) % n; }
+void ql_turn(int16_t *w, int pos, int knob, int delta, int shift)
+{
+    (void)pos;
+    int i = ql_sel[pos & 1] & 3, st = ql_steps(knob, delta);
+    if (!st) return;
+    if (ql_is_old(w)) {                                           /* first edit of an old set: all four to defaults */
+        ql_lfo d[4];
+        for (int k = 0; k < 4; k++) ql_dec(w, k, &d[k]);
+        for (int k = 0; k < 8; k++) w[k] = 0;
+        for (int k = 0; k < 4; k++) ql_enc(&d[k], w, k);
+    }
+    ql_lfo o; ql_dec(w, i, &o);
+    if (!shift) switch (knob) {
+        case 0: o.rate = (uint8_t)clampq(o.rate + st, 0, o.sync ? QL_DIVS - 1 : 63); break;
+        case 1: o.amt = (int8_t)clampq(o.amt + st, -31, 31); break;
+        case 2: {                                                 /* 21 targets: its own F / A / O are skipped */
+            int t = o.tgt, d = st > 0 ? 1 : -1;
+            for (int n = st < 0 ? -st : st; n--; )
+                do t = wrapq(t + d, QL_NTGT); while (t >= 12 && (t - 12) / 3 == i);
+            o.tgt = (uint8_t)t;
+            break;
+        }
+        default: o.type = (uint8_t)wrapq(o.type + st, QT_N); break;
+    } else switch (knob) {
+        case 0: o.off = (uint8_t)wrapq(o.off + st, 8); break;
+        case 1: o.smooth = (uint8_t)clampq(o.smooth + st, 0, 7); break;
+        case 2: o.wave = (uint8_t)clampq(o.wave + st, 0, 5); break;
+        default:
+            if (st > 0 && !o.sync) { o.sync = 1; o.rate = 4; }    /* sync on: 1/4 */
+            else if (st < 0 && o.sync) { o.sync = 0; o.rate = 31; }   /* free: ~1 Hz */
+    }
+    ql_enc(&o, w, i);
+}
+
+/* ======================= screen (GUI thread) =======================
+ * display/quadlfo.svg (display/gen_quadlfo_svg.py, geometry in quadlfo_geom.h): per LFO a row with a dot in the
+ * encoder colour and a short lane line. Code draws per row: amount span + moving output tick on the lane, then
+ * frequency / division (blue), amount in % (green), target glyph (synth: wave, drum page: drum, envelope, fx) with
+ * a dot in the target knob / stage colour, and the type (red). The selected row is bright with a bar under its
+ * dot, the others lilac. Shift: table of all four (offset, smoothing, waveform, sync). */
+#include "quadlfo_geom.h"
+
+static void qline(void *r, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t w, const uint8_t *c)
+{
+    op1_pt a = { x0, y0 }, b = { x1, y1 };
+    op1_raster_line(r, &a, &b, w, c);
+}
+
+static void ql_screen_init(void *scr) { (void)scr; }            /* no animated SVG nodes */
+
+#include "../screens/stroke_font.h"
+#define QT_OFF_X 30                                              /* Shift table columns (text top-left x) */
+#define QT_SMOOTH_X 104
+#define QT_WAVE_X 128
+#define QT_SYNC_X 172
+static char *ql_num(char *p, int v) { if (v >= 10) p = ql_num(p, v / 10); *p++ = (char)('0' + v % 10); *p = 0; return p; }
+/* Hz of a free frequency word as text: "0.05" .. "9.99", "10.0" .. "20.0" */
+static void ql_hz_text(char *t, uint32_t inc)
+{
+    uint32_t c = (uint32_t)(((uint64_t)inc * 4410000u) >> 39);   /* Hz * 100 = inc * 44100 * 100 / (128 * 2^32) */
+    if (c >= 1000) { c /= 10; t = ql_num(t, c / 10); *t++ = '.'; ql_num(t, c % 10); }
+    else { t = ql_num(t, c / 100); *t++ = '.'; *t++ = (char)('0' + c / 10 % 10); *t++ = (char)('0' + c % 10); *t = 0; }
+}
+/* waveform glyph: 24 x 12 px, (x, y) = left end of the centre line, Q10 */
+static void ql_wave_glyph(void *r, int wave, int32_t x, int32_t y, const uint8_t *c)
+{
+    static const int8_t sh[4] = { 4, -3, 6, -5 };                  /* sample & hold: fixed steps */
+    int32_t px = 0, py = 0;
+    for (int k = 0; k <= 24; k++) {
+        uint32_t a = (uint32_t)k * (0xFFFFFFFFu / 24);
+        int32_t v = wave == 5 ? sh[k < 24 ? k / 6 : 3] * 5000 : ql_shape(wave, a, 0, 0);
+        if (wave == 2 || wave == 3) v = (wave == 2 ? 2 : -2) * ((int32_t)(a >> 17) - 16384);   /* ramps without the wrap */
+        int32_t nx = x + OP1_Q10(k), ny = y - (v * OP1_Q10(6) >> 15);
+        if (k) {
+            if (wave >= 4 && ny != py) qline(r, px, py, px, ny, 0x400, c);              /* vertical edges */
+            qline(r, px, wave >= 4 ? ny : py, nx, ny, 0x400, c);
+        }
+        px = nx; py = ny;
+    }
+}
+/* Shift held: one row per LFO: phase offset in degrees (blue), smoothing (green), waveform (white), sync (red).
+ * The lane lines of the SVG are covered with black. */
+static void ql_table(void *r, const int16_t *w, int sel)
+{
+    static const uint8_t black[4] = { 0, 0, 0, 0xFF };
+    for (int i = 0; i < 4; i++) {
+        int32_t y = OP1_Q10(ql_lane_y[i]), ty = y - OP1_Q10(6);
+        ql_lfo o; ql_dec(w, i, &o);
+        char t[8];
+        qline(r, OP1_Q10(QL_LANE_X0 - 1), y, OP1_Q10(QL_LANE_X1 + 1), y, 0x600, black);
+        qline(r, OP1_Q10(QL_LANE_MID), y - OP1_Q10(5), OP1_Q10(QL_LANE_MID), y + OP1_Q10(5), 0x600, black);
+        if (i == sel)
+            qline(r, OP1_Q10(QL_DOT_X - 7), y + OP1_Q10(10), OP1_Q10(QL_DOT_X + 7), y + OP1_Q10(10), 0x600, ql_col[i]);
+        ql_num(t, o.off * 45);
+        sf_text(r, OP1_Q10(QT_OFF_X), ty, OP1_Q10(2), t, 0x400, ql_col[0]);
+        ql_num(t, o.smooth);
+        sf_text(r, OP1_Q10(QT_SMOOTH_X), ty, OP1_Q10(2), t, 0x400, ql_col[1]);
+        ql_wave_glyph(r, o.wave, OP1_Q10(QT_WAVE_X), y, ql_col[2]);
+        sf_text(r, OP1_Q10(QT_SYNC_X), ty, OP1_Q10(2), o.sync ? "SYNC" : "FREE", 0x400, o.sync ? ql_col[3] : ql_dim);
+    }
+}
+
+/* target glyph, 12 x 10 px, (x, y) = left end at the row centre: synth wave, drum (circle, centre dot, stick),
+ * envelope (ADSR), fx */
+static void ql_glyph(void *r, int pos, int g, int32_t gx, int32_t y, const uint8_t *c)
+{
+    if (g == QL_SYNTH && pos) {                                   /* drum: green circle, dot, line down from it */
+        int32_t cx = gx + OP1_Q10(6), rr = OP1_Q10(5);
+        for (int k = 0; k < 12; k++) {
+            int32_t a0 = k * 8192 / 12, a1 = (k + 1) * 8192 / 12;
+            qline(r, cx + (OP1_SINE_TABLE[a0] * rr >> 15), y - (OP1_SINE_TABLE[(a0 + 2048) & 8191] * rr >> 15),
+                     cx + (OP1_SINE_TABLE[a1 & 8191] * rr >> 15), y - (OP1_SINE_TABLE[(a1 + 2048) & 8191] * rr >> 15), 0x300, ql_col[1]);
+        }
+        qline(r, cx - 0x180, y, cx + 0x180, y, 0x500, ql_col[1]);
+        qline(r, cx, y, cx, y + OP1_Q10(9), 0x300, ql_col[1]);
+        return;
+    }
+    switch (g) {
+    case QL_SYNTH:                                                   /* wave */
+        qline(r, gx, y, gx + OP1_Q10(3), y - OP1_Q10(4), 0x400, c);
+        qline(r, gx + OP1_Q10(3), y - OP1_Q10(4), gx + OP1_Q10(9), y + OP1_Q10(4), 0x400, c);
+        qline(r, gx + OP1_Q10(9), y + OP1_Q10(4), gx + OP1_Q10(12), y, 0x400, c);
+        break;
+    case QL_ENV:                                                     /* ADSR */
+        qline(r, gx, y + OP1_Q10(4), gx + OP1_Q10(3), y - OP1_Q10(4), 0x400, c);
+        qline(r, gx + OP1_Q10(3), y - OP1_Q10(4), gx + OP1_Q10(6), y, 0x400, c);
+        qline(r, gx + OP1_Q10(6), y, gx + OP1_Q10(9), y, 0x400, c);
+        qline(r, gx + OP1_Q10(9), y, gx + OP1_Q10(12), y + OP1_Q10(4), 0x400, c);
+        break;
+    default:                                                         /* fx: the text "fx" from lines */
+        qline(r, gx + OP1_Q10(2), y + OP1_Q10(5), gx + OP1_Q10(2), y - OP1_Q10(3), 0x480, c);
+        qline(r, gx + OP1_Q10(2), y - OP1_Q10(3), gx + OP1_Q10(4), y - OP1_Q10(5), 0x480, c);
+        qline(r, gx + OP1_Q10(4), y - OP1_Q10(5), gx + OP1_Q10(6), y - OP1_Q10(5), 0x480, c);
+        qline(r, gx, y - OP1_Q10(1), gx + OP1_Q10(5), y - OP1_Q10(1), 0x480, c);
+        qline(r, gx + OP1_Q10(8), y - OP1_Q10(1), gx + OP1_Q10(14), y + OP1_Q10(5), 0x480, c);
+        qline(r, gx + OP1_Q10(14), y - OP1_Q10(1), gx + OP1_Q10(8), y + OP1_Q10(5), 0x480, c);
+    }
+}
+
+static void ql_screen_update(void *scr, int dt)
+{
+    int pos = PAGE_POS();
+    const int16_t *w = PAGE_WORDS(pos);
+    int sel = ql_sel[pos] & 3;
+    op1_screen_draw(scr, dt);
+    void *r = op1_raster();
+    ql_lfo L[4], Lm[4]; ql_dec_all(w, L); ql_dec_shared(w, pos, Lm);   /* text: set values, lane: modulated */
+    uint32_t b = blocks_q16(READ_CYCLES(), ph_cyc_all[pos]);
+    if (b > (4u << 16)) ql_advance_pos(pos, Lm);                       /* audio idle (no voice / FX calls): advance here */
+    if (SHIFT_HELD()) { ql_table(r, w, sel); return; }
+    for (int i = 0; i < 4; i++) {
+        const ql_lfo *o = &L[i];
+        int32_t y = OP1_Q10(ql_lane_y[i]), ty = y - OP1_Q10(6);
+        int on = i == sel;
+        const uint8_t *tc = on ? 0 : ql_lilac;
+        /* amount span: centre +- |amount| (dim lane colour), output tick */
+        int a = Lm[i].a128 < 0 ? -Lm[i].a128 : Lm[i].a128;
+        int32_t span = (int32_t)(((int64_t)a * OP1_Q10(QL_LANE_HALF)) >> 7);
+        if (span) {
+            uint8_t dc[4];
+            for (int k = 0; k < 3; k++) dc[k] = (uint8_t)(ql_col[i][k] * 3 / 8);
+            dc[3] = 0xFF;
+            qline(r, OP1_Q10(QL_LANE_MID) - span, y, OP1_Q10(QL_LANE_MID) + span, y, QL_SPAN_W, dc);
+        }
+        int16_t out = ql_out(ql_shared(pos, o) ? sh_st[pos][i].val : disp_all[pos][i], Lm[i].a128);
+        int32_t x = OP1_Q10(QL_LANE_MID) + (int32_t)(((int64_t)out * OP1_Q10(QL_LANE_HALF)) >> 15);
+        qline(r, x, y - OP1_Q10(QL_TICK_H), x, y + OP1_Q10(QL_TICK_H), 0x800, ql_col[i]);
+        if (on) qline(r, OP1_Q10(QL_DOT_X - 7), y + OP1_Q10(10), OP1_Q10(QL_DOT_X + 7), y + OP1_Q10(10), 0x600, ql_col[i]);
+        /* frequency / division, amount % */
+        char t[8];
+        if (o->sync) { const char *n = ql_div_name[o->rate]; int k = 0; while ((t[k] = n[k])) k++; }
+        else ql_hz_text(t, o->inc);
+        sf_text(r, OP1_Q10(QL_FREQ_X), ty, OP1_Q10(2), t, 0x400, tc ? tc : ql_col[0]);
+        int pc = o->amt * 100 / 31; char *p = t;
+        if (pc < 0) { *p++ = '-'; pc = -pc; }
+        ql_num(p, pc);
+        sf_text(r, OP1_Q10(QL_AMT_X), ty, OP1_Q10(2), t, 0x400, tc ? tc : ql_col[1]);
+        /* target: glyph + dot in the knob / stage colour; LFO targets: F / A / O + dot in the target LFO's colour */
+        int dcol = ql_dest(o);
+        if (o->tgt >= 12) {
+            static const char *const kp[3] = { "F", "A", "O" };
+            dcol = (o->tgt - 12) / 3;
+            sf_text(r, OP1_Q10(QL_GLYPH_X + 2), ty, OP1_Q10(2), kp[(o->tgt - 12) % 3], 0x400, tc ? tc : ql_white);
+        } else ql_glyph(r, pos, ql_group(o), OP1_Q10(QL_GLYPH_X), y, tc ? tc : ql_white);
+        int32_t dx = OP1_Q10(QL_TDOT_X);                                 /* dot: two crossing bars (no zero-length lines) */
+        qline(r, dx - OP1_Q10(3), y, dx + OP1_Q10(3), y, OP1_Q10(4), ql_col[dcol]);
+        qline(r, dx, y - OP1_Q10(3), dx, y + OP1_Q10(3), OP1_Q10(4), ql_col[dcol]);
+        sf_text(r, OP1_Q10(QL_TYPE_X), ty, OP1_Q10(2), ql_type_name[o->type], 0x400, tc ? tc : ql_col[3]);
+    }
+}
+
+const op1_screen_t SCREEN_quadlfo = { ql_screen_init, ql_screen_update };

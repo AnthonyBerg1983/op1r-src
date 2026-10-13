@@ -1,0 +1,24 @@
+{
+  "name": "clouds",
+  "kind": "fx",
+  "order": 2,
+  "symbol": "FX_clouds",
+  "sources": [
+    "clouds.c"
+  ],
+  "defaults": [
+    16384,
+    16384,
+    24576,
+    16384
+  ],
+  "page2_defaults": [
+    16384,
+    22938,
+    0
+  ],
+  "screen": {
+    "svg": "cloudsfx.svg",
+    "symbol": "SCREEN_cloudsfx"
+  }
+}

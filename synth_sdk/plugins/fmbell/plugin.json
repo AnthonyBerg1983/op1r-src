@@ -1,0 +1,19 @@
+{
+  "name": "fmbell",
+  "kind": "synth",
+  "order": 2,
+  "symbol": "ENGINE_fmbell",
+  "sources": [
+    "fmbell.c"
+  ],
+  "defaults": [
+    8192,
+    16000,
+    8000,
+    0
+  ],
+  "screen": {
+    "svg": "fmbell.svg",
+    "symbol": "SCREEN_fmbell"
+  }
+}

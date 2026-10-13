@@ -1,0 +1,17 @@
+{
+  "name": "paul",
+  "kind": "synth",
+  "order": 99,
+  "symbol": "ENGINE_paulstretch",
+  "sources": [
+    "paulstretch.c",
+    "paulstretch_dsp.c"
+  ],
+  "defaults": [
+    0,
+    16384,
+    32767,
+    0
+  ],
+  "uses_sample": true
+}

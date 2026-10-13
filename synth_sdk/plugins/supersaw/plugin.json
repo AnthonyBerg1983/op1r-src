@@ -1,0 +1,19 @@
+{
+  "name": "supersaw",
+  "kind": "synth",
+  "order": 1,
+  "symbol": "ENGINE_supersaw",
+  "sources": [
+    "supersaw.c"
+  ],
+  "defaults": [
+    8000,
+    0,
+    12000,
+    6000
+  ],
+  "screen": {
+    "svg": "supersaw.svg",
+    "symbol": "SCREEN_supersaw"
+  }
+}

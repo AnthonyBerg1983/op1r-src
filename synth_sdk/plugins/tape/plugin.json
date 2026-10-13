@@ -1,0 +1,19 @@
+{
+  "name": "tape",
+  "kind": "fx",
+  "order": 1,
+  "symbol": "FX_tape",
+  "sources": [
+    "tape.c"
+  ],
+  "defaults": [
+    12000,
+    14000,
+    12000,
+    6000
+  ],
+  "screen": {
+    "svg": "tapeecho.svg",
+    "symbol": "SCREEN_tape"
+  }
+}
