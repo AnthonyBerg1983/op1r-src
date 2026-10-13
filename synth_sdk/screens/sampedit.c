@@ -46,6 +46,7 @@ typedef struct {
     int8_t ac_sens;                          /* transient rise ratio 2..8, lower = more hits (auto-cut blue, tr: shift + red) */
     int8_t shown_sens;
     int16_t ac_n;                            /* proposed cuts */
+    int8_t ac_parts;                         /* equal: number of parts 1..24 (blue) */
     int32_t ac_cut[24][2];                   /* proposed pad regions (samples) */
     int32_t ac_old[24][2];                   /* pad regions before the last auto-cut (undo) */
     uint8_t fd_shape, fd_curve;              /* fade: 0 in, 1 out, 2 both; 0 linear, 1 equal power, 2 exp */
@@ -398,9 +399,9 @@ void se_ac_compute(sampedit *e)
     if (e->ac_method == 0) {
         se_transients(e);
         for (int i = 0; i < e->n_on && n < 24; i++) if (e->on[i] < last) st[n++] = e->on[i];   /* first 24 */
-    } else if (last > 24 * 64) {
-        for (n = 0; n < 24; n++) {
-            int32_t p = (int32_t)((int64_t)(last + 1) * n / 24);
+    } else if (last > e->ac_parts * 64) {
+        for (n = 0; n < e->ac_parts; n++) {
+            int32_t p = (int32_t)((int64_t)(last + 1) * n / e->ac_parts);
             int32_t z = n ? se_zero_cross_dir(e->d, p, -1) : 0;
             st[n] = z >= 0 && p - z < 1024 ? z : p;
         }
@@ -442,6 +443,12 @@ void se_tr_sens(sampedit *e, int32_t steps)
     int32_t v = (e->ac_sens ? e->ac_sens : 4) - steps;
     e->ac_sens = (int8_t)(v < 2 ? 2 : v > 8 ? 8 : v);
     e->on_dirty = 1;                                              /* re-detect (once, lazily) */
+}
+void se_ac_parts(sampedit *e, int32_t steps)                      /* blue in the auto-cut mode (equal): 1..24 parts */
+{
+    int32_t v = e->ac_parts + steps;
+    e->ac_parts = (int8_t)(v < 1 ? 1 : v > 24 ? 24 : v);
+    se_ac_compute(e);
 }
 void se_ac_sens(sampedit *e, int32_t steps)                       /* blue in the auto-cut mode (hits) */
 {
@@ -774,6 +781,7 @@ void se_open_drum(sampedit *e, int16_t *data, int16_t *table, int pad)
     e->drum = 1; se_n = SE_N_DRUM; e->umax = SE_N_DRUM; e->w = 0;
     e->pt = table; e->pad = (uint8_t)(pad < 0 || pad > 23 ? 0 : pad);
     e->ac_undo = 0; if (!e->ac_sens) e->ac_sens = 4;
+    if (!e->ac_parts) e->ac_parts = 24;
     se_open_common(e, data);
 }
 static void se_open_common(sampedit *e, int16_t *data)
@@ -897,7 +905,10 @@ void se_knob(int knob, int delta)
     int st = *acc / unit; if (!st) return;
     *acc -= st * unit;
     if (se.mode == 1) { if (knob == 0) se_fade_len(&se, st); return; }    /* fade mode: blue = fade length */
-    if (se.mode == 2) { if (knob == 0 && !se.ac_method) se_ac_sens(&se, st); return; }   /* auto-cut: sensitivity */
+    if (se.mode == 2) {                                           /* auto-cut: blue = sensitivity (hits) / parts (equal) */
+        if (knob == 0) { if (se.ac_method) se_ac_parts(&se, st); else se_ac_sens(&se, st); }
+        return;
+    }
     /* drum: marker moves change the live pad table at once (heard), the patch is written on close / edits */
     if (knob < 2) { se_move(&se, knob, st, shift); if (!se.drum) se_markers(); }
     else if (knob == 2 && shift) { se_shift_sel(&se, st); if (!se.drum) se_markers(); }

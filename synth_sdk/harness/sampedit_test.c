@@ -275,6 +275,12 @@ int main(int argc, char **argv)
         /* equal: 24 slices up to the end of the sound */
         e.ac_method = 1; se_ac_compute(&e);
         assert(e.ac_n == 24 && e.ac_cut[0][0] == 0);
+        /* equal: blue sets the number of parts (1..24, default 24) */
+        assert(e.ac_parts == 24);
+        se_ac_parts(&e, -20); assert(e.ac_parts == 4 && e.ac_n == 4 && e.ac_cut[0][0] == 0);
+        { int32_t len = e.ac_cut[3][1]; for (int i = 1; i < 4; i++) assert(abs(e.ac_cut[i][0] - len * i / 4) <= 1100 && e.ac_cut[i - 1][1] == e.ac_cut[i][0]); }
+        se_ac_parts(&e, -100); assert(e.ac_parts == 1 && e.ac_n == 1 && e.ac_cut[0][0] == 0);
+        se_ac_parts(&e, 100); assert(e.ac_parts == 24 && e.ac_n == 24);
         for (int i = 1; i < 24; i++) assert(e.ac_cut[i][0] > e.ac_cut[i - 1][0] && e.ac_cut[i - 1][1] == e.ac_cut[i][0]);
         /* a decaying tail with ripples: still one hit per note (hardware: hits inside one sound) */
         memset(buf_all, 0, sizeof buf_all);
