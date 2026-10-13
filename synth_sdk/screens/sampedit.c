@@ -41,6 +41,7 @@ typedef struct {
     int16_t w7;                              /* sampler gain word before the preview */
     int32_t shown_att;
     int16_t shown_pad;
+    uint8_t loopsel;                         /* synth: 1 = blue / green move the loop points (blue press toggles) */
     uint8_t mode;                            /* 0 edit, 1 fade, 2 auto-cut (drum) */
     uint8_t ac_method, ac_undo;              /* auto-cut: 0 hits, 1 equal; undo available */
     int8_t ac_sens;                          /* transient rise ratio 2..8, lower = more hits (auto-cut blue, tr: shift + red) */
@@ -514,6 +515,16 @@ int se_normalize(sampedit *e)
     e->cache_len = -1; e->on_dirty = 1;
     return 1;
 }
+/* synth: loop points stay inside start..end (as in the stock sampler), loop start < loop end */
+static void se_loop_clamp(sampedit *e)
+{
+    if (e->drum) return;
+    int16_t *w = e->w;
+    if (w[1] < w[0]) w[1] = w[0];
+    if (w[1] > w[3] - 1) w[1] = (int16_t)(w[3] - 1);
+    if (w[2] > w[3]) w[2] = w[3];
+    if (w[2] < w[1] + 1) w[2] = (int16_t)(w[1] + 1);
+}
 /* Shift + white: move the selection, length kept (ZC: the start lands on a crossing in the turning direction) */
 void se_shift_sel(sampedit *e, int32_t steps)
 {
@@ -533,15 +544,16 @@ void se_shift_sel(sampedit *e, int32_t steps)
     if (w0 < 0) w0 = 0;
     if (w0 + len > e->umax) w0 = e->umax - len;
     SE_SET(e, 0, w0); SE_SET(e, 3, (w0 + len));
+    se_loop_clamp(e);
 }
 
 /* move marker m (0 start, 1 end) by delta knob steps (fine: 1 word, else ~1/200 of the view) */
 void se_move(sampedit *e, int m, int32_t steps, int fine)
 {
-    int idx = m ? 3 : 0;
+    int lp = e->loopsel && !e->drum, idx = lp ? 1 + m : m ? 3 : 0, oth = lp ? 2 - m : m ? 0 : 3;
     int32_t per = fine ? 1 : (S2U(e, e->view_len, 0) / 200 > 1 ? S2U(e, e->view_len, 0) / 200 : 1);
     int32_t w = SE_GET(e, idx) + steps * per;
-    int32_t lo = m ? SE_GET(e, 0) + 1 : 0, hi = m ? e->umax : SE_GET(e, 3) - 1;
+    int32_t lo = m ? SE_GET(e, oth) + 1 : lp ? SE_GET(e, 0) : 0, hi = m ? (lp ? SE_GET(e, 3) : e->umax) : SE_GET(e, oth) - 1;
     w = w < lo ? lo : w > hi ? hi : w;
     if (e->snap && steps) {
         /* the next crossing in the turning direction whose stored position differs from the old one (positions are
@@ -557,13 +569,15 @@ void se_move(sampedit *e, int m, int32_t steps, int fine)
         if (wz != old && wz >= lo && wz <= hi) w = wz;
     }
     SE_SET(e, idx, w);
+    se_loop_clamp(e);                                             /* start / end moves push the loop along */
+    if (lp) e->w[4 + idx] = 0;                                    /* fine word 5 / 6 off: the loop point is where it is drawn */
     e->last = (uint8_t)m;
 }
 
 /* zoom by factor 2 steps around the last moved marker; scroll by 1/8 view */
 void se_zoom(sampedit *e, int steps)
 {
-    int32_t c = U2S(e, SE_GET(e, e->last ? 3 : 0));
+    int32_t c = U2S(e, SE_GET(e, e->loopsel && !e->drum ? 1 + e->last : e->last ? 3 : 0));
     int32_t len = e->view_len;
     for (; steps > 0 && len > SE_COLS; steps--) len /= 2;
     for (; steps < 0 && len < SE_N; steps++) len *= 2;
@@ -645,7 +659,7 @@ void se_draw(sampedit *e, void *r)
         int32_t x = OP1_Q10(SE_X0 + c) + 0x200;
         se_ln(r, x, y0, x, y1, 0x400, col);
     }
-    if (!e->drum) {                                                /* sampler loop points (words 1 / 2): display only */
+    if (!e->drum) {                                                /* sampler loop points (words 1 / 2); blue / green while edited */
         int32_t ls = se_w2s(e->w[1]), le = se_w2s(e->w[2]), yb = OP1_Q10(SE_YMID + SE_YAMP + 2);
         if (le > ls) {
             int32_t xs = se_x(e, ls), xe = se_x(e, le), x0 = OP1_Q10(SE_X0), x1 = OP1_Q10(SE_X1);
@@ -654,15 +668,16 @@ void se_draw(sampedit *e, void *r)
             for (int m = 0; m < 2; m++) {                          /* line + flag at the bottom: [ ... ] */
                 int32_t x = m ? xe : xs;
                 if (x < x0 || x > x1) continue;
-                se_ln(r, x, OP1_Q10(SE_YMID - SE_YAMP), x, yb, 0x400, c_loop);
-                se_ln(r, x, yb, x + (m ? -OP1_Q10(5) : OP1_Q10(5)), yb, 0x600, c_loop);
+                const uint8_t *lc = !e->loopsel ? c_loop : m ? c_green : c_blue;
+                se_ln(r, x, OP1_Q10(SE_YMID - SE_YAMP), x, yb, e->loopsel ? 0x600 : 0x400, lc);
+                se_ln(r, x, yb, x + (m ? -OP1_Q10(5) : OP1_Q10(5)), yb, 0x600, lc);
             }
         }
     }
     for (int m = 0; m < 2; m++) {                                  /* markers: line + flag at the top */
         int32_t x = se_x(e, m ? b : a);
         if (x < OP1_Q10(SE_X0) || x > OP1_Q10(SE_X1)) continue;
-        const uint8_t *col = m ? c_green : c_blue;
+        const uint8_t *col = e->loopsel && !e->drum ? c_grey : m ? c_green : c_blue;
         se_ln(r, x, OP1_Q10(SE_YMID - SE_YAMP - 6), x, OP1_Q10(SE_YMID + SE_YAMP + 2), 0x600, col);
         int32_t f = m ? -OP1_Q10(5) : OP1_Q10(5);
         se_ln(r, x, OP1_Q10(SE_YMID - SE_YAMP - 6), x + f, OP1_Q10(SE_YMID - SE_YAMP - 6), 0x600, col);
@@ -813,7 +828,7 @@ void se_open_drum(sampedit *e, int16_t *data, int16_t *table, int pad)
 }
 static void se_open_common(sampedit *e, int16_t *data)
 {
-    e->shown_cs = -1; e->shown_att = 0x7FFF; e->shown_pad = -1; e->shown_sens = -1; e->mode = 0;
+    e->shown_cs = -1; e->shown_att = 0x7FFF; e->shown_pad = -1; e->shown_sens = -1; e->mode = 0; e->loopsel = 0;
     if (!e->ac_sens) e->ac_sens = 4;
     if (!e->fd_pct) e->fd_pct = 100;
     e->on_dirty = 1; e->n_on = 0;
@@ -848,6 +863,7 @@ static void se_peaks(void)                                        /* as SampleBu
 }
 static void se_markers(void)                                      /* persist the markers */
 {
+    se_loop_clamp(&se);                                           /* also after trim / cut / paste */
     if (se.drum) SE_DRUM_TO_PATCH(SE_PATCH_D(se_slot)); else SE_SET_KNOBS(SE_PATCH_S(se_slot), se.w);
 }
 static void se_store(int audio)                                   /* persist markers (+ audio) */
@@ -919,6 +935,7 @@ void se_key(int code)                                             /* pressed key
     else if (code == 0x0A) se_copy(&se);                          /* lift: copy the selection */
     else if (code == 0x0C) { if (se_cut(&se)) se_store(1); }      /* scissors: cut (drum: copy + zero) */
     else if (code == 0x0B) { if (se_paste(&se)) se_store(1); }    /* drop: paste (drum: overwrite) */
+    else if (code == 0x3B && !se.drum) { se.loopsel ^= 1; se.last = 0; }   /* blue press: loop points <-> start / end */
     else if (code == 0x3E) se.snap = (uint8_t)((se.snap + 1) % 3); /* red press: zc -> transients -> off */
 }
 void se_knob(int knob, int delta)

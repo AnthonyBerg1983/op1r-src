@@ -58,6 +58,7 @@ int main(int argc, char **argv)
         frame(&e, "markers: start 0.54 s, end 2.68 s (view 0..2.6 s)");
         w[1] = (int16_t)se_s2w(30870, 0); w[2] = (int16_t)se_s2w(61740, 0);       /* loop 0.7 .. 1.4 s */
         frame(&e, "loop points (words 1 / 2): grey [ ] at the bottom, display only");
+        e.loopsel = 1; frame(&e, "blue press: loop points blue / green (edited), start / end grey"); e.loopsel = 0;
         w[1] = w0[1]; w[2] = w0[2];
         e.snap = 1; e.last = 0; e.view_len = 4096; e.view0 = se_w2s(w[0]) - 2048; se_move(&e, 0, 0, 0);
         frame(&e, "zoomed on start, ZC snap on");
@@ -158,6 +159,17 @@ int main(int argc, char **argv)
     se_shift_sel(&e, 5); assert(w[3] - w[0] == 1000 && w[0] > 3000);
     se_shift_sel(&e, -100000); assert(w[0] == 0 && w[3] == 1000);
     se_shift_sel(&e, 100000); assert(w[3] == 32767 && w[0] == 31767);
+    /* blue press: loop mode moves words 1 / 2 (kept ordered, fine words cleared), start / end untouched */
+    e.loopsel = 1; w[1] = 5000; w[2] = 6000; w[5] = 77; w[6] = 88;
+    w[0] = 4000; w[3] = 8000;
+    se_move(&e, 0, -100000, 1); assert(w[1] == 4000 && w[5] == 0);          /* not before start */
+    se_move(&e, 0, 100000, 1); assert(w[1] == 5999 && w[0] == 4000 && w[3] == 8000);
+    se_move(&e, 1, -100000, 1); assert(w[2] == 6000 && w[6] == 0);
+    se_move(&e, 1, 100000, 1); assert(w[2] == 8000);                        /* not after end */
+    e.loopsel = 0;
+    se_move(&e, 1, -2500, 1); assert(w[3] == 5500 && w[2] == 5500 && w[1] == 5499);   /* end pushes the loop */
+    se_move(&e, 0, 100000, 1); assert(w[0] == 5499 && w[1] == 5499 && w[2] == 5500);
+    e.loopsel = 0;
     e.snap = 1; w[0] = 3000; w[3] = 4000; se_shift_sel(&e, 1);
     { int32_t s1 = se_w2s(w[0]), z1 = se_zero_cross(buf, s1); assert(w[3] - w[0] == 1000 && w[0] > 3000 && abs(z1 - s1) <= 5); }
     /* transients: the 4 note onsets (0, 0.55, 1.10, 1.65 s), each just before its hit; stepping goes note to note */

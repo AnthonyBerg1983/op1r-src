@@ -762,7 +762,7 @@ void key_event_hook(int code, int pressed)
         }
         if (se_is_open()) {
             if (code == 0x02 || code == 0x03) { se_swallow[code] = 1; return; }
-            if ((code >= 0x06 && code <= 0x09) || (code >= 0x0A && code <= 0x0C && !synth_held && !drum_held) || code == 0x3E || (code == 0x24 && *(volatile uint8_t *)0x01DD7F78)) {
+            if ((code >= 0x06 && code <= 0x09) || (code >= 0x0A && code <= 0x0C && !synth_held && !drum_held) || code == 0x3E || code == 0x3B || (code == 0x24 && *(volatile uint8_t *)0x01DD7F78)) {
                 se_key(code); se_swallow[code] = 1; return;
             }
             if ((code >= 0x04 && code <= 0x05) || code == 0x00 || code == 0x01 || code == 0x15 || code == 0x2C) {
