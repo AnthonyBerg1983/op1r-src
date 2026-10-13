@@ -43,7 +43,8 @@ typedef struct {
     int16_t shown_pad;
     uint8_t mode;                            /* 0 edit, 1 fade, 2 auto-cut (drum) */
     uint8_t ac_method, ac_undo;              /* auto-cut: 0 hits, 1 equal; undo available */
-    int8_t ac_sens;                          /* hits: rise ratio 2..8 (blue), lower = more hits */
+    int8_t ac_sens;                          /* transient rise ratio 2..8, lower = more hits (auto-cut blue, tr: shift + red) */
+    int8_t shown_sens;
     int16_t ac_n;                            /* proposed cuts */
     int32_t ac_cut[24][2];                   /* proposed pad regions (samples) */
     int32_t ac_old[24][2];                   /* pad regions before the last auto-cut (undo) */
@@ -163,7 +164,7 @@ void se_finalize(sampedit *e)
     e->trimmed = 0; e->cache_len = -1;
 }
 
-/* Shift + red: attenuation of the whole sample. Preview: the stock sampler gain (word 7; playback gain ~ word^2,
+/* red: attenuation of the whole sample. Preview: the stock sampler gain (word 7; playback gain ~ word^2,
  * SamplerScreen shows 20 log10(16 p^2) dB) set to w7 * sqrt(A); applied to the audio when the editor closes. */
 #define SE_ATT_MAX  120                      /* 60 dB */
 #define SE_AMP_STEP 61870                    /* 10^(-0.5/20), Q16 */
@@ -212,7 +213,7 @@ void se_transients(sampedit *e)
         for (int32_t i = k * SE_TR_BLK; i < (k + 1) * SE_TR_BLK; i++) { int32_t v = e->d[i] < 0 ? -e->d[i] : e->d[i]; if (v > pk) pk = v; }
         int32_t before = 0;
         for (int h = 0; h < 8; h++) if (hist[h] > before) before = hist[h];
-        if (pk >= floor_ && pk >= (e->drum && e->ac_sens ? e->ac_sens : 4) * before && k - last >= 32 && e->n_on < 256) {
+        if (pk >= floor_ && pk >= (e->ac_sens ? e->ac_sens : 4) * before && k - last >= 32 && e->n_on < 256) {
             int32_t i = k * SE_TR_BLK, thr = pk / 4;
             while (i < (k + 1) * SE_TR_BLK - 1 && (e->d[i] < 0 ? -e->d[i] : e->d[i]) < thr) i++;
             int32_t z = se_zero_cross_dir(e->d, i, -1);
@@ -434,6 +435,13 @@ int se_ac_undo(sampedit *e)
     for (int i = 0; i < 24; i++) se_pad_set_pair(e, i, e->ac_old[i][0], e->ac_old[i][1]);
     e->ac_undo = 0;
     return 1;
+}
+/* transient snap sensitivity (Shift + red while tr is on): right = more hits; shown as "tr 1".."tr 7" */
+void se_tr_sens(sampedit *e, int32_t steps)
+{
+    int32_t v = (e->ac_sens ? e->ac_sens : 4) - steps;
+    e->ac_sens = (int8_t)(v < 2 ? 2 : v > 8 ? 8 : v);
+    e->on_dirty = 1;                                              /* re-detect (once, lazily) */
 }
 void se_ac_sens(sampedit *e, int32_t steps)                       /* blue in the auto-cut mode (hits) */
 {
@@ -689,7 +697,15 @@ void se_draw(sampedit *e, void *r)
     }
     op1_text_draw(se_txt[SE_T_LEN], r, se_ident);
     if (e->snap == 1) op1_text_draw(se_txt[SE_T_ZC], r, se_ident);
-    if (e->snap == 2) op1_text_draw(se_txt[SE_T_TR], r, se_ident);
+    if (e->snap == 2) {                                            /* "tr N": sensitivity 1..7 (= 9 - rise ratio) */
+        int s = 9 - (e->ac_sens ? e->ac_sens : 4);
+        if (s != e->shown_sens) {
+            char t[5] = { 't', 'r', ' ', (char)('0' + s), 0 };
+            op1_text_set(se_txt[SE_T_TR], t);
+            e->shown_sens = (int8_t)s;
+        }
+        op1_text_draw(se_txt[SE_T_TR], r, se_ident);
+    }
     if (e->att) {                                                 /* -x.x db */
         if (e->att != e->shown_att) {
             char t[12]; int n = 0, db10 = e->att * 5;
@@ -762,7 +778,8 @@ void se_open_drum(sampedit *e, int16_t *data, int16_t *table, int pad)
 }
 static void se_open_common(sampedit *e, int16_t *data)
 {
-    e->shown_cs = -1; e->shown_att = -1; e->shown_pad = -1; e->mode = 0;
+    e->shown_cs = -1; e->shown_att = -1; e->shown_pad = -1; e->shown_sens = -1; e->mode = 0;
+    if (!e->ac_sens) e->ac_sens = 4;
     if (!e->fd_pct) e->fd_pct = 100;
     e->on_dirty = 1; e->n_on = 0;
     e->att = 0; e->att_amp = 65536;
@@ -885,8 +902,9 @@ void se_knob(int knob, int delta)
     if (knob < 2) { se_move(&se, knob, st, shift); if (!se.drum) se_markers(); }
     else if (knob == 2 && shift) { se_shift_sel(&se, st); if (!se.drum) se_markers(); }
     else if (knob == 2) se_zoom(&se, st);
-    else if (shift) { se_attenuate(&se, -st); if (!se.drum) se_markers(); }   /* right: less attenuation */
-    else se_scroll(&se, st);
+    else if (shift && se.snap == 2) se_tr_sens(&se, st);          /* red + Shift with tr: detection sensitivity */
+    else if (shift) se_scroll(&se, st);                           /* red + Shift: scroll */
+    else { se_attenuate(&se, -st); if (!se.drum) se_markers(); }  /* red: volume (right: less attenuation) */
 }
 /* play position: sampler voices in L1 (synth 6 x 0x10, vtable 0x019119F4, index = pos >> 12; drum 12 x 0x14,
  * vtable 0x0190FAC4, index = pos >> 11), +4 = the slot's sampler object (obj[0] = SampleBuffer), +8 = position.

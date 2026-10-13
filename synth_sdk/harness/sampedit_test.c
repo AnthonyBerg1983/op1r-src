@@ -60,6 +60,7 @@ int main(int argc, char **argv)
         frame(&e, "zoomed on start, ZC snap on");
         e.snap = 2; e.view0 = 0; e.view_len = se_w2s(9600); w[0] = 0; se_move(&e, 0, 1, 1);
         frame(&e, "transient snap (tr): start on note 2, ticks = detected hits");
+        se_tr_sens(&e, 2); frame(&e, "tr sensitivity 7 (Shift + red): label tr 7"); se_tr_sens(&e, -2);
         e.snap = 0; w[0] = (int16_t)se_s2w(24000, 0); w[3] = (int16_t)se_s2w(44100 * 2 + 30000, 0);
         se_host_shift = 1; frame(&e, "Shift held: alternate labels"); se_host_shift = 0;
         e.mode = 1; e.fd_shape = 2; e.fd_curve = 1; e.fd_pct = 60;
@@ -162,6 +163,22 @@ int main(int argc, char **argv)
     for (int i = 0; i < 4; i++) { int32_t t = (int32_t)(i * 0.55 * 44100); assert(e.on[i] <= t + 8 && e.on[i] >= t - 300); }
     e.snap = 2; w[0] = 0; w[3] = 32767;
     se_move(&e, 0, 1, 1); assert(abs(se_w2s(w[0]) - e.on[1]) <= 5);
+    /* transient sensitivity (Shift + red with tr): a soft re-attack (3x above the decayed tail) at 0.5 s is a hit only
+     * at high sensitivity; "tr N" = 9 - rise ratio, clamped 1..7 */
+    {
+        int16_t keep = e.ac_sens;
+        for (int i = 0; i < SE_N; i++) {
+            double t = i / 44100.0, env = 20000 * exp(-t * 3.2);              /* ~4000 at 0.5 s */
+            if (t >= 0.5) env = 12000 * exp(-(t - 0.5) * 3.2);
+            buf[i] = (int16_t)(env * sin(2 * M_PI * 440 * t));
+        }
+        e.ac_sens = 4; e.on_dirty = 1; se_transients(&e); int n4 = e.n_on;
+        se_tr_sens(&e, -10); assert(e.ac_sens == 8 && e.on_dirty); se_transients(&e); int n1 = e.n_on;
+        se_tr_sens(&e, 10); assert(e.ac_sens == 2); se_transients(&e); int n7 = e.n_on;
+        printf("tr sensitivity: hits at 1 / 4 / 7: %d / %d / %d\n", n1, n4, n7);
+        assert(n1 == 1 && n4 == 1 && n7 == 2);
+        e.ac_sens = keep; memcpy(buf, ref, SE_N * sizeof *buf); e.on_dirty = 1;
+    }
     se_move(&e, 0, 1, 1); assert(abs(se_w2s(w[0]) - e.on[2]) <= 5);
     se_move(&e, 0, -1, 1); assert(abs(se_w2s(w[0]) - e.on[1]) <= 5);
     { int16_t o = w[0]; se_move(&e, 0, -1, 1); assert(w[0] < o); }     /* to the first (at 0) */
