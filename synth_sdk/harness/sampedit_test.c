@@ -64,6 +64,9 @@ int main(int argc, char **argv)
         se_host_shift = 1; frame(&e, "Shift held: alternate labels"); se_host_shift = 0;
         e.mode = 1; e.fd_shape = 2; e.fd_curve = 1; e.fd_pct = 60;
         frame(&e, "fade mode: both, power, 60 % (blue), preview + curve");
+        e.fd_shape = 0; e.fd_curve = 2; e.fd_pct = 100; e.view0 = 0; e.view_len = 44100 * 3; se_move(&e, 0, 0, 0);
+        frame(&e, "fade mode: in, exp, 100 %");
+        e.view0 = 0; e.view_len = se_w2s(9600); se_move(&e, 0, 0, 0);
         e.mode = 0; e.snap = 2; e.view0 = 0; e.view_len = 44100 * 2 + 20000;              /* README screenshot */
         se_transients(&e); w[0] = (int16_t)se_s2w(e.on[1], 0); w[3] = (int16_t)se_s2w(e.on[3] - 2000, 0);
         frame(&e, "readme: selection over note 2 and 3, transient snap");
@@ -172,6 +175,9 @@ int main(int argc, char **argv)
     for (int i = 0; i < SE_N; i++) buf[i] = 10000;
     e.fd_shape = 1; e.fd_curve = 1; assert(se_fade_apply(&e));     /* out, equal power: -3 dB at the middle */
     assert(buf[b - 1] == 0 && abs(buf[(a + b) / 2] - 7071) <= 30 && buf[a] >= 9990);
+    for (int i = 0; i < SE_N; i++) buf[i] = 10000;
+    e.fd_shape = 0; e.fd_curve = 2; assert(se_fade_apply(&e));     /* in, exp: 0, -30 dB at the middle, full at the end */
+    assert(buf[a] == 0 && abs(buf[(a + b) / 2] - 307) <= 15 && buf[b - 1] >= 9900 && buf[(a + b) / 2 + (b - a) / 4] < 2000);
     for (int i = 0; i < SE_N; i++) buf[i] = 10000;
     e.fd_shape = 2; e.fd_curve = 0; e.fd_pct = 50; assert(se_fade_apply(&e));   /* both, a quarter of each half */
     { int32_t q = (b - a) / 4; assert(buf[a] == 0 && buf[b - 1] == 0 && buf[a + q + 1] == 10000 && buf[(a + b) / 2] == 10000); }

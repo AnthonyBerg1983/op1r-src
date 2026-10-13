@@ -47,7 +47,7 @@ typedef struct {
     int16_t ac_n;                            /* proposed cuts */
     int32_t ac_cut[24][2];                   /* proposed pad regions (samples) */
     int32_t ac_old[24][2];                   /* pad regions before the last auto-cut (undo) */
-    uint8_t fd_shape, fd_curve;              /* fade: 0 in, 1 out, 2 both; 0 linear, 1 equal power */
+    uint8_t fd_shape, fd_curve;              /* fade: 0 in, 1 out, 2 both; 0 linear, 1 equal power, 2 exp */
     int16_t fd_pct;                          /* fade length, % of the selection (both: of each half) */
     int32_t cache_v0, cache_len;             /* view the columns were computed for (-1: none) */
 } sampedit;
@@ -253,12 +253,17 @@ static const int16_t se_qsin[65] = {     /* 32767 sin(pi/2 i/64): equal-power cu
     16151,16846,17530,18204,18868,19519,20159,20787,21403,22005,22594,23170,23731,24279,24811,25329,25832,26319,
     26790,27245,27683,28105,28510,28898,29268,29621,29956,30273,30571,30852,31113,31356,31580,31785,31971,32137,
     32285,32412,32521,32609,32678,32728,32757,32767 };
+static const int16_t se_qexp[65] = {     /* 32767 (10^(3 i/64) - 1) / 999: exponential, 60 dB range */
+    0,4,8,13,18,23,30,37,45,54,64,75,87,101,116,133,152,173,196,222,251,284,320,360,405,454,510,572,641,718,803,
+    898,1004,1123,1254,1401,1564,1746,1949,2175,2427,2707,3019,3367,3755,4187,4667,5203,5800,6465,7205,8030,8949,
+    9973,11113,12384,13799,15375,17131,19088,21267,23694,26399,29411,32767 };
 static int32_t se_curve(const sampedit *e, int32_t t)            /* t, result: Q15 (0..32768) */
 {
     if (!e->fd_curve) return t;
+    const int16_t *c = e->fd_curve == 2 ? se_qexp : se_qsin;
     int32_t x = t * 64, i = x >> 15, f = x & 0x7FFF;              /* interpolated table */
     if (i >= 64) return 32767;
-    return se_qsin[i] + (((se_qsin[i + 1] - se_qsin[i]) * f) >> 15);
+    return c[i] + (((c[i + 1] - c[i]) * f) >> 15);
 }
 /* gain (Q15) at sample i of the selection [a, b) */
 int32_t se_fade_gain(const sampedit *e, int32_t i, int32_t a, int32_t b)
@@ -709,7 +714,7 @@ void se_draw(sampedit *e, void *r)
     }
     static const char *const shift_lbl[4] = { "dc", "fade", 0, 0 }, *const shift_lbl_d[4] = { "dc", "fade", "auto", 0 };
     static const char *const drum_lbl[4] = { "fit", "zero", "norm", "rev" }, *const ac_lbl[2] = { "hits", "equal" };
-    static const char *const fd_shape_lbl[3] = { "in", "out", "both" }, *const fd_curve_lbl[2] = { "linear", "power" };
+    static const char *const fd_shape_lbl[3] = { "in", "out", "both" }, *const fd_curve_lbl[3] = { "linear", "power", "exp" };
     int shift = se_shift_held();
     for (int k = 0; k < 4; k++) {
         const char *l = e->mode == 1 ? (k == 0 ? "ok" : k == 1 ? fd_shape_lbl[e->fd_shape] : k == 2 ? fd_curve_lbl[e->fd_curve] : "cancel")
@@ -838,7 +843,7 @@ void se_key(int code)                                             /* pressed key
     if (se.mode == 1) {                                           /* fade mode: T1 ok, T2 shape, T3 curve, T4 cancel */
         if (code == 0x06) { if (se_fade_apply(&se)) se_store(1); se.mode = 0; }
         else if (code == 0x07) se.fd_shape = (uint8_t)((se.fd_shape + 1) % 3);
-        else if (code == 0x08) se.fd_curve ^= 1;
+        else if (code == 0x08) se.fd_curve = (uint8_t)((se.fd_curve + 1) % 3);
         else if (code == 0x09) se.mode = 0;
         return;
     }
