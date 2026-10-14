@@ -26,6 +26,7 @@ CODE_BASE = 0x01E00000
 CODE_LIMIT = 0x01E40000   # loaded image must end below (another project's module starts here, docs/30)
 BSS_LIMIT = 0x01EF0000    # .bss at 0x01EC0000 (link.ld) must end below
 MAGIC = 0x5300
+MAX_ORDER = 31                                  # OP1_MAX_ORDER (op1_plugin.h)
 BUILTIN = {'fm','digital','drwave','string','cluster','pulse','sampler','phase','drum','dbox',
            'ls','dna','dsynth','voltage','iter'}
 VT_ITER, VT_FILTER, VT_FILTER_ST = 0x019103CC, 0x01910C94, 0x01910CB4   # _ST: master (stereo) filter
@@ -146,29 +147,40 @@ OPZ_HOOKS = {0x019E0CFC: ('hook_opzget', bytes.fromhex('00601000')),   # midi_op
 def sh(cmd):
     print('$', cmd); subprocess.run(cmd, shell=True, check=True)
 
+def by_order(lst):
+    """plugins indexed by order: [None (0 = stock), plugin with order 1 or None, ...] up to the highest order"""
+    out = [None] * (max([e['order'] for e in lst], default=0) + 1)
+    for e in lst:
+        out[e['order']] = e
+    return out
+
 def gen_table(engs, fxs):
+    # every table is indexed by order (the number stored in patches); unused orders are 0 (stock iter / filter)
+    eo, fo = by_order(engs), by_order(fxs)
     lines = ['#include "op1_synth.h"']
     lines += [f'extern const op1_engine_t {e["symbol"]};' for e in engs]
-    lines.append('const op1_engine_t *const op1_engines[] = { 0, ' +
-                 ', '.join('&' + e['symbol'] for e in engs) + ' };')
-    lines.append(f'const int op1_engine_count = {len(engs) + 1};')
+    lines.append('const op1_engine_t *const op1_engines[] = { 0' +
+                 ''.join(', &' + e['symbol'] if e else ', 0' for e in eo[1:]) + ' };')
+    lines.append(f'const int op1_engine_count = {len(eo)};')
     lines.append('const char *const op1_engine_names[] = { ' +
-                 ', '.join(json.dumps(e['name']) for e in engs) + ', 0 };')
+                 ''.join(json.dumps(e['name'] if e else '') + ', ' for e in eo[1:]) + '0 };')
     lines.append('const char *const op1_sample_engine_names[] = { ' +
                  ''.join(json.dumps(e['name']) + ', ' for e in engs if e.get('uses_sample')) + '0 };')
     lines += [f'extern const op1_screen_t {e["screen"]["symbol"]};' for e in engs if e.get('screen')]
     lines.append('const op1_screen_t *const op1_engine_screens[] = { 0' +
-                 ''.join(', &' + e['screen']['symbol'] if e.get('screen') else ', 0' for e in engs) + ' };')
+                 ''.join(', &' + e['screen']['symbol'] if e and e.get('screen') else ', 0' for e in eo[1:]) + ' };')
     lines.append('const char *const op1_engine_svgs[] = { 0' +
-                 ''.join(', ' + json.dumps(os.path.basename(e['screen']['svg'])) if e.get('screen') else ', 0' for e in engs) + ' };')
+                 ''.join(', ' + json.dumps(os.path.basename(e['screen']['svg'])) if e and e.get('screen') else ', 0'
+                         for e in eo[1:]) + ' };')
     lines += [f'extern const op1_fx_t {f["symbol"]};' for f in fxs]
     lines += [f'extern const op1_screen_t {f["screen"]["symbol"]};' for f in fxs if f.get('screen')]
     lines.append('const op1_screen_t *const op1_fx_screens[] = { 0' +
-                 ''.join(', &' + f['screen']['symbol'] if f.get('screen') else ', 0' for f in fxs) + ' };')
+                 ''.join(', &' + f['screen']['symbol'] if f and f.get('screen') else ', 0' for f in fo[1:]) + ' };')
     lines.append('const char *const op1_fx_svgs[] = { 0' +
-                 ''.join(', ' + json.dumps(os.path.basename(f['screen']['svg'])) if f.get('screen') else ', 0' for f in fxs) + ' };')
-    lines.append('const op1_fx_t *const op1_fxs[] = { 0' + ''.join(', &' + f['symbol'] for f in fxs) + ' };')
-    lines.append(f'const int op1_fx_count = {len(fxs) + 1};')
+                 ''.join(', ' + json.dumps(os.path.basename(f['screen']['svg'])) if f and f.get('screen') else ', 0'
+                         for f in fo[1:]) + ' };')
+    lines.append('const op1_fx_t *const op1_fxs[] = { 0' + ''.join(', &' + f['symbol'] if f else ', 0' for f in fo[1:]) + ' };')
+    lines.append(f'const int op1_fx_count = {len(fo)};')
     lines.append('const char *const op1_fx_names[] = { ' +
                  ''.join(json.dumps(f['name']) + ', ' for f in fxs) + '0 };')
     open(os.path.join(HERE, 'build', 'engines_table.c'), 'w').write('\n'.join(lines) + '\n')
@@ -332,9 +344,9 @@ def patch_db(dbp, engs, fxs):
     nid = c.execute('SELECT MAX(id) FROM synth_types').fetchone()[0] + 1
     if 'iter' not in have:
         c.execute('INSERT INTO synth_types VALUES (?,?,?)', (nid, 'iter', '[1516, 16704, 0, 15168, 0, 0, 0, 0]')); nid += 1
-    for i, e in enumerate(engs, 1):
+    for e in engs:
         k = list(e['defaults']) + [0] * (4 - len(e['defaults']))
-        params = json.dumps(k[:4] + [MAGIC + i, 0, 0, 0])
+        params = json.dumps(k[:4] + [MAGIC + e['order'], 0, 0, 0])
         if e['name'] in have:
             c.execute('UPDATE synth_types SET default_params=? WHERE type=?', (params, e['name']))
         else:
@@ -345,12 +357,12 @@ def patch_db(dbp, engs, fxs):
             else c.execute('SELECT MAX(id) FROM fx_types').fetchone()[0] + 1
         c.execute('INSERT INTO fx_types VALUES (?,?,?)', (fid,) + FILTER_ROW[1:])
     nid = c.execute('SELECT MAX(id) FROM fx_types').fetchone()[0] + 1
-    for i, f in enumerate(fxs, 1):
+    for f in fxs:
         k = list(f['defaults']) + [0] * (4 - len(f['defaults']))
         raw = [lo + (min(max(v, 0), 32767) * (hi - lo)) // 32767 for v, (lo, hi) in zip(k[:4], FX_RANGES)]
         assert all(lo <= v <= hi for v, (lo, hi) in zip(raw, FX_RANGES)), (f['name'], raw)
         p2 = list(f.get('page2_defaults', [])) + [0] * 3                 # words 5..7: page-2 params, 0..32767
-        params = json.dumps(raw + [MAGIC + i] + [min(max(int(v), 0), 32767) for v in p2[:3]])
+        params = json.dumps(raw + [MAGIC + f['order']] + [min(max(int(v), 0), 32767) for v in p2[:3]])
         if f['name'] in have:
             c.execute('UPDATE fx_types SET default_params=? WHERE type=?', (params, f['name']))
         else:
@@ -387,9 +399,9 @@ def patch_db(dbp, engs, fxs):
 
 def main(opz=False, release=False):
     engs, fxs = plugins.load()
-    assert 0 < len(engs) <= 15 and len(fxs) <= 15
-    for lst in (engs, fxs):                     # order = the number stored in patches (MAGIC + n): never renumber
-        assert [e['order'] for e in lst] == list(range(1, len(lst) + 1)), [e['order'] for e in lst]
+    assert engs                                 # order = the number stored in patches (MAGIC + n): never renumber;
+    for lst in (engs, fxs):                     # gaps are fine (an order no plugin has plays as stock iter / filter)
+        assert all(1 <= e['order'] <= MAX_ORDER for e in lst), [e['order'] for e in lst]
     for f in fxs:
         assert f['name'] not in FX_BUILTIN and f['name'].islower() and len(f['name']) <= 15, f['name']
     for e in engs:

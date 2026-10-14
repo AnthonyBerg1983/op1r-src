@@ -3,14 +3,15 @@
 plugin.json fields (paths relative to the plugin folder):
   name           type name shown on the OP-1: lowercase, <= 15 chars, no clash with built-in types
   kind           "synth" or "fx"
-  order          position in the OP-1's list (and the link order), unique per kind
+  order          the number stored in saved sounds (knobs[4] = 0x5300 + order), unique per kind, 1..31; never
+                 change it once released. Gaps are fine. Taken numbers: plugins/ORDERS.md
   symbol         the op1_engine_t / op1_fx_t object in the sources
   sources        C files; the first one defines `symbol`
   defaults       initial 4 knob positions (0..32767)
   page2_defaults (fx, optional) initial page-2 knob positions
   uses_sample    (synth, optional) engine reads the slot's sampler recording (synth_<slot>.raw loaded at boot)
   screen         (optional) {"svg": file name, must not clash with stock content/display, "symbol": op1_screen_t}
-Max 15 synths and 15 FX.
+Orders 1..31 per kind (OP1_MAX_ORDER in op1_plugin.h).
 """
 import json, os
 

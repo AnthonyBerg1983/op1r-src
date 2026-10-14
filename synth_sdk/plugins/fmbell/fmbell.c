@@ -42,7 +42,7 @@ static void fm_render(void *self, int16_t *out, const int16_t *params)
         int32_t m = sine(pm + (uint32_t)(fb * fbamt * 32));
         fb = m;
         pc += i;
-        out[n] = (int16_t)((sine(pc + (uint32_t)(m * idx * 16)) * vg) >> 15);
+        out[n] = (int16_t)((sine(pc + (uint32_t)(m * idx * 16)) * vg) >> 16);   /* half scale: six voices stay near TE's engines on the synth bus */
     }
     v->env -= (v->env * decay) >> 12;
     if (v->env < 0) v->env = 0;
