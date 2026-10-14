@@ -13,7 +13,8 @@
  * iter screen/graphics (iter.svg: bar0..3 follow the 4 knobs). Extra synth_types DB rows are made
  * possible by hooking instr_types' name compare (0x019B975C): every configured engine name maps to
  * type 14. The engine is selected per patch by a selector word in knobs[4] (= default_params[4]):
- *     knobs[4] == OP1_ENGINE_MAGIC + n   ->  engine n (1..15) = plugin.json "order" (plugins/)
+ *     knobs[4] == OP1_ENGINE_MAGIC + n   ->  engine n (1..OP1_MAX_ORDER) = plugin.json "order" (plugins/);
+ *                                            an order without a plugin in this build -> engine 0
  *     anything else                      ->  engine 0 = original TE "iter"
  * See docs/14_custom_synth.md.
  *
@@ -34,6 +35,7 @@
 #define OP1_VOICES       6
 #define OP1_SAMPLE_RATE  44100
 #define OP1_ENGINE_MAGIC 0x5300          /* knobs[4] = 0x5300 + engine index (21248 + n) */
+#define OP1_MAX_ORDER    31              /* highest plugin.json "order" per kind (synth, FX); gaps allowed */
 
 #ifndef OP1_HOST
 /* per-sample phase increment of the voice being rendered (2^32 = one cycle/sample) */
