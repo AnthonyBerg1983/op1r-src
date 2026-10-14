@@ -70,7 +70,7 @@ SQ_DEF char *sq_num(char *p, uint32_t v, int digits)
 {
     char t[10]; int n = 0;
     do { t[n++] = (char)('0' + v % 10); v /= 10; } while (v);
-    while (n < digits) t[n++] = '0';
+    while (n < digits) ((volatile char *)t)[n++] = '0';   /* volatile: gcc -O2 would make this a memset (none in the firmware) */
     while (n) *p++ = t[--n];
     *p = 0;
     return p;
