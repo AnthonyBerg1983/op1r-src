@@ -1,0 +1,301 @@
+diff --git a/synth_sdk/dispatcher.c b/synth_sdk/dispatcher.c
+index 0a7305d..4f9e735 100644
+--- a/synth_sdk/dispatcher.c
++++ b/synth_sdk/dispatcher.c
+@@ -305,7 +305,7 @@ static uint32_t sm_scr[32], sm_vt[10];
+ static void *clock_screen;
+ static int sm_ready, sm_on;                                     /* sm_on: 0 clock, 1 monitor (T1), 2 usb out (T2) */
+ extern const op1_screen_t SCREEN_usbout;
+-extern void usbout_turn(int delta);
++extern void usbout_turn(int delta), usbout_fps_turn(int delta);
+ static uint32_t us_scr[32], us_vt[10];
+ static int us_ready;
+ /* Oblique Strategies card (screens/oblique.c, docs/23): clock mode base view, Shift+help toggles card / clock */
+@@ -778,8 +778,10 @@ static void se_swap(void)                                           /* the open
+ }
+ void dpu_sync_auto(void) { se_swap(); }
+ 
++extern volatile uint8_t gui_input;                          /* screens/guirate.c: full frame rate */
+ void key_event_hook(int code, int pressed)
+ {
++    gui_input = 1;
+     se_swap();                                                   /* drum+ / stock pages follow the drum slot */
+     if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
+     /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,
+@@ -1014,9 +1016,11 @@ void midi_start_hook(void)
+ 
+ void knob_event_hook(int knob, int16_t *delta)
+ {
++    gui_input = 1;
+     if (knob >= 0 && knob < 4 && se_is_open()) { se_knob(knob, *delta); return; }   /* sample editor */
+     if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
+     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
++    if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_fps_turn(*delta); return; }   /* green: fps cap */
+     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
+     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */
+     if (knob >= 0 && knob < 4 && dots_page()) {                  /* dots: see seq/dots.c */
+diff --git a/synth_sdk/harness/sysmon_test.c b/synth_sdk/harness/sysmon_test.c
+index 7d5af80..2aa5b29 100644
+--- a/synth_sdk/harness/sysmon_test.c
++++ b/synth_sdk/harness/sysmon_test.c
+@@ -75,7 +75,7 @@ int main(int argc, char **argv)
+     if (render) dump("overload, MIDI out ring full"); else printf("overload: cpu %s dsp %s midi %s disk %s\n", val(0), val(1), val(4), val(3));
+     /* counter wrap: 32-bit CYCLES overflow between samples must not break the ratio */
+     sm_host_cycles = 0xFFFFFFFFu - 1000000; sm_host_idle_lo = 0xFFFFFFF0u;
+-    run(16, 4000000, 50, 10, 10);
++    run(48, 4000000, 50, 10, 10);
+     assert(!strcmp(val(SM_CPU), "50%"));
+     if (!render) printf("ok\n");
+     return 0;
+diff --git a/synth_sdk/harness/usbout_test.c b/synth_sdk/harness/usbout_test.c
+index 528501a..82ac208 100644
+--- a/synth_sdk/harness/usbout_test.c
++++ b/synth_sdk/harness/usbout_test.c
+@@ -6,8 +6,8 @@
+ #include <string.h>
+ #include "../screens/usbout.c"
+ 
+-volatile uint8_t usb_tracks_live;
+-static struct { int32_t x0, y0, x1, y1, w; uint8_t c[4]; } L[256]; static int nl;
++volatile uint8_t usb_tracks_live, gui_cap;
++static struct { int32_t x0, y0, x1, y1, w; uint8_t c[4]; } L[2048]; static int nl;
+ typedef struct { int32_t x, y; uint8_t c[4]; char s[32]; } txt_t;
+ static txt_t *drawn[16]; static int nt;
+ void host_raster_line(void *r, const void *p0, const void *p1, int32_t w, const uint8_t *c)
+@@ -44,6 +44,10 @@ int main(int argc, char **argv)
+ 
+     usbout_turn(-1024); assert(usbout_host_saved == 0);      /* already there: no change */
+     usbout_turn(300); usbout_turn(300); assert(usb_tracks_live == 0);   /* < 1 detent */
++    usbout_fps_turn(1024); assert(gui_cap == 1 && usbout_host_fps == 1);    /* green: 60 -> 30 fps */
++    frame("fps cap 30", render);
++    usbout_fps_turn(1024); usbout_fps_turn(1024); usbout_fps_turn(1024); assert(gui_cap == 3);   /* clamped at 12 */
++    usbout_fps_turn(-1024); usbout_fps_turn(-1024); usbout_fps_turn(-1024); assert(gui_cap == 0);
+     if (!render) printf("ok\n");
+     return 0;
+ }
+diff --git a/synth_sdk/hook.S b/synth_sdk/hook.S
+index 427b484..626a29a 100644
+--- a/synth_sdk/hook.S
++++ b/synth_sdk/hook.S
+@@ -4,6 +4,21 @@
+ __hook_namecmp:
+ 	jump.l _instr_name_eq;
+ 
++/* Screen::frame: the raster-clear CALL at 0x01A3BBE0 -> gui_frame_stub: gui_frame(table = P4, dt = R7) does the
++ * clear + screen update loop or skips it (screens/guirate.c), then back to the PlayerManager call (0x01A3BC02).
++ * R7 / P3 / P4 are callee-saved in the C ABI and stay valid for the stock code after it. */
++	.section .hook_guiframe,"ax"
++	jump.l _gui_frame_stub;
++	.section .hook_guisubmit,"ax"
++	call _gui_submit;
++	.text
++	.align 2
++_gui_frame_stub:
++	R0 = P4;
++	R1 = R7;
++	call _gui_frame;
++	jump.l _gui_frame_ret;
++
+ /* CALL at 0x01A01844 (patch::sample_path "sampler" check) -> sample_type_eq */
+ 	.section .hook_samplecheck,"ax"
+ 	.global __hook_samplecheck
+diff --git a/synth_sdk/link.ld b/synth_sdk/link.ld
+index 2420bc5..0f385ab 100644
+--- a/synth_sdk/link.ld
++++ b/synth_sdk/link.ld
+@@ -65,5 +65,8 @@ SECTIONS {
+   .hook_recend 0x019DEEF2 : { KEEP(*(.hook_recend)) }
+   .hook_opzset 0x019E3540 : { KEEP(*(.hook_opzset)) }
+   _midi_rx_parse_next = 0x019E348E;   /* end of the SysEx dispatch in midi_rx_parse */
++  _gui_frame_ret = 0x01A3BC02;        /* Screen::frame after the screen update loop */
++  .hook_guiframe 0x01A3BBE0 : { KEEP(*(.hook_guiframe)) }
++  .hook_guisubmit 0x019AB8CE : { KEEP(*(.hook_guisubmit)) }
+   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
+ }
+diff --git a/synth_sdk/make_firmware.py b/synth_sdk/make_firmware.py
+index 2d1867a..67858b3 100755
+--- a/synth_sdk/make_firmware.py
++++ b/synth_sdk/make_firmware.py
+@@ -89,6 +89,8 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
+          0x0196F942: ('hook_sqlcache', bytes.fromhex('ffe3b9fe')),       # sqlite init: open all DBs, then cap page caches
+          0x0191B9F0: ('hook_taperase', bytes.fromhex('09e38cc8')),       # clipboard cmd 4 (erase tape): only chunks with clips
+          0x01A044A8: ('hook_dpkeep', bytes.fromhex('fde38ccc')),         # parse_patch_json: keep "op1r" (drum+, docs/31)
++         0x01A3BBE0: ('hook_guiframe', bytes.fromhex('ffe3433c')),       # Screen::frame raster clear + updates: frame rate (docs/33)
++         0x019AB8CE: ('hook_guisubmit', bytes.fromhex('04e32521')),      # GUI loop: submit frame (skipped tick: last rendered buffer)
+          0x01A04BC0: ('hook_dpload', bytes.fromhex('ffe3f4f5')),         # load_drum_patch: parse, then read drum+ pads
+          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
+          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer
+@@ -175,7 +177,7 @@ def gen_table(engs, fxs):
+ def build(engs, fxs):
+     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
+     gen_table(engs, fxs)
+-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
++    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'screens/guirate.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+     objs = []
+     cmds = []
+     for s in srcs:
+diff --git a/synth_sdk/screens/sysmon.c b/synth_sdk/screens/sysmon.c
+index 57c41bd..2710baa 100644
+--- a/synth_sdk/screens/sysmon.c
++++ b/synth_sdk/screens/sysmon.c
+@@ -70,8 +70,12 @@ static int32_t prof_pct[7];
+ extern volatile uint32_t dp_prof[2] __attribute__((weak));   /* drum+ voice render cycles (drumplus/dp_fw.c) */
+ static uint32_t dp_last[2];
+ static int32_t dp_pct[2], dp_pk[2];
++extern uint32_t gui_stat[2] __attribute__((weak));          /* screens/guirate.c: rendered / skipped ticks */
++static uint32_t fps_last_r, fps_last_t;
++static int32_t fps_now;
+ 
+ /* ---------------- state ---------------- */
++#define SM_SAMPLE_CYC 100000000u                            /* ~0.25 s at 400 MHz */
+ #define PEAK_DECAY 2                                        /* peak falls by 2 % per sample (~4 samples/s) */
+ static int32_t v_pct[SM_ROWS], pk_pct[SM_ROWS], midi_pct[2], midi_pk[2];
+ static uint32_t ram_used, ram_size, disk_used, disk_size;
+@@ -101,6 +105,11 @@ static void sample_fast(void)                                /* CPU, AUDIO, MIDI
+         for (int i = 0; i < 7; i++) { uint32_t c = ps_prof[i]; prof_pct[i] = pct(c - prof_last[i], wall); prof_last[i] = c; }
+     if (dp_prof)
+         for (int i = 0; i < 2; i++) { uint32_t c = dp_prof[i]; dp_pct[i] = pct(c - dp_last[i], wall); dp_last[i] = c; peak(&dp_pk[i], dp_pct[i]); }
++    if (gui_stat) {                                          /* rendered GUI frames per second */
++        uint32_t r = gui_stat[0], t = r + gui_stat[1], dt = t - fps_last_t;
++        if (dt) fps_now = (int32_t)((r - fps_last_r) * 60 / dt);
++        fps_last_r = r; fps_last_t = t;
++    }
+     uint32_t busy = aud_busy, mx = aud_max, mp = aud_max_period;
+     aud_busy = 0; aud_max = 0;
+     v_pct[SM_DSP] = pct(busy, wall);
+@@ -225,9 +234,16 @@ static void bar(void *r, int x0, int x1, int y, int32_t v, int32_t pk, const uin
+ 
+ static void sm_update(void *scr, int dt)
+ {
+-    if ((frame & 7) == 0) sample_fast();
+-    if ((frame & 31) == 16) sample_ram();
+-    if ((frame & 255) == 128) sample_disk();
++    /* by time, not by frames: the GUI frame rate varies (screens/guirate.c), and a page that changes every few
++     * frames would hold itself at full rate */
++    static uint32_t last_sample, n_sample;
++    if (frame == 0 || READ_CYCLES() - last_sample >= SM_SAMPLE_CYC) {
++        last_sample = READ_CYCLES();
++        sample_fast();
++        if ((n_sample & 3) == 2) sample_ram();
++        if ((n_sample & 31) == 16) sample_disk();
++        n_sample++;
++    }
+     frame++;
+     op1_screen_draw(scr, dt);
+     void *r = op1_raster();
+@@ -255,17 +271,22 @@ static void sm_update(void *scr, int dt)
+     op1_text_draw(txt_mem[2 * SM_ROWS], r, ident);
+     op1_text_draw(txt_mem[2 * SM_ROWS + 1], r, ident);
+     extern int32_t op1_db_last_err __attribute__((weak));
+-    int dp_line = !ps_prof && dp_prof && (dp_pk[0] || dp_pk[1]);
+-    if (dp_line) {                                           /* "drum+ 9 stock 3" (% of the audio time, peaks) */
+-        char t[32], *q = put_s(t, "drum+ "); q = put_u(q, (uint32_t)dp_pk[0]);
+-        q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]); *q = 0;
+-        static char lastd[32];
++    int db_err = &op1_db_last_err && op1_db_last_err;        /* a DB write error has the line first */
++    int dp_line = !ps_prof && !db_err && (gui_stat || (dp_prof && (dp_pk[0] || dp_pk[1])));
++    if (dp_line) {                                           /* "fps 12 drum+ 9 stock 3" (GUI frames / s; % of the audio time) */
++        char t[40], *q = put_s(t, "fps "); q = put_u(q, (uint32_t)fps_now);
++        if (dp_prof && (dp_pk[0] || dp_pk[1])) {
++            q = put_s(q, " drum+ "); q = put_u(q, (uint32_t)dp_pk[0]);
++            q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]);
++        }
++        *q = 0;
++        static char lastd[40];
+         int k = 0;
+         while (t[k] && t[k] == lastd[k]) k++;
+         if (t[k] != lastd[k]) { op1_text_set(txt_mem[2 * SM_ROWS + 2], t); for (k = 0; (lastd[k] = t[k]) != 0; k++) ; }
+         op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+     }
+-    if (!dp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
++    if (!dp_line && !ps_prof && db_err) {   /* a DB write failed (op1_db_write): "db err 7" */
+         static int32_t shown = 0;
+         if (shown != op1_db_last_err) {
+             char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;
+diff --git a/synth_sdk/screens/usbout.c b/synth_sdk/screens/usbout.c
+index d6c5728..0e1a429 100644
+--- a/synth_sdk/screens/usbout.c
++++ b/synth_sdk/screens/usbout.c
+@@ -6,11 +6,15 @@
+ 
+ extern volatile uint8_t usb_tracks_live;
+ static uint8_t setting;                                    /* 0 master, 1 master + tracks */
++extern volatile uint8_t gui_cap;                           /* screens/guirate.c: 0 60, 1 30, 2 20, 3 12 fps */
+ 
+ #ifdef OP1_HOST
+ int usbout_host_saved;
++int usbout_host_fps;
+ int usbout_load(void) { setting = (uint8_t)usbout_host_saved; return setting; }
+ static void usbout_save(void) { usbout_host_saved = setting; }
++static void fps_load(void) { gui_cap = (uint8_t)usbout_host_fps; }
++static void fps_save(void) { usbout_host_fps = gui_cap; }
+ #else
+ #define DB_HANDLE ((void *(*)(void))0x0196DD44)
+ #define DB_EXEC   ((void (*)(void *, const char *))0x0196F950)
+@@ -35,9 +39,37 @@ static void usbout_save(void)                               /* KeyHandler thread
+     DB_EXEC(db, setting ? "INSERT OR REPLACE INTO op1rsettings VALUES ('usbtracks',1)"
+                         : "INSERT OR REPLACE INTO op1rsettings VALUES ('usbtracks',0)");
+ }
++static void fps_load(void)                                  /* boot (screen init) */
++{
++    void *db = DB_HANDLE();
++    DB_EXEC(db, US_CREATE);
++    us_dstr s = { 0 };
++    DB_GET(&s, db, "SELECT val FROM op1rsettings WHERE key='guifps'");
++    const char *p = s.cap > 15 ? s.u.ptr : s.u.buf;
++    gui_cap = (uint8_t)(s.size && p[0] >= '0' && p[0] <= '3' ? p[0] - '0' : 0);
++}
++static void fps_save(void)
++{
++    static char q[] = "INSERT OR REPLACE INTO op1rsettings VALUES ('guifps',0)";
++    q[sizeof q - 3] = (char)('0' + gui_cap);
++    void *db = DB_HANDLE();
++    DB_EXEC(db, US_CREATE);
++    DB_EXEC(db, q);
++}
+ #endif
+ 
+-static int32_t acc;
++static int32_t acc, acc_fps;
++void usbout_fps_turn(int delta)                             /* green: frame-rate cap 60 / 30 / 20 / 12, one per detent */
++{
++    if ((acc_fps > 0 && delta < 0) || (acc_fps < 0 && delta > 0)) acc_fps = 0;
++    acc_fps += delta;
++    int st = acc_fps / 1024; if (!st) return;
++    acc_fps = 0;
++    int v = gui_cap + (st > 0 ? 1 : -1);
++    if (v < 0 || v > 3) return;
++    gui_cap = (uint8_t)v;
++    fps_save();
++}
+ void usbout_turn(int delta)                                 /* blue: one detent each way switches */
+ {
+     if ((acc > 0 && delta < 0) || (acc < 0 && delta > 0)) acc = 0;
+@@ -52,7 +84,7 @@ void usbout_turn(int delta)                                 /* blue: one detent
+ }
+ 
+ /* ---- screen: stroke-font text like the stock playmode page (label column, value column, 1.5 px lines) ---- */
+-static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF };
++static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00, 0xED, 0x95, 0xFF };
+ #define US_S   OP1_Q10(5) / 2                               /* 2.5 px per grid unit: 15 px caps, 15 px advance */
+ #define US_W   0x600                                        /* 1.5 px */
+ #define US_LX  OP1_Q10(24)
+@@ -60,7 +92,7 @@ static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF };
+ #define US_Y0  OP1_Q10(40)
+ #define US_DY  OP1_Q10(28)
+ 
+-static void us_init(void *scr) { (void)scr; }
++static void us_init(void *scr) { (void)scr; fps_load(); }
+ 
+ static void us_update(void *scr, int dt)
+ {
+@@ -69,6 +101,9 @@ static void us_update(void *scr, int dt)
+     sf_text(r, US_LX, US_Y0, US_S, "USB OUT", US_W, c_blue);
+     sf_text(r, US_VX, US_Y0, US_S, "MASTER", US_W, c_blue);
+     if (setting) sf_text(r, US_VX, US_Y0 + US_DY, US_S, "+ TRACKS", US_W, c_blue);
++    static const char *const fps[4] = { "60", "30", "20", "12" };
++    sf_text(r, US_LX, US_Y0 + 2 * US_DY, US_S, "FPS MAX", US_W, c_green);
++    sf_text(r, US_VX, US_Y0 + 2 * US_DY, US_S, fps[gui_cap < 4 ? gui_cap : 0], US_W, c_green);
+ }
+ 
+ const op1_screen_t SCREEN_usbout = { us_init, us_update };

@@ -2,6 +2,7 @@
 """Build custom synth engines and an installable OP-1 firmware (fw 246).
 
   ./make_firmware.py [--opz] [--release]   -> ../op1_246_custom-repacked.op1   (synths / FX: plugins/*/plugin.json)
+                                              + ../op1_246_custom-delta.op1 (changes since the installed tree, docs/34)
 
   --release  boot screen shows only "op1r <VERSION>" (use for the patcher); local builds add the build time
 
@@ -89,6 +90,7 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x0196F942: ('hook_sqlcache', bytes.fromhex('ffe3b9fe')),       # sqlite init: open all DBs, then cap page caches
          0x0191B9F0: ('hook_taperase', bytes.fromhex('09e38cc8')),       # clipboard cmd 4 (erase tape): only chunks with clips
          0x01A044A8: ('hook_dpkeep', bytes.fromhex('fde38ccc')),         # parse_patch_json: keep "op1r" (drum+, docs/31)
+         0x01977900: ('hook_dpbrowse', bytes.fromhex('04e37f53')),       # DrumController Shift+T1: start row (user kit -> DRUM, drum+ -> DRUM+)
          0x01A04BC0: ('hook_dpload', bytes.fromhex('ffe3f4f5')),         # load_drum_patch: parse, then read drum+ pads
          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer
@@ -139,6 +141,8 @@ def quad_words(lfos):
     return [((bits >> (16 * k)) & 0xFFFF) - (0x10000 if (bits >> (16 * k)) & 0x8000 else 0) for k in range(8)]
 QUAD_LFO_DEFAULTS = quad_words([(19, 0), (31, 1), (42, 2), (54, 3)])
 # optional: hidden OP-Z controller mode, gated by host-mode SysEx 00 01 03 (docs/12_opz_mode_patch.md)
+DEV_HOOKS = {0x019F01B8: ('hook_devboot', bytes.fromhex('05e37c52')),   # boot: access(te-boot.op1) -> apply a staged dev update first (docs/35)
+             0x019E3CC8: ('hook_devrx', bytes.fromhex('ffe36efa'))}    # midi_poll: CALL midi_rx_parse -> copy our SysEx first
 OPZ_HOOKS = {0x019E0CFC: ('hook_opzget', bytes.fromhex('00601000')),   # midi_opz_mode_enabled: R0=0; RTS
              0x019E3540: ('hook_opzset', bytes.fromhex('a5e60900'))}   # rx host-mode m!=1,2: B[P4+9]=R5
 
@@ -186,7 +190,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -196,7 +200,7 @@ def build(engs, fxs):
     cmds.append('bfin-elf-as -mcpu=bf524 hook.S -o build/hook.o'); objs.append('build/hook.o')
     cmds.append(f'bfin-elf-ld -T link.ld {" ".join(objs)} $(bfin-elf-gcc -print-libgcc-file-name) -o build/synth.elf')
     cmds.append('bfin-elf-objcopy -O binary -j .text -j .rodata -j .data build/synth.elf build/synth.bin')
-    for sec, _ in list(HOOKS.values()) + list(OPZ_HOOKS.values()):
+    for sec, _ in list(HOOKS.values()) + list(OPZ_HOOKS.values()) + list(DEV_HOOKS.values()):
         cmds.append(f'bfin-elf-objcopy -O binary -j .{sec} build/synth.elf build/{sec}.bin')
     cmds.append('bfin-elf-objcopy -O binary -j .l1tramp build/synth.elf build/l1tramp.bin')
     cmds.append('bfin-elf-nm build/synth.elf > build/synth.sym')
@@ -209,7 +213,7 @@ def build(engs, fxs):
     code = open(os.path.join(HERE, 'build', 'synth.bin'), 'rb').read()
     code += b'\0' * (-len(code) % 4)
     hooks = {}
-    for addr, (sec, orig) in list(HOOKS.items()) + list(OPZ_HOOKS.items()):
+    for addr, (sec, orig) in list(HOOKS.items()) + list(OPZ_HOOKS.items()) + list(DEV_HOOKS.items()):
         hooks[addr] = open(os.path.join(HERE, 'build', sec + '.bin'), 'rb').read()
         assert len(hooks[addr]) == len(orig), (sec, hooks[addr])
     return code, hooks, syms
@@ -285,12 +289,17 @@ def apply_l1(d, pokes):
         assert bytes(d[off:off + len(old) // 2]).hex() == old, f'L1 bytes at {off:#x} differ from the original'
         d[off:off + len(new) // 2] = bytes.fromhex(new)
 
-def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
+def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True, dev=False):
     d = bytearray(open(src, 'rb').read())
     if opz:
         for addr, (sec, orig) in OPZ_HOOKS.items():
             ldr_poke(d, addr, hooks[addr], orig)
         print('OP-Z mode enabled (switched on by SysEx F0 00 20 76 00 01 03 F7)')
+    if dev:
+        assert not release, '--dev is for development builds only'
+        for addr, (sec, orig) in DEV_HOOKS.items():
+            ldr_poke(d, addr, hooks[addr], orig)
+        print('DEV: staged-update apply at boot (devupd, docs/35)')
     for name, (vt, slot, orig) in SLOTS.items():
         ldr_poke(d, vt + 8 * slot + 4, struct.pack('<I', syms[name]), struct.pack('<I', orig))
     for addr, data in hooks.items():
@@ -387,7 +396,7 @@ def patch_db(dbp, engs, fxs):
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
     c.close()
 
-def main(opz=False, release=False):
+def main(opz=False, release=False, dev=False):
     engs, fxs = plugins.load()
     assert engs                                 # order = the number stored in patches (MAGIC + n): never renumber;
     for lst in (engs, fxs):                     # gaps are fine (an order no plugin has plays as stock iter / filter)
@@ -412,7 +421,7 @@ def main(opz=False, release=False):
     code, hooks, syms = build(engs, fxs)
     assert len(code) < 0x100000
     shutil.rmtree(OUT_FW, ignore_errors=True); shutil.copytree(SRC_FW, OUT_FW)
-    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release)
+    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release, dev)
     print(f'code {len(code)} bytes @{CODE_BASE:#x}; ' + ', '.join(f'{k}={syms[k]:#x}' for k in SLOTS))
     patch_db(os.path.join(OUT_FW, 'content', 'op1_factory.db'), engs, fxs)
     disp = os.path.join(OUT_FW, 'content', 'display')
@@ -429,10 +438,17 @@ def main(opz=False, release=False):
     shutil.copy(src_svg if os.path.exists(src_svg) else os.path.join(disp, 'iter.svg'),
                 os.path.join(disp, FX_SCREEN_SVG))
     sh(f'"{REPACKER}" repack "{OUT_FW}"')
+    # development delta (tools/op1delta.py, docs/34): LDR + files changed since the tree recorded as installed
+    delta = os.path.join(ROOT, os.path.basename(OUT_FW) + '-delta.op1')
+    if os.path.exists(OUT_FW + '.delta-state.json'):
+        sh(f'python3 "{os.path.join(ROOT, "tools", "op1delta.py")}" "{OUT_FW}" -o "{delta}"')
+    else:
+        print(f'no delta: record the installed tree first (tools/op1delta.py {os.path.basename(OUT_FW)} --init)')
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--dev', action='store_true', help='development build: apply staged updates at boot (docs/35)')
     ap.add_argument('--opz', action='store_true', help='enable hidden OP-Z controller mode (via SysEx 00 01 03)')
     ap.add_argument('--release', action='store_true', help='boot screen without build time (patcher builds)')
     a = ap.parse_args()
-    main(a.opz, a.release)
+    main(a.opz, a.release, a.dev)

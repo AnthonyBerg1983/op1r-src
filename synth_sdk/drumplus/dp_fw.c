@@ -158,6 +158,32 @@ int dp_load_parse(void *json, int mode)
  * "drum") keeps everything and gets "op1r": {"engine": "drum+"}, then UI refresh and slot save as the stock job.
  * Any other selection first drops "op1r" (a new kit / dbox is a stock drum again; the job's reload clears dp_x). */
 #define DP_TYPE_ID   2
+
+/* Start row of the browser (CALL patch_01a01ffe at 0x01977900 in DrumController, Shift + T1). The stock id comes from
+ * drum_type_id_by_name 0x01A01EF4: drum_types row id, or for "type": "drum" minus the index of the kit with the same
+ * name in the kit table 0x01DE20FC, which holds factory AND user kits (drum_presets + drum_user). The browser list
+ * (patch_01A025E8) has only factory kits: a user kit's id is not found and the browser starts on row 0 (DBOX), and
+ * turning from there loads a factory kit. So: drum+ slot -> the DRUM+ row; an id the list does not have -> 0 (DRUM,
+ * nothing loaded until a turn; one step down = DRUM+, which keeps the live kit). */
+#define DP_DRUM_ID   ((int (*)(int, uint8_t *))0x01A01FFE)
+#define DP_TYPE_LIST ((uint8_t *(*)(void))0x01A025E8)
+static int dp_list_has(int id)
+{
+    uint8_t *l = DP_TYPE_LIST();                              /* rows 0x30 (+0x1c id, +0x24/+0x28 items 0x20, +0x1c id) */
+    for (uint8_t *r = *(uint8_t **)(l + 4); r < *(uint8_t **)(l + 8); r += 0x30) {
+        if (*(int *)(r + 0x1c) == id) return 1;
+        for (uint8_t *it = *(uint8_t **)(r + 0x24); it < *(uint8_t **)(r + 0x28); it += 0x20)
+            if (*(int *)(it + 0x1c) == id) return 1;
+    }
+    return 0;
+}
+int dp_browser_id(int slot, uint8_t *found)
+{
+    int id = DP_DRUM_ID(slot, found);
+    if (dp_isplus[slot & 7]) return DP_TYPE_ID;                    /* (slot word 0xFF8016D8 & 7, as elsewhere) */
+    if (!dp_list_has(id)) { id = 0; *found = 0; }
+    return id;
+}
 #define TYPE_JOB     ((void (*)(void *))0x0193F86C)
 #define SAVE_SLOT    ((void (*)(void *))0x01940574)              /* job: +4 byte drum, +8 slot: UPDATE ..._slots */
 #define UI_SLOT      ((void (*)(int))0x019C2BA0)

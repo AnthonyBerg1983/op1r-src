@@ -325,6 +325,12 @@ static int st_ready;
 extern int ci_start(void), ci_counting(void);
 extern void ci_cancel(void);
 static uint8_t rec_held, metro_swallow, tape_held, rec_swallow;
+/* dev update prompt (screens/duprompt.c, devupd/du_fw.c): own object, swapped over the current screen while shown */
+extern const op1_screen_t SCREEN_duprompt;
+extern void *du_prompt_obj;
+extern int du_prompt_key(int code, int pressed);
+static uint32_t du_scr[32], du_vt[10];
+static int du_always(void *self, int id) { (void)self; (void)id; return 1; }
 /* sample editor (screens/sampedit.c, docs/27): synth key + scissors on the sampler page */
 extern const op1_screen_t SCREEN_sampedit;
 /* drum+ pages (drumplus/dp_ui.c): objects for slots 0x10 (T1) / 0x17 (T2), used while the drum slot is drum+ */
@@ -571,6 +577,16 @@ void *screens_ctor_hook(void)
         ob_vt[4 * 2 + 1] = (uint32_t)SCREEN_oblique.init;
         ob_scr[3] = (uint32_t)ob_vt;
     }
+    {                                                            /* dev update prompt object (usbout.svg: empty) */
+        void *saved = SCREEN_TABLE[CLOCK_SCREEN_ID];
+        SCREEN_CTOR(du_scr, CLOCK_SCREEN_ID, "usbout.svg");
+        SCREEN_TABLE[CLOCK_SCREEN_ID] = saved;
+        for (int i = 0; i < 10; i++) du_vt[i] = ITER_SCREEN_VT[i];
+        du_vt[2 * 2 + 1] = (uint32_t)du_always;                  /* is_visible: whichever slot it sits in */
+        du_vt[3 * 2 + 1] = (uint32_t)SCREEN_duprompt.update;
+        du_vt[4 * 2 + 1] = (uint32_t)SCREEN_duprompt.init;
+        du_scr[3] = (uint32_t)du_vt;
+    }
     {                                                            /* settings screen object (clock slot, T3) */
         void *saved = SCREEN_TABLE[CLOCK_SCREEN_ID];
         SCREEN_CTOR(st_scr, CLOCK_SCREEN_ID, "usbout.svg");      /* empty svg: drawn in code */
@@ -650,6 +666,8 @@ void screens_load_hook(void *table)
     if (us_scr[2] && clock_screen) {                             /* USB out page (slot 0x2A on T2) */
         us_scr[0] = (uint32_t)SVG_LOAD((void *)us_scr[2]);
         if (us_scr[0]) { SCREEN_usbout.init(us_scr); us_ready = 1; }
+        du_scr[0] = (uint32_t)SVG_LOAD((void *)du_scr[2]);
+        if (du_scr[0]) { SCREEN_duprompt.init(du_scr); du_prompt_obj = du_scr; }
     }
     if (ob_scr[2] && clock_screen) {                             /* oblique card (clock slot base view) */
         ob_scr[0] = (uint32_t)SVG_LOAD((void *)ob_scr[2]);
@@ -783,6 +801,7 @@ void dpu_sync_auto(void) { se_swap(); }
 
 void key_event_hook(int code, int pressed)
 {
+    if (du_prompt_key(code, pressed)) return;                    /* dev update prompt: T1 restart / T2 cancel */
     se_swap();                                                   /* drum+ / stock pages follow the drum slot */
     if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
     /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,

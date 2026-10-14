@@ -151,6 +151,8 @@ int ci_service(int arg)
         ((int (*)(int))0x01A54710)(arg);
 #endif
     pu_service();                                                 /* punch in / out (main loop) */
+    extern void du_service(void) __attribute__((weak));
+    if (du_service) du_service();                                 /* dev update over SysEx (--dev, docs/35) */
     if (ci_play_req) {
         ci_play_req = 0;
         if (TAPE_STATE == 6) {                                    /* still armed (not cancelled by the stock keys) */

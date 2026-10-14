@@ -57,6 +57,7 @@ SECTIONS {
   .hook_taperase 0x0191B9F0 : { KEEP(*(.hook_taperase)) }
   .hook_dpkeep 0x01A044A8 : { KEEP(*(.hook_dpkeep)) }
   .hook_dpload 0x01A04BC0 : { KEEP(*(.hook_dpload)) }
+  .hook_dpbrowse 0x01977900 : { KEEP(*(.hook_dpbrowse)) }
   .hook_usbbuf1 0x01A69730 : { KEEP(*(.hook_usbbuf1)) }
   .hook_usbbuf2 0x01A69740 : { KEEP(*(.hook_usbbuf2)) }
   .hook_opzget 0x019E0CFC : { KEEP(*(.hook_opzget)) }
@@ -65,5 +66,7 @@ SECTIONS {
   .hook_recend 0x019DEEF2 : { KEEP(*(.hook_recend)) }
   .hook_opzset 0x019E3540 : { KEEP(*(.hook_opzset)) }
   _midi_rx_parse_next = 0x019E348E;   /* end of the SysEx dispatch in midi_rx_parse */
+  .hook_devboot 0x019F01B8 : { KEEP(*(.hook_devboot)) }
+  .hook_devrx 0x019E3CC8 : { KEEP(*(.hook_devrx)) }
   /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

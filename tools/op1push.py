@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Development update over USB MIDI SysEx (docs/35) - host side. Needs a --dev build on the OP-1.
+
+    op1push.py op1_246_custom --port /dev/snd/midiC3D0    # changed files (op1delta.py state) -> staged on the OP-1
+    op1push.py op1_246_custom --port ... --files content/display/x.svg OP1_vdk.ldr
+    op1push.py --dump session.bin op1_246_custom          # the session as SysEx messages (C host test)
+
+At the end the OP-1 asks: T1 restarts it (the update is applied at boot), T2 cancels.
+
+Never sends te-boot files (the device refuses them too). Message: F0 00 20 76 7D cmd seq_lo seq_hi <7-bit> F7."""
+import argparse, binascii, os, struct, sys
+
+HDR = bytes([0xF0, 0x00, 0x20, 0x76, 0x7D])
+HELLO, BEGIN, DATA, END, COMMIT, ABORT = 1, 2, 3, 4, 5, 6
+MAX_MSG, MAX_DATA = 256, 192
+WINDOW = 8                                        # DATA messages in flight (device queue: 16, RX ring ~3 KB)
+
+
+def pack7(b):
+    out = bytearray()
+    for i in range(0, len(b), 7):
+        g = b[i:i + 7]
+        out.append(sum(((x >> 7) & 1) << k for k, x in enumerate(g)))
+        out += bytes(x & 0x7F for x in g)
+    return bytes(out)
+
+
+def unpack7(b):
+    out = bytearray(); i = 0
+    while i < len(b):
+        hi = b[i]; i += 1
+        for k in range(7):
+            if i >= len(b):
+                break
+            out.append(b[i] | ((hi >> k) & 1) << 7); i += 1
+    return bytes(out)
+
+
+def build(cmd, seq, payload=b''):
+    m = HDR + bytes([cmd, seq & 0x7F, (seq >> 7) & 0x7F]) + pack7(payload) + b'\xF7'
+    assert len(m) <= MAX_MSG, len(m)
+    return m
+
+
+def path_ok(p):
+    low = p.lower()
+    return (all(c.isalnum() or c in '_.-/' for c in p) and 0 < len(p) < 96 and not p.startswith('/')
+            and not p.endswith('/') and 'te-boot' not in low and 'te_boot' not in low and 'teboot' not in low
+            and '..' not in p and '//' not in p and (p == 'OP1_vdk.ldr' or p.startswith('content/')))
+
+
+def session(files):
+    """files: [(path, bytes)] -> list of messages (HELLO, per file BEGIN / DATA... / END, COMMIT)"""
+    seq = 0; msgs = []
+    def add(cmd, pl=b''):
+        nonlocal seq
+        msgs.append(build(cmd, seq, pl)); seq = (seq + 1) & 0x3FFF
+    add(HELLO)
+    for path, data in files:
+        assert path_ok(path), path
+        add(BEGIN, struct.pack('<II', len(data), binascii.crc32(data)) + path.encode() + b'\0')
+        for off in range(0, len(data), MAX_DATA):
+            add(DATA, struct.pack('<I', off) + data[off:off + MAX_DATA])
+        add(END)
+    add(COMMIT)
+    return msgs
+
+
+def parse_reply(m):
+    if len(m) < 10 or m[:5] != HDR or m[-1] != 0xF7 or not m[5] & 0x40:
+        return None
+    pl = unpack7(m[8:-1])
+    return m[5] & 0x3F, m[6] | m[7] << 7, pl[0], pl[1:]
+
+
+class Port:
+    """raw ALSA MIDI device (/dev/snd/midiCxDy): no extra dependency"""
+    def __init__(self, path):
+        self.fd = os.open(path, os.O_RDWR | os.O_NONBLOCK); self.buf = bytearray()
+
+    def send(self, m):
+        os.set_blocking(self.fd, True); os.write(self.fd, m); os.set_blocking(self.fd, False)
+
+    def recv(self, timeout):
+        import select, time
+        end = time.time() + timeout
+        while True:
+            i = self.buf.find(0xF0); j = self.buf.find(0xF7, max(i, 0))
+            if i >= 0 and j > i:
+                m = bytes(self.buf[i:j + 1]); del self.buf[:j + 1]
+                r = parse_reply(m)
+                if r: return r
+                continue
+            left = end - time.time()
+            if left <= 0 or not select.select([self.fd], [], [], left)[0]:
+                return None
+            self.buf += bytes(b for b in os.read(self.fd, 4096) if b < 0xF8)   # drop realtime (clock) bytes
+
+
+ST = {0: 'ok', 1: 'format', 2: 'state', 3: 'path', 4: 'size', 5: 'offset', 6: 'crc', 7: 'io', 8: 'full', 9: 'wait key'}
+
+
+class UsbipPort:
+    """emulator: USB-MIDI straight over USB/IP (tools/usbip_midi.py), no kernel / sudo"""
+    def __init__(self, addr):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from usbip_midi import UsbipMidi
+        self.u = UsbipMidi(addr)
+
+    def send(self, m):
+        self.u.send(m)
+
+    def recv(self, timeout):
+        import time
+        end = time.time() + timeout
+        while time.time() < end:
+            rx = self.u.poll(end - time.time())
+            i = rx.find(0xF0); j = rx.find(0xF7, max(i, 0))
+            if i >= 0 and j > i:
+                m = bytes(rx[i:j + 1]); del rx[:j + 1]
+                r = parse_reply(m)
+                if r: return r
+        return None
+
+
+def push(port, files, timeout=2.0, log=print):
+    import time
+    p = UsbipPort(port[6:]) if port.startswith('usbip:') else Port(port); seq = 0
+    def ask(cmd, pl=b'', tries=8):
+        nonlocal seq
+        for _ in range(tries):
+            seq = (seq + 1) & 0x3FFF
+            p.send(build(cmd, seq, pl))
+            while True:
+                r = p.recv(timeout)
+                if r is None: break                               # lost: send again (new seq)
+                if r[0] == cmd and r[1] == seq: return r[2], r[3]
+        sys.exit(f'no reply to command {cmd} (dev build on the OP-1? right port?)')
+    st, pl = ask(HELLO)
+    log(f'OP-1 devupd protocol {struct.unpack("<I", pl[:4])[0]}')
+    ask(ABORT)                                                    # clean start: staging cleared
+    t0 = time.time(); total = sum(len(d) for _, d in files); done = 0
+    for path, data in files:
+        st, _ = ask(BEGIN, struct.pack('<II', len(data), binascii.crc32(data)) + path.encode() + b'\0')
+        if st: sys.exit(f'{path}: BEGIN refused ({ST.get(st, st)})')
+        acked = nxt = 0; inflight = {}; last = 0                 # pipelined DATA: up to WINDOW messages in flight
+        while acked < len(data):
+            while nxt < len(data) and len(inflight) < WINDOW:
+                seq = (seq + 1) & 0x3FFF; n = min(MAX_DATA, len(data) - nxt)
+                p.send(build(DATA, seq, struct.pack('<I', nxt) + data[nxt:nxt + n])); inflight[seq] = nxt; nxt += n
+            r = p.recv(timeout)
+            if r is None:                                         # lost: resend everything not confirmed
+                inflight.clear(); nxt = acked; continue
+            if r[0] != DATA or r[1] not in inflight:
+                continue                                          # stale reply (from before a resync)
+            inflight.pop(r[1])
+            if r[2] in (0, 5):
+                w = struct.unpack('<I', r[3][:4])[0]              # device: bytes written so far
+                if r[2] == 5:
+                    inflight.clear(); nxt = w                     # gap (dropped message): resend from there
+                acked = max(acked, w)
+            else:
+                sys.exit(f'{path}: DATA refused ({ST.get(r[2], r[2])})')
+            if acked - last >= 65536 or acked == len(data):
+                last = acked; dt = max(time.time() - t0, 1e-3)
+                log(f'  {path}: {acked}/{len(data)}  ({(done + acked) / dt / 1e3:.1f} kB/s)')
+        done += len(data)
+        st, _ = ask(END)
+        if st: sys.exit(f'{path}: END refused ({ST.get(st, st)})')
+        log(f'{path}: staged ({len(data)} bytes)')
+    log('confirm on the OP-1: T1 restart, T2 cancel')
+    asked = False
+    while True:
+        st, _ = ask(COMMIT)
+        if st == 0: break
+        if st == 2 and asked: sys.exit('cancelled on the OP-1 (staging discarded)')
+        if st != 9: sys.exit(f'COMMIT refused ({ST.get(st, st)})')
+        asked = True
+        time.sleep(0.3)
+    log(f'sent {len(files)} files ({total} bytes) in {time.time() - t0:.0f} s; the OP-1 restarts and applies the update.')
+
+
+def selftest():
+    import random
+    r = random.Random(1)
+    for n in list(range(0, 30)) + [191, 192, 196]:
+        b = bytes(r.randrange(256) for _ in range(n))
+        assert unpack7(pack7(b)) == b and all(x < 0x80 for x in pack7(b))
+    assert len(build(DATA, 5, b'\0' * (4 + MAX_DATA))) <= MAX_MSG
+    assert not path_ok('te-boot.ldr') and not path_ok('content/TE-Boot.op1') and not path_ok('../x')
+    assert path_ok('OP1_vdk.ldr') and path_ok('content/display/a.svg') and not path_ok('/content/x')
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('tree', nargs='?')
+    ap.add_argument('--dump', help='write the session (length-prefixed messages) to this file')
+    ap.add_argument('--port', help='raw MIDI device of the OP-1 (/dev/snd/midiC3D0) or usbip:HOST:PORT (emulator)')
+    ap.add_argument('--files', nargs='*', help='these files (paths in the tree) instead of the delta')
+    ap.add_argument('--selftest', action='store_true')
+    a = ap.parse_args()
+    selftest()
+    if a.selftest:
+        print('ok'); return
+    if not a.tree or not (a.dump or a.port):
+        sys.exit('tree and --port (or --dump) needed')
+    if a.files is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import op1delta, json
+        state = a.tree.rstrip('/') + '.delta-state.json'
+        old = json.load(open(state)) if os.path.exists(state) else {}
+        a.files = [p for p, h in op1delta.scan(a.tree).items() if old.get(p) != h and path_ok(p)]
+    files = [(p, open(os.path.join(a.tree, p), 'rb').read()) for p in sorted(a.files)]
+    if a.port:
+        return push(a.port, files)
+    msgs = session(files)
+    with open(a.dump, 'wb') as f:
+        for m in msgs:
+            f.write(struct.pack('<H', len(m)) + m)
+    print(f'{a.dump}: {len(msgs)} messages, {sum(map(len, msgs)) / 1e6:.2f} MB SysEx for '
+          f'{sum(len(d) for _, d in files) / 1e6:.2f} MB in {len(files)} files')
+
+
+if __name__ == '__main__':
+    main()

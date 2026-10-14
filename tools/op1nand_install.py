@@ -142,9 +142,10 @@ if not a.firmware and not a.put:
 
 if a.firmware:
     new_files, new_dirs = M.load_firmware(a.firmware)
-    for need in ('te-boot.ldr', 'OP1_vdk.ldr'):
-        if need not in new_files:
-            sys.exit(f'{need} missing in {a.firmware}')
+    if 'OP1_vdk.ldr' not in new_files:
+        sys.exit(f'OP1_vdk.ldr missing in {a.firmware}')
+    if 'te-boot.ldr' not in new_files:                     # delta package (tools/op1delta.py): as te-boot, keep it
+        a.keep_teboot = True
 else:                                                      # --put only: keep the image's own boot area / LDRs
     new_files, new_dirs = {}, []
     a.keep_teboot = True

@@ -4,6 +4,14 @@
 __hook_namecmp:
 	jump.l _instr_name_eq;
 
+/* --dev only: CALL access("/yaffs2/te-boot.op1") at boot (0x019F01B8) -> du_boot_access (devupd/du_fw.c) */
+	.section .hook_devrx,"ax"
+	.global __hook_devrx
+__hook_devrx:
+	call _du_rx_poll;
+	.section .hook_devboot,"ax"
+	call _du_boot_access;
+
 /* CALL at 0x01A01844 (patch::sample_path "sampler" check) -> sample_type_eq */
 	.section .hook_samplecheck,"ax"
 	.global __hook_samplecheck
@@ -348,6 +356,10 @@ __hook_taperase:
 	.global __hook_dpkeep
 __hook_dpkeep:
 	call _dp_keep_op1r;
+	.section .hook_dpbrowse,"ax"
+	.global __hook_dpbrowse
+__hook_dpbrowse:
+	call _dp_browser_id;
 	.section .hook_dpload,"ax"
 	.global __hook_dpload
 __hook_dpload:
