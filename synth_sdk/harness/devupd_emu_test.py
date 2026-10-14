@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emulator test of the devupd apply phase (docs/35). Needs a --dev build in ../op1_246_custom(-repacked.op1),
+"""Emulator test of the devupd apply phase (docs/35). Needs a build in ../op1_246_custom(-repacked.op1),
 an op1emu build and a NAND image with user data. Local paths, firmware-derived data stays in /tmp.
 
   t1: staged SVG + a different LDR (+ manifest)  -> applied: LDR in blocks 4.., SVG in place, staging gone,

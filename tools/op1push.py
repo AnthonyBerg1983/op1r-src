@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Development update over USB MIDI SysEx (docs/35) - host side. Needs a --dev build on the OP-1.
+"""Development update over USB MIDI SysEx (docs/35) - host side. Needs a build on the OP-1.
 
     op1push.py op1_246_custom --port /dev/snd/midiC3D0    # changed files (op1delta.py state) -> staged on the OP-1
     op1push.py op1_246_custom --port ... --files content/display/x.svg OP1_vdk.ldr

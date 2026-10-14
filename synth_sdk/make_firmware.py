@@ -291,17 +291,14 @@ def apply_l1(d, pokes):
         assert bytes(d[off:off + len(old) // 2]).hex() == old, f'L1 bytes at {off:#x} differ from the original'
         d[off:off + len(new) // 2] = bytes.fromhex(new)
 
-def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True, dev=False):
+def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     d = bytearray(open(src, 'rb').read())
     if opz:
         for addr, (sec, orig) in OPZ_HOOKS.items():
             ldr_poke(d, addr, hooks[addr], orig)
         print('OP-Z mode enabled (switched on by SysEx F0 00 20 76 00 01 03 F7)')
-    if dev:
-        assert not release, '--dev is for development builds only'
-        for addr, (sec, orig) in DEV_HOOKS.items():
-            ldr_poke(d, addr, hooks[addr], orig)
-        print('DEV: staged-update apply at boot (devupd, docs/35)')
+    for addr, (sec, orig) in DEV_HOOKS.items():           # SysEx update: on in every build
+        ldr_poke(d, addr, hooks[addr], orig)
     for name, (vt, slot, orig) in SLOTS.items():
         ldr_poke(d, vt + 8 * slot + 4, struct.pack('<I', syms[name]), struct.pack('<I', orig))
     for addr, data in hooks.items():
@@ -406,7 +403,7 @@ def patch_db(dbp, engs, fxs):
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
     c.close()
 
-def main(opz=False, release=False, dev=False):
+def main(opz=False, release=False):
     engs, fxs = plugins.load()
     assert engs                                 # order = the number stored in patches (MAGIC + n): never renumber;
     for lst in (engs, fxs):                     # gaps are fine (an order no plugin has plays as stock iter / filter)
@@ -431,7 +428,7 @@ def main(opz=False, release=False, dev=False):
     code, hooks, syms = build(engs, fxs)
     assert len(code) < 0x100000
     shutil.rmtree(OUT_FW, ignore_errors=True); shutil.copytree(SRC_FW, OUT_FW)
-    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release, dev)
+    patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release)
     print(f'code {len(code)} bytes @{CODE_BASE:#x}; ' + ', '.join(f'{k}={syms[k]:#x}' for k in SLOTS))
     patch_db(os.path.join(OUT_FW, 'content', 'op1_factory.db'), engs, fxs)
     disp = os.path.join(OUT_FW, 'content', 'display')
@@ -459,8 +456,7 @@ def main(opz=False, release=False, dev=False):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--dev', action='store_true', help='development build: apply staged updates at boot (docs/35)')
     ap.add_argument('--opz', action='store_true', help='enable hidden OP-Z controller mode (via SysEx 00 01 03)')
     ap.add_argument('--release', action='store_true', help='boot screen without build time (patcher builds)')
     a = ap.parse_args()
-    main(a.opz, a.release, a.dev)
+    main(a.opz, a.release)
