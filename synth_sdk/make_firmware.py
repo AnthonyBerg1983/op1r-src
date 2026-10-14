@@ -29,10 +29,14 @@ MAGIC = 0x5300
 BUILTIN = {'fm','digital','drwave','string','cluster','pulse','sampler','phase','drum','dbox',
            'ls','dna','dsynth','voltage','iter'}
 VT_ITER, VT_FILTER, VT_FILTER_ST = 0x019103CC, 0x01910C94, 0x01910CB4   # _ST: master (stereo) filter
+VT_DRUM = 0x0190FAC4                                                      # DrumSampler voice (docs/31)
 SLOTS = {'synth_render': (VT_ITER, 2, 0x019B99D4), 'synth_note_on': (VT_ITER, 3, 0x019B9B8A),
          'synth_query': (VT_ITER, 4, 0x019B9980), 'synth_note_off': (VT_ITER, 5, 0x019B996C),
          'fx_render': (VT_FILTER, 2, 0x019E7934), 'fx_init': (VT_FILTER, 3, 0x019E780A),
-         'fx_render_stereo': (VT_FILTER_ST, 2, 0x019E7EE4), 'fx_init_stereo': (VT_FILTER_ST, 3, 0x019E78D0)}
+         'fx_render_stereo': (VT_FILTER_ST, 2, 0x019E7EE4), 'fx_init_stereo': (VT_FILTER_ST, 3, 0x019E78D0),
+         'dp_fw_render': (VT_DRUM, 2, 0x019789EC), 'dp_fw_note_on': (VT_DRUM, 3, 0x01978926),
+         'dp_fw_note_off': (VT_DRUM, 5, 0x01978898),
+         'dp_type_job': (0x0190F34C, 2, 0x0193F86C)}                       # drum type browser job (docs/31)
 FX_BUILTIN = {'delay','grid','punch','phone','spring','filter','nitro','cwo'}
 FILTER_ROW = (2, 'filter', '[7548, 0, 8272, 19572, 8000, 8000, 8000, 8000]')   # as op1repacker
 # Raw knob ranges of fx type 5 (filter), which every custom FX runs in: range table 0x01DE5C50 + 5*0x30,
@@ -83,6 +87,8 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x019F0A24: ('hook_ciservice', bytes.fromhex('03e3761e')),      # main loop tape_c::service(0): count-in PLAY
          0x0196F942: ('hook_sqlcache', bytes.fromhex('ffe3b9fe')),       # sqlite init: open all DBs, then cap page caches
          0x0191B9F0: ('hook_taperase', bytes.fromhex('09e38cc8')),       # clipboard cmd 4 (erase tape): only chunks with clips
+         0x01A044A8: ('hook_dpkeep', bytes.fromhex('fde38ccc')),         # parse_patch_json: keep "op1r" (drum+, docs/31)
+         0x01A04BC0: ('hook_dpload', bytes.fromhex('ffe3f4f5')),         # load_drum_patch: parse, then read drum+ pads
          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer
 # data words: address -> (symbol, expected original value)
@@ -168,7 +174,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -359,6 +365,11 @@ def patch_db(dbp, engs, fxs):
     if not c.execute("SELECT 1 FROM seq_types WHERE type='dots'").fetchone():
         sid = c.execute('SELECT MAX(id) FROM seq_types').fetchone()[0] + 1
         c.execute('INSERT INTO seq_types VALUES (?,?)', (sid, 'dots'))
+    # drum+ (drumplus/dp_fw.c): a drum_types row; dp_type_job handles its id (DP_TYPE_ID)
+    if not c.execute("SELECT 1 FROM drum_types WHERE type='drum+'").fetchone():
+        did = c.execute('SELECT MAX(id) FROM drum_types').fetchone()[0] + 1
+        assert did == 2, did                                             # = DP_TYPE_ID in drumplus/dp_fw.c
+        c.execute('INSERT INTO drum_types VALUES (?,?,?)', (did, 'drum+', '[0, 0, 0, 0, 0, 0, 0, 0]'))
     c.commit()
     for r in c.execute('SELECT * FROM synth_types ORDER BY id'): print('  ', r)
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)

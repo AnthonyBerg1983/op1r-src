@@ -67,6 +67,9 @@ static void *idle_stats(void)                                /* VDK stats block 
 extern volatile uint32_t ps_prof[7] __attribute__((weak));
 static uint32_t prof_last[7];
 static int32_t prof_pct[7];
+extern volatile uint32_t dp_prof[2] __attribute__((weak));   /* drum+ voice render cycles (drumplus/dp_fw.c) */
+static uint32_t dp_last[2];
+static int32_t dp_pct[2], dp_pk[2];
 
 /* ---------------- state ---------------- */
 #define PEAK_DECAY 2                                        /* peak falls by 2 % per sample (~4 samples/s) */
@@ -96,6 +99,8 @@ static void sample_fast(void)                                /* CPU, AUDIO, MIDI
     }
     if (ps_prof)                                             /* gather fft mags synth bitrev ifft out */
         for (int i = 0; i < 7; i++) { uint32_t c = ps_prof[i]; prof_pct[i] = pct(c - prof_last[i], wall); prof_last[i] = c; }
+    if (dp_prof)
+        for (int i = 0; i < 2; i++) { uint32_t c = dp_prof[i]; dp_pct[i] = pct(c - dp_last[i], wall); dp_last[i] = c; peak(&dp_pk[i], dp_pct[i]); }
     uint32_t busy = aud_busy, mx = aud_max, mp = aud_max_period;
     aud_busy = 0; aud_max = 0;
     v_pct[SM_DSP] = pct(busy, wall);
@@ -250,7 +255,17 @@ static void sm_update(void *scr, int dt)
     op1_text_draw(txt_mem[2 * SM_ROWS], r, ident);
     op1_text_draw(txt_mem[2 * SM_ROWS + 1], r, ident);
     extern int32_t op1_db_last_err __attribute__((weak));
-    if (!ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
+    int dp_line = !ps_prof && dp_prof && (dp_pk[0] || dp_pk[1]);
+    if (dp_line) {                                           /* "drum+ 9 stock 3" (% of the audio time, peaks) */
+        char t[32], *q = put_s(t, "drum+ "); q = put_u(q, (uint32_t)dp_pk[0]);
+        q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]); *q = 0;
+        static char lastd[32];
+        int k = 0;
+        while (t[k] && t[k] == lastd[k]) k++;
+        if (t[k] != lastd[k]) { op1_text_set(txt_mem[2 * SM_ROWS + 2], t); for (k = 0; (lastd[k] = t[k]) != 0; k++) ; }
+        op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+    }
+    if (!dp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
         static int32_t shown = 0;
         if (shown != op1_db_last_err) {
             char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;

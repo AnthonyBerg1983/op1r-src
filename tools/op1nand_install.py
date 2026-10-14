@@ -5,6 +5,8 @@
     op1nand_install.py nand.bin fw.op1 -o new.bin                       # write a new image
     op1nand_install.py nand.bin fw.op1 --fast                           # skip te-boot and the read-back check
     op1nand_install.py nand.bin --list                                  # show the /yaffs2 tree of an image
+    op1nand_install.py nand.bin --get user/op1.db=op1.db                # copy a file out of the image
+    op1nand_install.py nand.bin --put user/op1.db=op1.db                # replace / add files (no firmware)
 
 Does what te-boot's "Upload firmware" does, without the emulator or USB: the package files are written into
 /yaffs2 (replacing files of the same name), all other files stay (user data: presets, tape, the FAT disk image
@@ -24,6 +26,8 @@ ap.add_argument('image', help='op1emu NAND image (emu layout, as written by mkna
 ap.add_argument('firmware', nargs='?', help='.op1 update file or unpacked firmware directory')
 ap.add_argument('-o', '--output', help='output image (default: replace IMAGE, keeping IMAGE.bak)')
 ap.add_argument('--list', action='store_true', help='list the /yaffs2 files of IMAGE and exit')
+ap.add_argument('--get', action='append', default=[], metavar='PATH=FILE', help='copy /yaffs2/PATH out of IMAGE')
+ap.add_argument('--put', action='append', default=[], metavar='PATH=FILE', help='write FILE as /yaffs2/PATH')
 ap.add_argument('--keep-teboot', action='store_true', help="keep the image's te-boot (block 0)")
 ap.add_argument('--no-verify', action='store_true', help='do not read the written image back')
 ap.add_argument('--fast', action='store_true', help='= --keep-teboot --no-verify')
@@ -125,17 +129,33 @@ if a.list:
     for p in sorted(old_files):
         print(f'  {len(old_files[p]):10d}  {p}')
     sys.exit(0)
-if not a.firmware:
-    sys.exit('firmware missing (or use --list)')
+for spec in a.get:
+    src, dst = spec.split('=', 1)
+    if src not in old_files:
+        sys.exit(f'{src}: not in the image')
+    open(dst, 'wb').write(old_files[src])
+    print(f'  {src} -> {dst} ({len(old_files[src])} bytes)')
+if a.get and not a.put and not a.firmware:
+    sys.exit(0)
+if not a.firmware and not a.put:
+    sys.exit('firmware missing (or use --list / --get / --put)')
 
-new_files, new_dirs = M.load_firmware(a.firmware)
-for need in ('te-boot.ldr', 'OP1_vdk.ldr'):
-    if need not in new_files:
-        sys.exit(f'{need} missing in {a.firmware}')
+if a.firmware:
+    new_files, new_dirs = M.load_firmware(a.firmware)
+    for need in ('te-boot.ldr', 'OP1_vdk.ldr'):
+        if need not in new_files:
+            sys.exit(f'{need} missing in {a.firmware}')
+else:                                                      # --put only: keep the image's own boot area / LDRs
+    new_files, new_dirs = {}, []
+    a.keep_teboot = True
+for spec in a.put:
+    dst, src = spec.split('=', 1)
+    new_files[dst.strip('/')] = open(src, 'rb').read()
+    print(f'  put {src} -> {dst}')
 replaced = [p for p in new_files if p in old_files and old_files[p] != new_files[p]]
 added = [p for p in new_files if p not in old_files]
 files = dict(old_files); files.update(new_files)
-print(f'{a.firmware}: {len(new_files)} files -> {len(replaced)} replaced, {len(added)} added, '
+print(f'{a.firmware or "--put"}: {len(new_files)} files -> {len(replaced)} replaced, {len(added)} added, '
       f'{len(files) - len(new_files)} kept (user data)')
 
 nand = M.Nand()
@@ -148,7 +168,14 @@ if a.keep_teboot:                                          # copy the image's bl
     print('  te-boot.ldr: kept from the image')
 else:
     M.put_ldr(nand, M.TEBOOT_BLOCK, files['te-boot.ldr'], M.VDK_BLOCK - M.TEBOOT_BLOCK, 'te-boot.ldr')
-M.put_ldr(nand, M.VDK_BLOCK, new_files['OP1_vdk.ldr'], M.YAFFS_START - M.VDK_BLOCK, 'OP1_vdk.ldr')
+if 'OP1_vdk.ldr' in new_files:
+    M.put_ldr(nand, M.VDK_BLOCK, new_files['OP1_vdk.ldr'], M.YAFFS_START - M.VDK_BLOCK, 'OP1_vdk.ldr')
+else:                                                      # keep the image's blocks 4..YAFFS_START-1
+    for p in range(M.VDK_BLOCK * M.PPB, M.YAFFS_START * M.PPB):
+        o = oob[p * M.OOB:(p + 1) * M.OOB]
+        if o != b'\xff' * M.OOB:
+            nand.put(p, data[p * M.PAGE:(p + 1) * M.PAGE], o)
+    print('  OP1_vdk.ldr: kept from the image')
 fs = M.Yaffs(nand)
 for d in sorted(set(old_dirs) | set(new_dirs)):
     fs.mkdir(d)

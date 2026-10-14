@@ -344,6 +344,14 @@ __hook_ciservice:
 	.global __hook_taperase
 __hook_taperase:
 	call _fast_tape_erase;
+	.section .hook_dpkeep,"ax"
+	.global __hook_dpkeep
+__hook_dpkeep:
+	call _dp_keep_op1r;
+	.section .hook_dpload,"ax"
+	.global __hook_dpload
+__hook_dpload:
+	call _dp_load_parse;
 	.section .hook_sqlcache,"ax"
 	.global __hook_sqlcache
 __hook_sqlcache:

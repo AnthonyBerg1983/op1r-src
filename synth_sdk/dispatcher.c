@@ -324,6 +324,14 @@ extern void ci_cancel(void);
 static uint8_t rec_held, metro_swallow, tape_held, rec_swallow;
 /* sample editor (screens/sampedit.c, docs/27): synth key + scissors on the sampler page */
 extern const op1_screen_t SCREEN_sampedit;
+/* drum+ pages (drumplus/dp_ui.c): objects for slots 0x10 (T1) / 0x17 (T2), used while the drum slot is drum+ */
+extern const op1_screen_t SCREEN_drumplus;
+uint32_t *dpu_objects(int i);
+uint32_t *dpu_vtable(void);
+void dpu_set_stock(void *t1, void *t2);
+void *dpu_screen_for(int id);
+void dpu_sync(int editor_open_on_10);
+int dpu_knob(int knob, int delta), dpu_key(int code, int pressed);
 extern int se_is_open(void), se_open_close(int drum), se_screen_id(void);
 extern void se_key(int code), se_knob(int knob, int delta);
 static uint32_t se_scr[32], se_vt[10], sd_scr[32];                /* sampler (id 6), drum (id 0x10) editor screens */
@@ -582,6 +590,19 @@ void *screens_ctor_hook(void)
         SCREEN_TABLE[0x10] = saved;
         sd_scr[3] = (uint32_t)se_vt;
     }
+    {                                                            /* drum+ page objects (ids 0x10, 0x17) */
+        uint32_t *vt = dpu_vtable();
+        for (int i = 0; i < 10; i++) vt[i] = ITER_SCREEN_VT[i];
+        vt[3 * 2 + 1] = (uint32_t)SCREEN_drumplus.update;
+        vt[4 * 2 + 1] = (uint32_t)SCREEN_drumplus.init;
+        for (int i = 0; i < 2; i++) {
+            int id = i ? 0x17 : 0x10;
+            void *saved = SCREEN_TABLE[id];
+            SCREEN_CTOR(dpu_objects(i), id, "usbout.svg");       /* empty svg: drawn in code */
+            SCREEN_TABLE[id] = saved;
+            dpu_objects(i)[3] = (uint32_t)vt;
+        }
+    }
     {                                                            /* euclid screen object */
         void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
         SCREEN_CTOR(eu_scr, EUCLID_SCREEN_ID, "euclid.svg");
@@ -642,6 +663,11 @@ void screens_load_hook(void *table)
         sd_scr[0] = (uint32_t)SVG_LOAD((void *)sd_scr[2]);
         drum_screen = SCREEN_TABLE[0x10];
         if (se_ready && sd_scr[0] && drum_screen) sd_ready = 1;  /* (texts shared, made once) */
+    }
+    {                                                            /* drum+ pages: stock objects of 0x10 / 0x17 */
+        uint32_t *a = dpu_objects(0), *b = dpu_objects(1);
+        a[0] = (uint32_t)SVG_LOAD((void *)a[2]); b[0] = (uint32_t)SVG_LOAD((void *)b[2]);
+        if (a[0] && b[0]) { SCREEN_drumplus.init(a); dpu_set_stock(SCREEN_TABLE[0x10], SCREEN_TABLE[0x17]); }
     }
     if (dt_scr[2]) {                                             /* dots screen (slot 0x2D, before euclid's sync) */
         dt_scr[0] = (uint32_t)SVG_LOAD((void *)dt_scr[2]);
@@ -744,12 +770,18 @@ static int tape_page(void)
 
 static void se_swap(void)                                           /* the open editor's screen into its slot, or stock */
 {
-    SCREEN_TABLE[6] = se_is_open() && se_screen_id() == 6 ? (void *)se_scr : sampler_screen;
-    if (sd_ready) SCREEN_TABLE[0x10] = se_is_open() && se_screen_id() == 0x10 ? (void *)sd_scr : drum_screen;
+    if (se_ready) SCREEN_TABLE[6] = se_is_open() && se_screen_id() == 6 ? (void *)se_scr : sampler_screen;
+    int ed10 = sd_ready && se_is_open() && se_screen_id() == 0x10;
+    if (ed10) SCREEN_TABLE[0x10] = (void *)sd_scr;
+    else if (sd_ready) SCREEN_TABLE[0x10] = dpu_screen_for(0x10) ? dpu_screen_for(0x10) : drum_screen;
+    dpu_sync(ed10);                                              /* drum+ T1 / T2 or stock (when no editor) */
 }
+void dpu_sync_auto(void) { se_swap(); }
 
 void key_event_hook(int code, int pressed)
 {
+    se_swap();                                                   /* drum+ / stock pages follow the drum slot */
+    if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
     /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,
      * the synth key is swallowed, other mode keys close it (and act as usual) */
     if (code == 0x02) synth_held = (uint8_t)pressed;
@@ -983,6 +1015,7 @@ void midi_start_hook(void)
 void knob_event_hook(int knob, int16_t *delta)
 {
     if (knob >= 0 && knob < 4 && se_is_open()) { se_knob(knob, *delta); return; }   /* sample editor */
+    if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */
