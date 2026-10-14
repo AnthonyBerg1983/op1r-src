@@ -54,7 +54,7 @@ static void ss_render(void *self, int16_t *out, const int16_t *params)
         if (x > 32767) x = 32767; else if (x < -32767) x = -32767;
         { int32_t x2 = (x * x) >> 15; int32_t x3 = (x2 * x) >> 15; x -= (x3 * 10923) >> 15; }
         lp += (x - lp) >> 1;
-        out[n] = op1_sat16(((lp + (lp >> 1)) * vg) >> 15);
+        out[n] = op1_sat16(((lp - (lp >> 2)) * vg) >> 15);   /* 0.75x: six voices stay near TE's engines on the synth bus */
     }
     v->ph1 = p1; v->ph2 = p2; v->phs = ps; v->lp = lp;
 }
