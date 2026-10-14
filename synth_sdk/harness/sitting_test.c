@@ -104,7 +104,7 @@ static void fx_reset(uint32_t seed)
     for (int i = 44115; i < 44115 + 64; i++) scratch_mem[i] = 0x5A5A5A5A;
     host_fx_scratch[0] = scratch_mem;
     memset((void *)op1_fx_page, 0, sizeof op1_fx_page);
-    knobs[0] = 28900; knobs[1] = 28000; knobs[2] = 13000; knobs[3] = 32767; knobs[4] = 0x5305;
+    knobs[0] = 28900; knobs[1] = 28000; knobs[2] = 13000; knobs[3] = 32767; knobs[4] = 0x5307;
     knobs[5] = 8100; knobs[6] = 6000; knobs[7] = 0;
     memset(&M, 0, sizeof M); nbeats = 0; ngen = 0; rec_at = erode_at = -1;
     clock_set_tempo(120); M.phase = M.len / 3;                               /* first beat a third of a beat in */

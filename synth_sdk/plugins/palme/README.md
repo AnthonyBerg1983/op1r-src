@@ -1,4 +1,4 @@
-# palme — Ondes Martenot diffuseurs (FX, order 4)
+# palme — Ondes Martenot diffuseurs (FX, order 6)
 
 Maurice Martenot did not trust a plain loudspeaker with his instrument. Next to the "Principal" he built
 *diffuseurs* that colour the sound acoustically. The **Palme** (1950) is a palm-leaf shaped soundboard with 12

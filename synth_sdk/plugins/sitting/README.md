@@ -11,7 +11,7 @@ the loop. The counter shows how many times the recording has gone through the ro
 (seconds) or locked to the OP-1 tempo (1/16 note up to 2 bars), so the melting loop stays on the beat.
 
 The FX list shows it as **in a room**. The source folder, the C symbols (`FX_sitting`, `SCREEN_sitting`) and
-`"order": 5` keep the old name, so sounds saved with the old FX still pick the same effect (see "Name" below).
+`"order": 7` keep the old name, so sounds saved with the old FX still pick the same effect (see "Name" below).
 
 ## Knobs
 
@@ -132,7 +132,7 @@ The page-2 LOOP default is FREE 2.6 s.
 
 Sounds store the FX **by name**, and an unknown name asserts in `fx_types.cpp:42` ("unknown fx name"), which
 locks the OP-1 at boot. For that reason `dispatcher.c` keeps accepting the old name "sitting" (`fx_old_names`).
-The effect itself is chosen by the selector word (knobs[4] = MAGIC + order 5), which the rename keeps.
+The effect itself is chosen by the selector word (knobs[4] = MAGIC + order 7), which the rename keeps.
 
 ## Verification (host, `cc -DOP1_HOST`, UBSan trapping)
 

@@ -19,7 +19,7 @@ static int32_t rec[MAXS + 128];
 /* run `blocks` blocks at inc with G*2pi = gp, knob mu; -> period (samples) over the last part, rms of x1 */
 static double run(uint32_t inc, uint16_t gp, int mu, double ptarget, double *rms)
 {
-    int16_t k[8] = { (int16_t)mu, 0, 0, 0, 0x5305, 0, 0, 0 };
+    int16_t k[8] = { (int16_t)mu, 0, 0, 0, 0x5309, 0, 0, 0 };
     long n = (long)(ptarget * 40) + 4096; if (n > MAXS) n = MAXS;
     int blocks = (int)(n / 128) + 1;
     for (int i = 0; i < 128; i++) host_pitch_inc[i] = (int32_t)inc;
