@@ -40,6 +40,7 @@ extern int32_t host_tape_pos;
 
 uint8_t ci_beats = 4;                        /* setting: 4 / 8 / 16 */
 static volatile uint8_t ci_on, ci_play_req;  /* counting (audio), PLAY wanted (main loop) */
+static volatile uint8_t ci_ext;              /* count-in for the MIDI recorder: tape not armed, PLAY from stop */
 static volatile int ci_left;
 static int32_t bar_beat;                     /* beat in the bar, 0 = accent */
 static int32_t acc_left, acc_half;
@@ -122,10 +123,25 @@ void ci_metro_render(void)
 }
 
 /* key thread: REC held + metronome pressed, tape armed by the held REC (state 3) */
+static void ci_begin(void);
 int ci_start(void)
 {
     if (ci_on || TAPE_STATE != 3) return 0;
     TAPE_STATE = 6;                                               /* latched arm (Shift+REC): REC can be released */
+    ci_begin();
+    return 1;
+}
+/* MIDI recorder (seqdev/ms_fw.c): the same count from stop without arming the tape; PLAY afterwards (it then
+ * latches its own recording) */
+int ci_start_ext(void)
+{
+    if (ci_on || ci_play_req || TAPE_STATE != 0) return 0;
+    ci_ext = 1;
+    ci_begin();
+    return 1;
+}
+static void ci_begin(void)
+{
     saved_on = (uint8_t)M_ON;
     if (M_LEVEL == 0) { saved_level = M_LEVEL; saved_level_set = 1; M_LEVEL = CI_LEVEL_MIN; }
     bar_beat = 0;
@@ -135,14 +151,14 @@ int ci_start(void)
     M_ON = 1;                                                     /* clicks on the stock beat clock */
     M_PHASE = 0;                                                  /* first click on the next block */
     ci_on = 1;
-    return 1;
 }
 int ci_counting(void) { return ci_on; }
+int ci_pending(void) { return ci_on || ci_play_req; }        /* counting or its PLAY not pressed yet */
 void ci_cancel(void)
 {
     if (!ci_on && !ci_play_req) return;
     if (ci_on && ci_left > 0) restore_metro();
-    ci_on = 0; ci_play_req = 0;
+    ci_on = 0; ci_play_req = 0; ci_ext = 0;
 }
 
 /* main loop: replaces CALL tape_c::service(0) at 0x019F0A24; presses PLAY once the count is over */
@@ -163,8 +179,9 @@ int ci_service(int arg)
     extern void plug_service(void) __attribute__((weak));
     if (plug_service) plug_service();                             /* plugin crash marker (plugload, docs/37) */
     if (ci_play_req) {
-        ci_play_req = 0;
-        if (TAPE_STATE == 6) {                                    /* still armed (not cancelled by the stock keys) */
+        int ext = ci_ext;
+        ci_ext = 0;
+        if (ext ? TAPE_STATE == 0 : TAPE_STATE == 6) {            /* still armed / stopped (not cancelled) */
 #ifdef OP1_HOST
             host_dispatch_key(0x22, 1); host_dispatch_key(0x22, 0);
 #else
@@ -172,6 +189,7 @@ int ci_service(int arg)
             ((void (*)(int, int))0x019B6C74)(0x22, 0);
 #endif
         }
+        ci_play_req = 0;                                          /* (after PLAY: ci_pending() never gaps) */
     }
     return r;
 }

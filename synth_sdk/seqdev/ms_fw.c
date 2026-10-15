@@ -4,7 +4,9 @@
  * Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
  * (switching off closes the view, silences, saves pending slots, then idles).
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
- * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
+ * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it; from stop: armed,
+ * the first note on the track's input starts the tape and the recording), REC held + metronome from stop: count-in
+ * (beats as the tape count-in), then PLAY and latched recording; scissors marks
  * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
  * tracks, then the playhead jumps to the first lifted note; DROP pastes with the first note at the playhead, white press switches between the track's input and output, white turn scrolls the
  * targets (I instrument, S sequencer, M1..M16 MIDI); red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
@@ -49,6 +51,9 @@ static uint32_t ms_scr[32], ms_vt[10];
 static int ms_scr_id = -1;
 static void *tape_obj;
 static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_chord, sel_set, own_play;
+static volatile uint8_t rec_arm, arm_go, ci_latch;     /* armed (first note starts), its PLAY wanted, count-in */
+int ci_start_ext(void), ci_pending(void), ci_counting(void);   /* tape/countin.c */
+void ci_cancel(void);
 /* the view is on screen (tape mode, its screen current): keys / encoders / recording only then. The view flag itself
  * stays while another mode is shown (back in tape mode the recorder is still there). */
 static int shown(void) { return view && CUR_MODE_ID == 2 && ms_scr_id >= 0 && CUR_SCREEN == ms_scr_id; }
@@ -161,7 +166,7 @@ static void q_put(int cc, int d1, int d2, int ch)
     if (qw - qr < QN) { q[qw % QN].cc = (uint8_t)cc; q[qw % QN].d1 = (uint8_t)d1; q[qw % QN].d2 = (uint8_t)d2; q[qw % QN].ch = (uint8_t)ch; qw++; }
     irq_on(m);
 }
-static int recording(void) { return ms && shown() && (rec_held || rec_latch); }
+static int recording(void) { return ms && shown() && (rec_held || rec_latch || rec_arm); }
 /* input source of a VoiceCtl note, from its caller: the keyboard (global_controller key down / up with no sequencer
  * taking the key), received MIDI (VoiceCtl note on / off), else a player (the stock sequencers, arpeggio, ...) */
 static int src_of(uint32_t ret)
@@ -176,6 +181,7 @@ void ms_vc_down(const int32_t *rec, int param, uint32_t ret)      /* VoiceCtl ke
     (void)param;
     if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], rec[1] < 1 ? 100 : rec[1] > 127 ? 127 : rec[1], 1);
+    if (rec_arm) arm_go = 1;                                         /* armed: the first note starts the tape */
 }
 void ms_vc_up(const int32_t *rec, uint32_t ret)
 {
@@ -192,6 +198,7 @@ void ms_midi_rx(const volatile uint8_t *pk)
     if (!mine) return;
     if (cin == 11) q_put(1, d1, d2, ch);
     else q_put(0, d1, cin == 9 ? d2 : 0, cin == 9 && d2);           /* note on with velocity 0 = off */
+    if (rec_arm && cin == 9 && d2) arm_go = 1;
 }
 
 /* ---- audio thread (tape/countin.c, once per block) ---- */
@@ -199,8 +206,13 @@ void ms_fw_block(void)
 {
     if (!ms || !ms_enabled) return;
     ms->sel = ms->sel & 3;
+    if (e_playing()) {                                    /* started by the count-in / the first note: record, latched */
+        if (ci_latch) { ci_latch = 0; rec_latch = 1; }
+        if (rec_arm) { rec_arm = 0; arm_go = 0; rec_latch = 1; }
+    } else if (ci_latch && !ci_pending()) ci_latch = 0;   /* count-in cancelled */
     ms->rec = recording();
     ms_block(ms);
+    if (rec_arm && !e_playing()) return;                  /* armed: the notes wait for the tape (recorded at its start) */
     while (qr != qw) {
         int i = qr % QN;
         if (q[i].cc) ms_cc_in(ms, q[i].d1, q[i].d2, q[i].ch);
@@ -237,6 +249,10 @@ void ms_fw_service(void)
         return;
     }
     ms_service(ms, 4);
+    if (arm_go) {                                         /* armed + first note: PLAY as the user would */
+        arm_go = 0;
+        if (rec_arm && !e_playing()) { KEY_DISPATCH(0x22, 1); KEY_DISPATCH(0x22, 0); }
+    }
     if (seq_open_req && CUR_MODE_ID == 2) { seq_open_req = 0; view_set(1); }   /* SEQ + TAPE from another mode */
 }
 
@@ -280,6 +296,11 @@ int ms_key(int code, int pressed, int on_tape)
         if (view) view_set(0);
         return 0;                                         /* (the tape mode itself is stock's) */
     }
+    if (code == 0x01 && pressed && rec_held && shown() && ms) {   /* REC held + metronome: count-in, then play + record */
+        if (ci_pending()) { ci_cancel(); ci_latch = 0; }
+        else if (!e_playing() && ci_start_ext()) { ci_latch = 1; rec_arm = 0; }
+        swallow[code] = 1; return 1;
+    }
     if (pressed && view && (code == 0x02 || code == 0x03 || code == 0x05 || code == 0x00 || code == 0x01 || code == 0x2C)) view_set(0);
     if (!shown() || !ms || !pressed) return 0;
     int sh = SHIFT;
@@ -289,7 +310,12 @@ int ms_key(int code, int pressed, int on_tape)
         else { ms->sel = t; rec_latch = 0; }
         swallow[code] = 1; return 1;
     }
-    if (code == 0x21) { if (sh) rec_latch ^= 1; else rec_held = 1; swallow[code] = 1; return 1; }
+    if (code == 0x21) {                                   /* REC held: record; Shift: latched (stopped: armed) */
+        if (!sh) rec_held = 1;
+        else if (e_playing()) rec_latch ^= 1;
+        else { rec_arm ^= 1; arm_go = 0; }
+        swallow[code] = 1; return 1;
+    }
     int32_t ph = TAPE_POS >> 6;
     if (code == 0x0C) {                                   /* scissors: selection start, then end */
         if (!sel_set || sel_b >= 0) { sel_a = ph; sel_b = -1; sel_set = 1; }

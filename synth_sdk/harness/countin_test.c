@@ -21,14 +21,14 @@ void host_metro_render(void)
 int host_tape_service(int a) { return a; }
 static int restart_at = -1;                                         /* PLAY resets the phase a few blocks later */
 static int moving;                                                  /* tape runs at 1x: pos and tape-synced phase move */
-void host_dispatch_key(int code, int pressed) { if (code == 0x22 && pressed && host_tape_state == 6) { host_tape_state = 7; plays++; restart_at = block + 3; moving = 1; } }
+void host_dispatch_key(int code, int pressed) { if (code == 0x22 && pressed && (host_tape_state == 6 || host_tape_state == 0)) { host_tape_state = host_tape_state ? 7 : 10; plays++; restart_at = block + 3; moving = 1; } }
 
 static int32_t beat_len(int bpm) { return (int32_t)((int64_t)44100 * 60 / bpm / 64 * 0x100000); }   /* blocks per beat */
 static void reset(int bpm, int on, int level)
 {
     memset(host_metro, 0, sizeof host_metro); *(int32_t *)(MB + 0x1C) = beat_len(bpm);
     M_PHASE = beat_len(bpm) / 3; M_ON = on; M_LEVEL = (int16_t)level; M_HALF = 40; M_START = 0x7FFF;
-    clicks = plays = block = 0; moving = 0; host_tape_state = 0; ci_on = ci_play_req = 0; acc_left = 0; bar_beat = 0; host_tape_run = 0; since_wrap = 0x7FFFFFFF;
+    clicks = plays = block = 0; moving = 0; host_tape_state = 0; ci_on = ci_play_req = ci_ext = 0; acc_left = 0; bar_beat = 0; host_tape_run = 0; since_wrap = 0x7FFFFFFF;
     host_tape_pos = 0; bar_anchor = 0; host_tape_speed = 0;
 }
 static void run(int blocks)
@@ -63,6 +63,14 @@ int main(void)
     /* cancel: no recording, settings restored */
     reset(120, 1, 0x2000); restart_at = -1; host_tape_state = 3; assert(ci_start()); run(100); ci_cancel(); host_tape_state = 0; run(2000);
     assert(plays == 0 && M_ON == 1 && M_LEVEL == 0x2000);
+    /* MIDI recorder count-in: from stop, tape not armed, PLAY after the count; not while playing / counting */
+    reset(120, 1, 0x2000); restart_at = -1; host_tape_state = 0; ci_beats = 4;
+    assert(ci_start_ext() && host_tape_state == 0 && ci_pending() && !ci_start_ext() && !ci_start());
+    run(20000);
+    assert(plays == 1 && !ci_pending() && M_ON == 1);
+    reset(120, 1, 0x2000); host_tape_state = 10; assert(!ci_start_ext());
+    reset(120, 1, 0x2000); host_tape_state = 0; assert(ci_start_ext()); run(100); ci_cancel(); run(20000);
+    assert(plays == 0 && !ci_pending());
     /* not armed by a held REC: nothing */
     reset(120, 0, 0x2000); host_tape_state = 0; assert(!ci_start()); host_tape_state = 2; assert(!ci_start());
     /* normal metronome: accent every 4th click, pitch restored */
