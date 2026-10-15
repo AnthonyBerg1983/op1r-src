@@ -26,7 +26,7 @@ static void txt(void *r, ms_txt *t, int32_t x, int32_t y, const uint8_t *c, int 
     if (str[k] != t->last[k]) { op1_text_set(t->mem, str); for (k = 0; k < 11 && (t->last[k] = str[k]) != 0; k++) ; t->last[11] = 0; }
     op1_text_draw(t->mem, r, ident);
 }
-enum { T_TRACK_W, T_TRACK_G, T_POS, T_MIN, T_COLON, T_S1, T_S2, T_DOT, T_H1, T_H2, T_IN_W, T_IN_B, T_OUT_W, T_OUT_B, T_N };
+enum { T_TRACK_W, T_TRACK_G, T_POS, T_MIN, T_COLON, T_S1, T_S2, T_DOT, T_H1, T_H2, T_IN_W, T_IN_G, T_OUT_W, T_OUT_G, T_N };
 static ms_txt tx[T_N];
 
 static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0x4A, 0x52, 255 },
@@ -88,14 +88,14 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         int ik = s->h.in[st] & 15, ok = s->h.dest[st] % 3;
         o = sq_cat(t, dl[ik % 3]);
         if (ik == MS_DEST_MIDI) sq_num(o, (s->h.in[st] >> 4) + 1u, 0);
-        txt(r, &tx[v->io ? T_IN_B : T_IN_W], OP1_Q10(ARROW_X - 4), TXT_Y, v->io ? c_blue : c_white, 2, t);   /* blue: white knob edits it */
+        txt(r, &tx[v->io ? T_IN_W : T_IN_G], OP1_Q10(ARROW_X - 4), TXT_Y, v->io ? c_white : c_grey, 2, t);   /* white: the white knob edits it, grey: the other */
         int32_t ax = OP1_Q10(ARROW_X), ay = OP1_Q10(10);              /* arrow */
         sq_line(r, ax, ay, ax + OP1_Q10(9), ay, 0x500, c_grey);
         sq_line(r, ax + OP1_Q10(5), ay - OP1_Q10(3.5), ax + OP1_Q10(9), ay, 0x500, c_grey);
         sq_line(r, ax + OP1_Q10(5), ay + OP1_Q10(3.5), ax + OP1_Q10(9), ay, 0x500, c_grey);
         o = sq_cat(t, dl[ok]);
         if (ok == MS_DEST_MIDI) sq_num(o, s->h.ch[st] + 1u, 0);
-        txt(r, &tx[v->io ? T_OUT_W : T_OUT_B], ax + OP1_Q10(13), TXT_Y, v->io ? c_white : c_blue, 0, t);
+        txt(r, &tx[v->io ? T_OUT_G : T_OUT_W], ax + OP1_Q10(13), TXT_Y, v->io ? c_grey : c_white, 0, t);
     }
 
     /* bars and beats: lines through the lanes (bars thicker), beat ticks above the lanes when there is room */
