@@ -339,62 +339,76 @@ static int load_track_range(ms_t *s, int t, int32_t a, int32_t b)
 {
     return ms_load_range(s, t, (int)(a >> MS_PAGE_BITS), (int)(b >> MS_PAGE_BITS));
 }
-int ms_copy(ms_t *s, int32_t a, int32_t b)
+/* copy the events starting in [a, b) of the tracks in mask (bit t) into the clipboard, positions relative to the
+ * first copied event (clip_first: its position, -1 when nothing was copied) */
+int ms_copy(ms_t *s, int32_t a, int32_t b, int mask)
 {
     if (a < 0) a = 0;
     if (b > MS_MAXPOS + 1) b = MS_MAXPOS + 1;
-    if (b <= a || load_track_range(s, s->sel, a, b - 1)) return -1;
-    s->nclip = 0;
-    for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++)
-        for (int sl = s->h.first[s->sel][p]; sl != MS_NONE;) {
-            ms_slot *x = res(s, sl);
-            for (int i = 0; i < x->n && s->nclip < MS_CLIP; i++) {
-                int32_t q = ((int32_t)p << MS_PAGE_BITS) | x->ev[i].off;
-                if (q >= a && q < b) { s->clip[s->nclip] = x->ev[i]; s->clip_pos[s->nclip++] = q - a; }
+    if (b <= a) return -1;
+    for (int t = 0; t < MS_TRACKS; t++) if ((mask >> t & 1) && load_track_range(s, t, a, b - 1)) return -1;
+    s->nclip = 0; s->clip_first = -1; s->clip_all = mask != (1 << s->sel);
+    for (int t = 0; t < MS_TRACKS; t++) {
+        if (!(mask >> t & 1)) continue;
+        for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++)
+            for (int sl = s->h.first[t][p]; sl != MS_NONE;) {
+                ms_slot *x = res(s, sl);
+                for (int i = 0; i < x->n && s->nclip < MS_CLIP; i++) {
+                    int32_t q = ((int32_t)p << MS_PAGE_BITS) | x->ev[i].off;
+                    if (q < a || q >= b) continue;
+                    s->clip[s->nclip] = x->ev[i]; s->clip_pos[s->nclip] = q; s->clip_trk[s->nclip++] = (uint8_t)t;
+                    if (s->clip_first < 0 || q < s->clip_first) s->clip_first = q;
+                }
+                sl = x->next;
             }
-            sl = x->next;
-        }
-    s->clip_len = b - a;
+    }
+    for (int i = 0; i < s->nclip; i++) s->clip_pos[i] -= s->clip_first;
+    s->clip_len = s->nclip ? b - s->clip_first : -1;
     return 0;
 }
-int ms_cut(ms_t *s, int32_t a, int32_t b)
+int ms_cut(ms_t *s, int32_t a, int32_t b, int mask)
 {
-    if (ms_copy(s, a, b)) return -1;
-    for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++)
-        for (int sl = s->h.first[s->sel][p]; sl != MS_NONE;) {
-            ms_slot *x = res(s, sl);
-            uint32_t m = s->env->irq_off();
-            int o = 0;
-            for (int i = 0; i < x->n; i++) {
-                int32_t q = ((int32_t)p << MS_PAGE_BITS) | x->ev[i].off;
-                if (q < a || q >= b) x->ev[o++] = x->ev[i];
+    if (ms_copy(s, a, b, mask)) return -1;
+    for (int t = 0; t < MS_TRACKS; t++) {
+        if (!(mask >> t & 1)) continue;
+        for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++)
+            for (int sl = s->h.first[t][p]; sl != MS_NONE;) {
+                ms_slot *x = res(s, sl);
+                uint32_t m = s->env->irq_off();
+                int o = 0;
+                for (int i = 0; i < x->n; i++) {
+                    int32_t q = ((int32_t)p << MS_PAGE_BITS) | x->ev[i].off;
+                    if (q < a || q >= b) x->ev[o++] = x->ev[i];
+                }
+                if (o != x->n) { x->n = (uint8_t)o; dirty(s, x); }
+                s->env->irq_on(m);
+                sl = x->next;
             }
-            if (o != x->n) { x->n = (uint8_t)o; dirty(s, x); }
+        for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++) {   /* drop empty slots */
+            uint32_t m = s->env->irq_off();
+            uint16_t *link = &s->h.first[t][p];
+            while (*link != MS_NONE) {
+                ms_slot *x = res(s, *link);
+                if (!x) break;
+                if (!x->n) { int sl = *link; *link = x->next; slot_free(s, sl); s->head_dirty = 1; }
+                else link = &x->next;
+            }
             s->env->irq_on(m);
-            sl = x->next;
         }
-    for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS); p++) {   /* drop empty slots */
-        uint32_t m = s->env->irq_off();
-        uint16_t *link = &s->h.first[s->sel][p];
-        while (*link != MS_NONE) {
-            ms_slot *x = res(s, *link);
-            if (!x) break;
-            if (!x->n) { int sl = *link; *link = x->next; slot_free(s, sl); s->head_dirty = 1; }
-            else link = &x->next;
-        }
-        s->env->irq_on(m);
     }
     ms_all_off(s);
     return 0;
 }
+/* paste with the first event at `at`: into the tracks it came from (all-track lift), else into the selected track */
 int ms_paste(ms_t *s, int32_t at)
 {
     if (s->clip_len < 0 || at < 0 || at + s->clip_len > MS_MAXPOS + 1) return -1;
-    if (load_track_range(s, s->sel, at, at + s->clip_len)) return -1;
+    for (int t = 0; t < MS_TRACKS; t++)
+        if ((s->clip_all || t == s->sel) && load_track_range(s, t, at, at + s->clip_len)) return -1;
     int bad = 0;
     for (int i = 0; i < s->nclip; i++) {
         uint32_t m = s->env->irq_off();
-        bad |= insert(s, s->sel, at + s->clip_pos[i], &s->clip[i]);
+        bad |= insert(s, s->clip_all ? s->clip_trk[i] : s->sel, at + s->clip_pos[i], &s->clip[i]);
         s->env->irq_on(m);
     }
     return bad;

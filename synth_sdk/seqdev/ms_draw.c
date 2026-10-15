@@ -49,6 +49,12 @@ static void ring(void *r, int32_t x, int32_t y, int32_t rad, int32_t w, const ui
         sq_line(r, x + px[i] * rad / 10, y + py[i] * rad / 10, x + px[i + 1] * rad / 10, y + py[i + 1] * rad / 10, w, c);
 }
 
+static void tri(void *r, int32_t x, int dir)   /* equilateral triangle outline, 8 px side on the line at x, pointing dir */
+{
+    int32_t y0 = LANE_Y(0), y1 = LANE_Y(0) + OP1_Q10(8), tx = x + dir * OP1_Q10(6.93), ty = LANE_Y(0) + OP1_Q10(4);
+    sq_line(r, x, y0, tx, ty, 0x300, c_white);
+    sq_line(r, tx, ty, x, y1, 0x300, c_white);
+}
 void ms_draw(void *r, const ms_view *v, ms_t *s)
 {
     int32_t ph = v->ph, k = (int32_t)(((int64_t)v->zoom_q10 << 16) / 44100);   /* Q10 px per sample << 16 */
@@ -135,9 +141,11 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
 
     /* tracks: separator, notes (pitch inside the lane), CCs */
     static ms_ev ev[96]; static int32_t ps[96];
+#define SEL(p) (in_sel && (p) >= v->sel_a && (p) < v->sel_b)
     for (int t = 0; t < MS_TRACKS; t++) {
         int32_t y = LANE_Y(t);
         const uint8_t *lc = t == v->sel_track ? c_red : s->h.mute[t] ? c_grey : c_white;
+        int in_sel = v->sel_b >= 0 && (t == v->sel_track || v->shift);   /* LIFT takes these: blue */
         sq_line(r, X0, y + OP1_Q10(26), X1, y + OP1_Q10(26), 0x600, c_lane);
         int n = ms_events(s, t, ph - span, ph + span, ev, ps, 96);
         for (int i = 0; i < n; i++) {
@@ -145,7 +153,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
             if (!ON(x0)) continue;
             if (ev[i].kind == MS_CC) {
                 int32_t yy = y + OP1_Q10(24) - ev[i].d2 * OP1_Q10(20) / 127;
-                sq_line(r, x0, yy, x0 + OP1_Q10(1), yy, 0x400, ps[i] >= ph - 64 && ps[i] <= ph ? c_blue : lc);
+                sq_line(r, x0, yy, x0 + OP1_Q10(1), yy, 0x400, (ps[i] >= ph - 64 && ps[i] <= ph) || SEL(ps[i]) ? c_blue : lc);
                 continue;
             }
             int32_t x1 = x0 + (int32_t)(((int64_t)ev[i].len * 64 * k) >> 16);
@@ -153,18 +161,19 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
             if (x1 > X1) x1 = X1;
             int32_t yy = y + OP1_Q10(23) - (ev[i].d1 % 24) * OP1_Q10(20) / 23;
             int under = ps[i] <= ph && ph < ps[i] + (int32_t)(ev[i].len ? ev[i].len : 1) * 64;   /* sounding at the cursor */
-            sq_line(r, x0, yy, x1, yy, 0x600, under ? c_blue : lc);
+            sq_line(r, x0, yy, x1, yy, 0x600, under || SEL(ps[i]) ? c_blue : lc);
         }
     }
 
-    /* selection (white), playhead (red while recording) */
+    /* selection (white lines, a triangle at the top pointing into it), playhead (red while recording) */
     if (v->sel_a >= 0) {
         int32_t xa = MS_X(v->sel_a);
-        if (ON(xa)) sq_line(r, xa, LANE_Y(0), xa, LANE_Y(4), 0x400, c_white);
-        if (v->sel_b >= 0) { int32_t xb = MS_X(v->sel_b); if (ON(xb)) sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x400, c_white); }
+        if (ON(xa)) { sq_line(r, xa, LANE_Y(0), xa, LANE_Y(4), 0x400, c_white); tri(r, xa, 1); }
+        if (v->sel_b >= 0) { int32_t xb = MS_X(v->sel_b); if (ON(xb)) { sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x400, c_white); tri(r, xb, -1); } }
     }
     sq_line(r, OP1_Q10(160), LANE_Y(0) - OP1_Q10(4), OP1_Q10(160), LANE_Y(4) + OP1_Q10(2), 0x400, v->rec ? c_red : c_white);
     (void)c_dim;
 #undef MS_X
+#undef SEL
 #undef ON
 }

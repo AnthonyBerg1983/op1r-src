@@ -92,10 +92,22 @@ int main(void)
     /* cut / copy / paste on track 2: cut pages 10..19, paste at page 200 */
     B.sel = 2;
     int before = (ms_load_range(&B, 2, 0, MS_PAGES - 1), ms_count(&B, 2));
-    assert(ms_cut(&B, 10 * 65536, 20 * 65536) == 0 && B.nclip == 30 && ms_count(&B, 2) == before - 30);
-    assert(ms_paste(&B, 200 * 65536) == 0 && ms_count(&B, 2) == before);
+    static ms_ev e0[64], e1[64]; static int32_t p0[64], p1[64];
+    int n0 = ms_events(&B, 2, 10 * 65536 - 5, 20 * 65536, e0, p0, 64);
+    assert(ms_cut(&B, 10 * 65536 - 5, 20 * 65536, 1 << 2) == 0 && B.nclip == 30 && ms_count(&B, 2) == before - 30);
+    assert(B.clip_first == p0[0] && !B.clip_all);           /* the cursor goes to the first lifted note */
+    assert(ms_paste(&B, B.clip_first) == 0 && ms_count(&B, 2) == before);
+    assert(ms_events(&B, 2, 10 * 65536 - 5, 20 * 65536, e1, p1, 64) == n0 && !memcmp(p0, p1, sizeof(int32_t) * n0));
+    assert(ms_cut(&B, 10 * 65536, 20 * 65536, 1 << 2) == 0 && ms_paste(&B, 200 * 65536) == 0 && ms_count(&B, 2) == before);
     assert(ms_events(&B, 2, 200 * 65536, 210 * 65536, 0, 0, 100) == 30);
-    assert(ms_copy(&B, 0, 65536 * 3) == 0 && B.nclip == 9 && ms_count(&B, 2) == before);
+    assert(ms_copy(&B, 0, 65536 * 3, 1 << 2) == 0 && B.nclip == 9 && ms_count(&B, 2) == before);
+    {   /* all tracks: lift, paste back into the source tracks while another track is selected */
+        int c0 = ms_count(&B, 0), c2 = ms_count(&B, 2);
+        assert(ms_cut(&B, 0, 65536 * 3, 15) == 0 && B.clip_all && ms_count(&B, 2) == c2 - 9);
+        B.sel = 1;
+        assert(ms_paste(&B, B.clip_first) == 0 && ms_count(&B, 2) == c2 && ms_count(&B, 0) == c0);
+        B.sel = 2;
+    }
     printf("cut / copy / paste ok\n");
 
     /* damaged slot: loads as empty, others survive */

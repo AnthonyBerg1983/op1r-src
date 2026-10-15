@@ -76,10 +76,11 @@ typedef struct {
     int nheld;
     int32_t cc_last[128];                   /* recording: position of the last recorded value per controller */
     uint32_t underruns, dropped;
-    ms_ev clip[MS_CLIP];                    /* clipboard: offsets relative to the copied range start (len kept) */
+    ms_ev clip[MS_CLIP];                    /* clipboard: offsets relative to the first copied event (len kept) */
     int32_t clip_pos[MS_CLIP];
-    int nclip;
-    int32_t clip_len;                       /* -1: empty */
+    uint8_t clip_trk[MS_CLIP];              /* source track of each event */
+    int nclip, clip_all;                    /* clip_all: paste into the source tracks, else into the selected one */
+    int32_t clip_len, clip_first;           /* clip_len -1: empty; clip_first: position of the first copied event */
 } ms_t;
 
 void ms_init(ms_t *s, const ms_env *env);  /* empty song */
@@ -90,8 +91,8 @@ void ms_service(ms_t *s, int budget);       /* main loop: prefetch around the pl
 void ms_note_in(ms_t *s, int note, int vel, int ch, int on);
 void ms_cc_in(ms_t *s, int cc, int val, int ch);
 /* editing (main loop): range [a, b) of the selected track */
-int  ms_copy(ms_t *s, int32_t a, int32_t b);
-int  ms_cut(ms_t *s, int32_t a, int32_t b);
+int  ms_copy(ms_t *s, int32_t a, int32_t b, int mask);   /* mask: tracks (bit t) */
+int  ms_cut(ms_t *s, int32_t a, int32_t b, int mask);
 int  ms_paste(ms_t *s, int32_t at);
 void ms_all_off(ms_t *s);
 int  ms_load_range(ms_t *s, int track, int pa, int pb);          /* main loop: make pages resident (0 ok) */

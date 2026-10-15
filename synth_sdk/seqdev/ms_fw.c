@@ -3,8 +3,8 @@
  *
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
- * the selection start / end, LIFT cuts it (no selection: the 1.5 s page under the playhead), Shift + LIFT copies, DROP
- * pastes at the playhead, white press switches between the track's input and output, white turn scrolls the
+ * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
+ * tracks, then the playhead jumps to the first lifted note; DROP pastes with the first note at the playhead, white press switches between the track's input and output, white turn scrolls the
  * targets (I instrument, S sequencer, M1..M16 MIDI); red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
 #pragma GCC optimize ("Os", "no-tree-loop-distribute-patterns")
 #include "../op1_synth.h"
@@ -274,9 +274,10 @@ int ms_key(int code, int pressed, int on_tape)
         else { sel_b = ph; if (sel_b < sel_a) { int32_t x = sel_a; sel_a = sel_b; sel_b = x; } }
         swallow[code] = 1; return 1;
     }
-    if (code == 0x0A) {                                   /* lift: cut, Shift: copy */
+    if (code == 0x0A) {                                   /* lift: the selected track, Shift: all tracks */
         int32_t a = sel_b >= 0 ? sel_a : ph & ~0xFFFF, b = sel_b >= 0 ? sel_b : (ph | 0xFFFF) + 1;
-        if (sh) ms_copy(ms, a, b); else ms_cut(ms, a, b);
+        if (!ms_cut(ms, a, b, sh ? 15 : 1 << (ms->sel & 3)) && ms->clip_first >= 0)
+            ((void (*)(int32_t))0x01A55024)(ms->clip_first);   /* tape locate: DROP here puts them back in place */
         sel_set = 0; sel_a = sel_b = -1;
         swallow[code] = 1; return 1;
     }
@@ -308,7 +309,7 @@ static void ms_scr_update(void *self, int dt)
     ms_view v;
     v.ph = TAPE_POS >> 6; v.zoom_q10 = tm_zoom_q10(); v.bpm_q8 = bpm_q8();
     v.loop_on = LOOP_ON; v.loop_in = LOOP_IN; v.loop_out = LOOP_OUT;
-    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode; v.io = io_sel;
+    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode; v.io = io_sel; v.shift = SHIFT;
     v.tm_n = tm_n; v.tm = tm_pos;
     ms_draw(op1_raster(), &v, ms);
 }
