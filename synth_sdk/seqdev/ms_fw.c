@@ -4,8 +4,8 @@
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
  * the selection start / end, LIFT cuts it (no selection: the 1.5 s page under the playhead), Shift + LIFT copies, DROP
- * pastes at the playhead, green press cycles the track destination (instrument / sequencer / MIDI out), white press
- * its MIDI channel; red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
+ * pastes at the playhead, white press switches between the track's input and output, white turn scrolls the
+ * targets (I instrument, S sequencer, M1..M16 MIDI); red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
 #pragma GCC optimize ("Os", "no-tree-loop-distribute-patterns")
 #include "../op1_synth.h"
 #include "../seq/seq_text.h"
@@ -47,6 +47,26 @@ static int ms_scr_id = -1;
 static void *tape_obj;
 static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_chord, sel_set, own_play;
 static int32_t sel_a = -1, sel_b = -1;
+static uint8_t io_sel;                                   /* white knob edits: 0 output, 1 input */
+static int io_acc;
+/* white turn: one step per detent through I, S, M1..M16 (clamped) for the selected track's input or output */
+int ms_knob(int knob, int delta)
+{
+    if (!view || !ms || knob != 2) return 0;
+    if ((io_acc > 0 && delta < 0) || (io_acc < 0 && delta > 0)) io_acc = 0;
+    io_acc += delta;
+    int st = io_acc / 1024;
+    if (!st) return 1;
+    io_acc = 0;
+    int t = ms->sel & 3, k, ch;
+    if (io_sel) { k = ms->h.in[t] & 15; ch = ms->h.in[t] >> 4; } else { k = ms->h.dest[t] % 3; ch = ms->h.ch[t] & 15; }
+    int i = k == MS_DEST_MIDI ? 2 + ch : k == MS_DEST_SEQ ? 1 : 0;   /* list index */
+    i += st; if (i < 0) i = 0; if (i > 17) i = 17;
+    k = i >= 2 ? MS_DEST_MIDI : i == 1 ? MS_DEST_SEQ : MS_DEST_INSTR; ch = i >= 2 ? i - 2 : ch;
+    if (io_sel) ms->h.in[t] = (uint8_t)(k | ch << 4); else { ms->h.dest[t] = (uint8_t)k; ms->h.ch[t] = (uint8_t)ch; }
+    ms->head_dirty = 1;
+    return 1;
+}
 static uint8_t swallow[0x40];
 
 /* ---- env ---- */
@@ -245,8 +265,7 @@ int ms_key(int code, int pressed, int on_tape)
         swallow[code] = 1; return 1;
     }
     if (code == 0x0B) { ms_paste(ms, ph); swallow[code] = 1; return 1; }
-    if (code == 0x3C) { int t = ms->sel; ms->h.dest[t] = (uint8_t)((ms->h.dest[t] + 1) % 3); ms->head_dirty = 1; swallow[code] = 1; return 1; }
-    if (code == 0x3D) { int t = ms->sel; ms->h.ch[t] = (uint8_t)((ms->h.ch[t] + 1) & 15); ms->head_dirty = 1; swallow[code] = 1; return 1; }
+    if (code == 0x3D) { io_sel ^= 1; swallow[code] = 1; return 1; }
     return 0;
 }
 /* ---- drawing: the view screen's update (GUI thread, every frame): seqdev/ms_draw.c ---- */
@@ -273,7 +292,7 @@ static void ms_scr_update(void *self, int dt)
     ms_view v;
     v.ph = TAPE_POS >> 6; v.zoom_q10 = tm_zoom_q10(); v.bpm_q8 = bpm_q8();
     v.loop_on = LOOP_ON; v.loop_in = LOOP_IN; v.loop_out = LOOP_OUT;
-    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode;
+    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode; v.io = io_sel;
     v.tm_n = tm_n; v.tm = tm_pos;
     ms_draw(op1_raster(), &v, ms);
 }

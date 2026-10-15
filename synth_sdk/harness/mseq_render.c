@@ -65,7 +65,8 @@ int main(void)
     v.ph = 132300; frame("on a marker (white)", &v);
     v.ph = 110250; v.punch = 1; v.rec = 1; frame("recording, punch mode (red markers)", &v);
     v.punch = 0; v.rec = 0; v.sel_a = 99225; v.sel_b = 154350; v.sel_track = 2; frame("selection, track 3 (input M5)", &v);
-    v.sel_a = v.sel_b = -1; v.sel_track = 1; frame("track 2 (I -> M2)", &v); v.sel_track = 2;
+    v.sel_a = v.sel_b = -1; v.sel_track = 1; frame("track 2 (I -> M2), output selected", &v);
+    v.io = 1; frame("track 2, input selected (white press)", &v); v.io = 0; v.sel_track = 2;
     v.zoom_q10 = 12 << 10; v.sel_a = v.sel_b = -1; v.sel_track = 0; frame("zoomed out", &v);
     return 0;
 }

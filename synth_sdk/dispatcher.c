@@ -1146,6 +1146,7 @@ void knob_event_hook(int knob, int16_t *delta)
     if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
+    { extern int ms_knob(int knob, int delta); if (ms_knob(knob, *delta)) return; }   /* MIDI seq view: white */
     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */
     if (knob >= 0 && knob < 4 && dots_page()) {                  /* dots: see seq/dots.c */
         int m = *(volatile int *)0x01DE4C40 == 1, sh = *(volatile uint8_t *)0x01DD7F78;

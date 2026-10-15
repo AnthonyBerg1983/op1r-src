@@ -36,8 +36,8 @@ static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0
 
 #define X0      OP1_Q10(4)                   /* lanes: x from here to X1 */
 #define X1      OP1_Q10(318)
-#define LANE_Y(t) OP1_Q10(30 + (t) * 27)     /* top of lane t, 27 px each, separators below */
-#define BAND_Y  OP1_Q10(24)                  /* loop bar / marker carets */
+#define LANE_Y(t) OP1_Q10(34 + (t) * 26)     /* top of lane t, 26 px each, separators below */
+#define BAND_Y  OP1_Q10(28)                  /* loop bar / marker carets */
 #define TXT_Y   4                            /* status bar text, px */
 #define ARROW_X 280                          /* input -> output arrow, px */
 
@@ -47,6 +47,7 @@ static void ring(void *r, int32_t x, int32_t y, int32_t rad, int32_t w, const ui
     for (int i = 0; i < 8; i++)
         sq_line(r, x + px[i] * rad / 10, y + py[i] * rad / 10, x + px[i + 1] * rad / 10, y + py[i + 1] * rad / 10, w, c);
 }
+static int32_t slen(const char *t) { int32_t n = 0; while (t[n]) n++; return n; }
 static char *two(char *o, uint32_t v) { *o++ = (char)('0' + v / 10 % 10); *o++ = (char)('0' + v % 10); *o = 0; return o; }
 
 void ms_draw(void *r, const ms_view *v, ms_t *s)
@@ -63,12 +64,12 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
     {
         int st = v->sel_track & 3, mu = s->h.mute[st];
         const uint8_t *cb = mu ? c_grey : c_white;
-        sq_line(r, OP1_Q10(4), OP1_Q10(3), OP1_Q10(18), OP1_Q10(3), 0x500, cb);
-        sq_line(r, OP1_Q10(18), OP1_Q10(3), OP1_Q10(18), OP1_Q10(17), 0x500, cb);
-        sq_line(r, OP1_Q10(18), OP1_Q10(17), OP1_Q10(4), OP1_Q10(17), 0x500, cb);
-        sq_line(r, OP1_Q10(4), OP1_Q10(17), OP1_Q10(4), OP1_Q10(3), 0x500, cb);
+        sq_line(r, OP1_Q10(3), OP1_Q10(1), OP1_Q10(23), OP1_Q10(1), 0x500, cb);
+        sq_line(r, OP1_Q10(23), OP1_Q10(1), OP1_Q10(23), OP1_Q10(21), 0x500, cb);
+        sq_line(r, OP1_Q10(23), OP1_Q10(21), OP1_Q10(3), OP1_Q10(21), 0x500, cb);
+        sq_line(r, OP1_Q10(3), OP1_Q10(21), OP1_Q10(3), OP1_Q10(1), 0x500, cb);
         char d[2] = { (char)('1' + st), 0 };
-        txt(r, &tx[mu ? T_TRACK_G : T_TRACK_W], OP1_Q10(11), TXT_Y + 2, cb, 1, d);   /* (centred in the square) */
+        txt(r, &tx[mu ? T_TRACK_G : T_TRACK_W], OP1_Q10(13), TXT_Y, cb, 1, d);   /* (centred in the square) */
         char t[16], *o = t;
         int32_t p = ph < 0 ? 0 : ph, b = p / bar, q = (p - b * bar) / beat, x = (p - b * bar - q * beat) / (beat / 4);
         o = sq_num(o, (uint32_t)b + 1, 0); *o++ = '.'; o = sq_num(o, (uint32_t)q + 1, 0); *o++ = '.'; sq_num(o, (uint32_t)x + 1, 0);
@@ -81,6 +82,8 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         o = sq_cat(t, dl[ik % 3]);
         if (ik == MS_DEST_MIDI) sq_num(o, (s->h.in[st] >> 4) + 1u, 0);
         txt(r, &tx[T_IN], OP1_Q10(ARROW_X - 4), TXT_Y, c_white, 2, t);
+        int32_t ul = OP1_Q10(19);                                     /* white knob edits the underlined side */
+        if (v->io) sq_line(r, OP1_Q10(ARROW_X - 1) - OP1_Q10(7) * slen(t), ul, OP1_Q10(ARROW_X - 1), ul, 0x300, c_white);
         int32_t ax = OP1_Q10(ARROW_X), ay = OP1_Q10(10);              /* arrow */
         sq_line(r, ax, ay, ax + OP1_Q10(9), ay, 0x500, c_grey);
         sq_line(r, ax + OP1_Q10(5), ay - OP1_Q10(3.5), ax + OP1_Q10(9), ay, 0x500, c_grey);
@@ -88,6 +91,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         o = sq_cat(t, dl[ok]);
         if (ok == MS_DEST_MIDI) sq_num(o, s->h.ch[st] + 1u, 0);
         txt(r, &tx[T_OUT], ax + OP1_Q10(13), TXT_Y, c_white, 0, t);
+        if (!v->io) sq_line(r, ax + OP1_Q10(13), ul, ax + OP1_Q10(13) + OP1_Q10(7) * slen(t), ul, 0x300, c_white);
     }
 
     /* bars and beats: lines through the lanes (bars thicker), beat ticks above the lanes when there is room */
@@ -130,7 +134,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
     for (int t = 0; t < MS_TRACKS; t++) {
         int32_t y = LANE_Y(t);
         const uint8_t *lc = t == v->sel_track ? c_red : s->h.mute[t] ? c_grey : c_white;
-        sq_line(r, X0, y + OP1_Q10(27), X1, y + OP1_Q10(27), 0x600, c_lane);
+        sq_line(r, X0, y + OP1_Q10(26), X1, y + OP1_Q10(26), 0x600, c_lane);
         int n = ms_events(s, t, ph - span, ph + span, ev, ps, 96);
         for (int i = 0; i < n; i++) {
             int32_t x0 = MS_X(ps[i]);
