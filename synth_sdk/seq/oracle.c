@@ -60,7 +60,6 @@
  * Platform independent (host test harness/oracle_test.c); firmware glue at the end and in dispatcher.c.
  * Copyright (C) 2026 ultralazr. GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "../op1_synth.h"
-#define OCC_TEXT_IMPL                                   /* the one firmware copy of seq_text.h (see there) */
 #include "seq_text.h"
 
 #define ORA_LANES 4
@@ -656,5 +655,19 @@ void *ora_player_get(void)
 static void ora_scr_init(void *scr) { (void)scr; }
 static void ora_scr_update(void *scr, int dt) { ora_screen_update(scr, dt, ORA_MODE()); }
 const op1_screen_t SCREEN_oracle = { ora_scr_init, ora_scr_update };
+
+/* plugin interface (docs/44): clipboard (Shift: whole pattern), presses re-cast (Shift: white EDIT, red voicing);
+ * turns the Mothers, Shift + turn rate gate lane run */
+static int ora_pkey(int m, int code, int pressed, int knob, int shift)
+{
+    if (code >= 0x0A && code <= 0x0C) { if (pressed) ora_clip(m, code == 0x0A ? 0 : code == 0x0B ? 1 : 2, shift); return 1; }
+    if (knob >= 0) { if (pressed) ora_press(m, knob, shift); return 1; }
+    return 0;
+}
+static void ora_pturn(int m, int knob, int delta, int shift)
+{
+    if (shift) ora_shift_turn(m, knob, delta); else ora_turn(m, knob, delta);
+}
+const op1_seq_t SEQ_oracle = { ora_active, ora_player_get, ora_pkey, ora_pturn, ora_midi_start, "shield" };
 #endif
 #pragma GCC pop_options

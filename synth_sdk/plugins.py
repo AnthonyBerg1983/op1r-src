@@ -1,8 +1,8 @@
-"""Plugin discovery: every plugins/<folder>/plugin.json is one synth engine or FX.
+"""Plugin discovery: every plugins/<folder>/plugin.json is one synth engine, FX or sequencer.
 
 plugin.json fields (paths relative to the plugin folder):
   name           type name shown on the OP-1: lowercase, <= 15 chars, no clash with built-in types
-  kind           "synth" or "fx"
+  kind           "synth", "fx" or "seq" (sequencer, docs/44: op1_seq_t; always a plugin file)
   author         (optional) who made it: shown in the web patcher (stored in the plugin file)
   order          (optional) the number of a plugin that was compiled into earlier releases (knobs[4] = 0x5300 + order,
                  1..31): kept so its old sounds work, never change it. Needed only to compile a plugin in (--builtin).
@@ -34,13 +34,35 @@ def load():
         e['source'], e['extra_sources'] = rel(p['sources'][0]), [rel(s) for s in p['sources'][1:]]
         if p.get('screen'):
             e['screen'] = dict(p['screen'], svg=rel(p['screen']['svg']))
-        assert p['kind'] in ('synth', 'fx'), pj
+        assert p['kind'] in ('synth', 'fx', 'seq'), pj
+        e['dir'] = d
+        if p['kind'] == 'seq':
+            continue
         (engs if p['kind'] == 'synth' else fxs).append(e)
     for lst in (engs, fxs):
         lst.sort(key=lambda e: (e.get('order') or 99, e['name']))
         orders = [e['order'] for e in lst if e.get('order')]
         assert len(set(orders)) == len(orders), f'duplicate plugin order: {orders}'
     return engs, fxs
+
+
+def load_seqs():
+    """-> sequencer plugins (kind "seq"), sorted by name; always built as plugin files"""
+    out = []
+    for d in sorted(os.listdir(DIR)):
+        pj = os.path.join(DIR, d, 'plugin.json')
+        if not os.path.isfile(pj):
+            continue
+        p = json.load(open(pj))
+        if p['kind'] != 'seq':
+            continue
+        rel = lambda f: os.path.normpath(os.path.join('plugins', d, f))
+        e = {k: v for k, v in p.items() if k not in ('kind', 'sources')}
+        e['source'], e['extra_sources'], e['dir'] = rel(p['sources'][0]), [rel(s) for s in p['sources'][1:]], d
+        if p.get('screen'):
+            e['screen'] = dict(p['screen'], svg=rel(p['screen']['svg']))
+        out.append(e)
+    return out
 
 
 if __name__ == '__main__':

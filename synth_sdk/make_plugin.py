@@ -19,6 +19,7 @@ CHECK_BASE = 0x0041A3C0
 IMP_FAKE = 0x0E000000                       # import addresses for the test links only (never loaded)
 OP1P_API = 1                                # = OP1_PLUGIN_API (op1_plugin.h)
 OP1P_ABS32, OP1P_HI16, OP1P_LO16, OP1P_IMPORT = 1, 2, 3, 0x80000000
+KINDS = {'synth': 0, 'fx': 1, 'seq': 2}                  # op1p.h OP1P_SYNTH / OP1P_FX / OP1P_SEQ
 R_LUIMM16, R_HUIMM16, R_BYTE4 = 6, 7, 0x12                 # binutils include/elf/bfin.h
 R_PCREL = {1, 3, 4, 8, 9, 0xA, 0xD, 0xE, 0x13}           # pc-relative: fine inside the image only
 LINK = """SECTIONS {{ . = {base:#x};
@@ -42,14 +43,15 @@ def find(name):
         p = json.load(open(os.path.join(name, 'plugin.json')))
         d = os.path.relpath(os.path.abspath(name), HERE)
         e = {k: v for k, v in p.items() if k not in ('kind', 'sources')}
-        e['source'], e['extra_sources'] = os.path.join(d, p['sources'][0]), [os.path.join(d, x) for x in p['sources'][1:]]
+        e['source'], e['extra_sources'] = os.path.normpath(os.path.join(d, p['sources'][0])), [os.path.normpath(os.path.join(d, x)) for x in p['sources'][1:]]
+        e['dir'] = os.path.basename(os.path.abspath(name))
         if p.get('screen'):
-            e['screen'] = dict(p['screen'], svg=os.path.join(d, p['screen']['svg']))
-        return (0 if p['kind'] == 'synth' else 1), e
+            e['screen'] = dict(p['screen'], svg=os.path.normpath(os.path.join(d, p['screen']['svg'])))
+        return KINDS[p['kind']], e
     engs, fxs = plugins.load()
-    for kind, lst in ((0, engs), (1, fxs)):
+    for kind, lst in ((0, engs), (1, fxs), (2, plugins.load_seqs())):
         for e in lst:
-            if name in (e['name'], e['source'].split('/')[1]):
+            if name in (e['name'], e['dir']):
                 return kind, e
     raise SystemExit(f'no plugin {name!r}')
 
@@ -130,7 +132,7 @@ def apply(img, rel, base, imp_addr):
 def build(name, out_dir=OUT):
     kind, e = find(name)
     srcs = [e['source']] + e['extra_sources']
-    tag = os.path.basename(os.path.dirname(e['source']))
+    tag = e.get('dir') or os.path.basename(os.path.dirname(e['source']))
     w = f'build/plugins/{tag}'
     os.makedirs(os.path.join(HERE, w), exist_ok=True)
     objs = ' '.join(f'{w}/{os.path.basename(s)}.o' for s in srcs)
@@ -187,7 +189,7 @@ def build(name, out_dir=OUT):
 if __name__ == '__main__':
     args = sys.argv[1:]
     if args == ['--all']:
-        args = [e['source'].split('/')[1] for e in sum(plugins.load(), [])]
+        args = [e['dir'] for e in sum(plugins.load(), []) + plugins.load_seqs()]
     if not args:
         raise SystemExit(__doc__)
     for a in args:

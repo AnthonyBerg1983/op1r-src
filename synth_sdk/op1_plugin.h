@@ -196,6 +196,21 @@ typedef struct {
     void (*update)(void *scr, int dt);                    /* every frame while visible */
 } op1_screen_t;
 #define OP1_Q10(v)          ((int32_t)((v) * 1024))
+
+/* ---- sequencer plugins (plugin.json "kind": "seq", docs/44) ----
+ * An extra sequencer type: a seq_types row with its name; selecting it runs it as the finger type (3) with
+ * active[mode] set. The core shows its screen in the finger screen slot (0x2D), routes keys / encoders while that
+ * screen is shown (left / right = keyboard octave are the core's) and calls midi_start on MIDI START. */
+typedef struct {
+    volatile uint8_t *active;                         /* [2]: selected for synth (0) / drum (1); written by the core */
+    void *(*player_get)(void);                        /* PlayerManager::create_player case 3 while active */
+    int  (*key)(int mode, int code, int pressed, int knob, int shift);   /* key on its page, 1 = handled (swallowed);
+                                                         knob = encoder 0..3 for presses 0x3B..0x3E, else -1 */
+    void (*turn)(int mode, int knob, int delta, int shift);              /* encoder turn on its page (knob 0..3) */
+    void (*midi_start)(void);                         /* MIDI START (may be called while not active) */
+    const char *alias;                                /* an older name that also selects it, or 0 */
+} op1_seq_t;
+#define OP1_SEQ_MAX 8                                  /* sequencer plugins loaded at once */
 #ifndef OP1_HOST
 #define op1_find_node(scr, id) (((void *(*)(void *, const char *))0x01A3B580)((scr), (id)))
 #define op1_node_set_transform(node, m9) (((void (*)(void *, const int32_t *))0x019EAD58)((node), (m9)))

@@ -1,0 +1,13 @@
+{
+  "name": "oracle",
+  "author": "ultralazr",
+  "kind": "seq",
+  "symbol": "SEQ_oracle",
+  "sources": [
+    "../../seq/oracle.c"
+  ],
+  "screen": {
+    "svg": "../../display/oracle.svg",
+    "symbol": "SCREEN_oracle"
+  }
+}

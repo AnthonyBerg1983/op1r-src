@@ -649,5 +649,15 @@ void *pl_player_get(void)
 static void pl_scr_init(void *scr) { (void)scr; }
 static void pl_scr_update(void *scr, int dt) { pl_screen_update(scr, dt, PL_MODE()); }
 const op1_screen_t SCREEN_peal = { pl_scr_init, pl_scr_update };
+
+/* plugin interface (docs/44): lift / drop / scissors do nothing (finger is not running); presses gap, that's all,
+ * Bob (Shift: Single), look to */
+static int pl_pkey(int m, int code, int pressed, int knob, int shift)
+{
+    if (code >= 0x0A && code <= 0x0C) return 1;
+    if (knob >= 0) { if (pressed) pl_press(m, knob, shift); return 1; }
+    return 0;
+}
+const op1_seq_t SEQ_peal = { pl_active, pl_player_get, pl_pkey, pl_turn, pl_midi_start, 0 };
 #endif
 #pragma GCC pop_options

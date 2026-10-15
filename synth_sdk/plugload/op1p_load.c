@@ -29,7 +29,7 @@ int op1p_parse(const uint8_t *file, uint32_t len, op1p_view *v)
     const op1p_hdr *h = (const op1p_hdr *)(file + bin_off);
     if (h->magic != OP1P_MAGIC) return OP1P_E_MAGIC;
     if (h->format != OP1P_FORMAT || h->api != OP1P_API) return OP1P_E_VERSION;
-    if (h->kind > OP1P_FX) return OP1P_E_HEADER;
+    if (h->kind > OP1P_SEQ) return OP1P_E_HEADER;
     int nl = 0;
     while (nl < 16 && h->name[nl]) {
         char c = h->name[nl++];

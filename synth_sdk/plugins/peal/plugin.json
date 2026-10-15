@@ -1,0 +1,13 @@
+{
+  "name": "peal",
+  "author": "ultralazr",
+  "kind": "seq",
+  "symbol": "SEQ_peal",
+  "sources": [
+    "../../seq/peal.c"
+  ],
+  "screen": {
+    "svg": "../../display/peal.svg",
+    "symbol": "SCREEN_peal"
+  }
+}

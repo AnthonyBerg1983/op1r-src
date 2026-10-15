@@ -78,25 +78,10 @@ void host_eu_note_off(int pos, int note);
  *  synth: record {midi, vel, send midi = 1, 0} -> key_down 0x01A85750 -> note_on_synth (uses midi as is).
  *  drums: note_on_drum takes the SOUND from record midi - 0x35 (key 0..23) and the PITCH (semitones) from the
  *         param, to which key_down adds the current drum octave * 12 -> param = pitch - current drum octave * 12. */
-#define VC_DOWN   ((void (*)(int32_t *, int))0x01A85750)
-#define VC_UP     ((void (*)(int32_t *))0x01A85840)
 #define SYNTH_OCT() (((const int *)0x01DFE4E0)[*(volatile int *)0xFF8016D4 & 7])
 #define DRUM_OCT()  (((const int *)0x01DFE500)[*(volatile int *)0xFF8016D8 & 7])
-int eu_fw_note_on(int pos, int note, int key, int vel)     /* also used by seq/dots.c */
-{
-    int midi = pos ? key + 0x35 : note, param = pos ? note - 0x35 - DRUM_OCT() * 12 : 0;
-    if (midi < 0 || midi > 127) return -1;
-    int32_t n[4] = { midi, vel, 0, 0 };
-    ((uint8_t *)n)[8] = 1;
-    VC_DOWN(n, param);
-    return midi;                                                   /* note-off uses this */
-}
-void eu_fw_note_off(int midi)
-{
-    int32_t n[4] = { midi, 0, 1, 0 };
-    ((uint8_t *)n)[8] = 1;
-    VC_UP(n);
-}
+int  eu_fw_note_on(int pos, int note, int key, int vel);    /* seq/seq_core.c (core, shared with the other sequencers) */
+void eu_fw_note_off(int midi);
 #define EU_NOTE_ON(pos, n, k, v)  eu_fw_note_on((pos), (n), (k), (v))
 #define EU_NOTE_OFF(pos, n)    eu_fw_note_off(n)
 #endif
@@ -566,7 +551,7 @@ static void eu_screen_update(void *scr, int dt, int pos)
  * +0x24 reset, +0x2c tick (96 per beat, only for the current mode's player while the sequencer is on),
  * +0x3c stop. Mode (synth 0 / drum 1) = 0x01DE4C40. */
 #define EU_MODE() (*(volatile int *)0x01DE4C40 == 1)
-volatile uint8_t eu_rec_play;                           /* Shift+C# started euclid with REC held */
+extern volatile uint8_t eu_rec_play;                    /* seq/seq_core.c: Shift+C# with REC held -> PLAY */
 static int eu_nop(void *self) { (void)self; return 0; }
 static int eu_key_down(void *self, int key)
 {
@@ -649,4 +634,20 @@ void *eu_player_get(void)
 static void eu_scr_init(void *scr) { (void)scr; }
 static void eu_scr_update(void *scr, int dt) { eu_screen_update(scr, dt, EU_MODE()); }
 const op1_screen_t SCREEN_euclid = { eu_scr_init, eu_scr_update };
+
+/* plugin interface (docs/44): page keys (lift / drop / scissors = copy / paste / cut, Shift: whole pattern; press
+ * toggles page 2) and turns (Shift + white: slot, Shift + red: start / stop all) */
+static int eu_pkey(int m, int code, int pressed, int knob, int shift)
+{
+    if (code >= 0x0A && code <= 0x0C) { if (pressed) eu_clip(m, code == 0x0A ? 0 : code == 0x0B ? 1 : 2, shift); return 1; }
+    if (knob >= 0) { if (pressed) eu_press(m, knob); return 1; }
+    return 0;
+}
+static void eu_pturn(int m, int knob, int delta, int shift)
+{
+    if (knob == 2 && shift) eu_select(m, delta);
+    else if (knob == 3 && shift) eu_run_all(m, delta);
+    else eu_turn(m, knob, delta);
+}
+const op1_seq_t SEQ_euclid = { eu_active, eu_player_get, eu_pkey, eu_pturn, eu_midi_start, 0 };
 #endif

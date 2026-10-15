@@ -845,4 +845,20 @@ void *dt_player_get(void)
 static void dt_scr_init(void *scr) { (void)scr; }
 static void dt_scr_update(void *scr, int dt_ms) { dt_screen_update(scr, dt_ms, DT_MODE()); }
 const op1_screen_t SCREEN_dots = { dt_scr_init, dt_scr_update };
+
+/* plugin interface (docs/44): clipboard (Shift: whole pattern), presses, REC = step / live record; Shift + white
+ * selects the slot */
+static int dt_pkey(int m, int code, int pressed, int knob, int shift)
+{
+    if (code >= 0x0A && code <= 0x0C) { if (pressed) dt_clip(m, code == 0x0A ? 0 : code == 0x0B ? 1 : 2, shift); return 1; }
+    if (knob >= 0) { if (pressed) dt_press(m, knob); return 1; }
+    if (code == 0x21) { if (pressed) dt_rec_key(m); return 1; }
+    return 0;
+}
+static void dt_pturn(int m, int knob, int delta, int shift)
+{
+    if (knob == 2 && shift) dt_select(m, delta);
+    else dt_turn(m, knob, delta, shift);
+}
+const op1_seq_t SEQ_dots = { dt_active, dt_player_get, dt_pkey, dt_pturn, dt_midi_start, 0 };
 #endif

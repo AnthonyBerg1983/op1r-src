@@ -217,77 +217,57 @@ void fx_render(void *self, int16_t *buf, const int16_t *params)
 
 /* replacement for TE::shared::fx_types name compare @0x019AAD8E: entry "filter" also matches
  * every custom FX name -> they all resolve to fx type 5 (filter object, mmmf.svg screen). */
-/* ---- euclid sequencer (seq/euclid.c): extra sequencer, runs as type 3 (finger) + eu_active[mode] ----
- * seq_types row "euclid"; SeqIds::from_name (3 CALLs: set_sequencer 0x01A42A2E, load 0x01A42BDC/0x01A42CE0)
+/* ---- sequencer plugins (docs/44, plugload.c op1_seqs[]): extra sequencer types, run as type 3 (finger) + the
+ * plugin's active[mode] ----
+ * seq_types row per plugin; SeqIds::from_name (3 CALLs: set_sequencer 0x01A42A2E, load 0x01A42BDC/0x01A42CE0)
  * -> eu_seq_from_name; SeqIds::name(type) 0x01A422EC -> eu_seq_name (JUMP at entry); the finger screen slot 0x2D
- * holds the euclid screen while euclid is active in the current mode (eu_sync_screen). */
-extern volatile uint8_t eu_active[2];
+ * holds the active sequencer's screen (eu_sync_screen). A name that is neither stock nor a loaded plugin (plugin
+ * removed / skipped) loads as "pattern": the stock lookup would assert. */
 #define SEQ_FROM_NAME ((int (*)(const dstring *))0x01A42344)
 #define SEQ_TABLE     ((const struct { const char *name; int type; } *)0x018FA634)
 #define CUR_MODE()    (*(volatile int *)0x01DE4C40 == 1)
-/* dots (seq/dots.c) works the same way with its own flag dt_active[mode]; at most one flag is set per mode */
-extern volatile uint8_t dt_active[2];
-/* oracle (seq/oracle.c) and peal (seq/peal.c): same mechanism, flags ora_active[mode] / pl_active[mode] */
-extern volatile uint8_t ora_active[2], pl_active[2];
+extern const op1_seq_t *op1_seqs[OP1_SEQ_MAX];
+extern const char *op1_seq_names[OP1_SEQ_MAX];
+extern const op1_screen_t *op1_seq_screens[OP1_SEQ_MAX];
+extern const char *op1_seq_svgs[OP1_SEQ_MAX];
+extern int op1_seq_count;
+static int8_t seq_cur[2] = { -1, -1 };                          /* active sequencer plugin per mode (synth, drum) */
+static void seq_set(int m, int k)
+{
+    seq_cur[m] = (int8_t)k;
+    for (int i = 0; i < op1_seq_count; i++) op1_seqs[i]->active[m] = (uint8_t)(i == k);
+}
 int eu_seq_from_name(const dstring *s)
 {
     const char *p = s->cap > 15 ? s->u.ptr : s->u.buf;
-    int eu = streq_n(p, "euclid", s->size), d = streq_n(p, "dots", s->size), orc = streq_n(p, "oracle", s->size)
-        || streq_n(p, "shield", s->size), pe = streq_n(p, "peal", s->size);   /* (shield: its pre-release name) */
-    eu_active[CUR_MODE()] = (uint8_t)eu;
-    dt_active[CUR_MODE()] = (uint8_t)d;
-    ora_active[CUR_MODE()] = (uint8_t)orc;
-    pl_active[CUR_MODE()] = (uint8_t)pe;
-    return eu || d || orc || pe ? 3 : SEQ_FROM_NAME(s);
+    int m = CUR_MODE();
+    for (int i = 0; i < 6; i++)
+        if (streq_n(p, SEQ_TABLE[i].name, s->size)) { seq_set(m, -1); return SEQ_FROM_NAME(s); }
+    for (int i = 0; i < op1_seq_count; i++)
+        if (streq_n(p, op1_seq_names[i], s->size) || (op1_seqs[i]->alias && streq_n(p, op1_seqs[i]->alias, s->size))) {
+            seq_set(m, i);
+            return 3;
+        }
+    seq_set(m, -1);
+    return SEQ_TABLE[0].type;                                    /* unknown (plugin missing): pattern */
 }
 const char *eu_seq_name(int type)
 {
-    if (type == 3 && eu_active[CUR_MODE()]) return "euclid";
-    if (type == 3 && dt_active[CUR_MODE()]) return "dots";
-    if (type == 3 && ora_active[CUR_MODE()]) return "oracle";
-    if (type == 3 && pl_active[CUR_MODE()]) return "peal";
+    int k = seq_cur[CUR_MODE()];
+    if (type == 3 && k >= 0) return op1_seq_names[k];
     for (int i = 0; i < 6; i++) if (SEQ_TABLE[i].type == type) return SEQ_TABLE[i].name;
     return "pattern";
 }
-void *eu_player_get(void);
-void *dt_player_get(void);
-void *ora_player_get(void);
-void *pl_player_get(void);
-void *seq_player_get(void)                       /* create_player case 3 (hook): dots, oracle, peal, euclid or finger */
+void *seq_player_get(void)                       /* create_player case 3 (hook): the active plugin, or finger */
 {
-    if (dt_active[CUR_MODE()]) return dt_player_get();
-    if (ora_active[CUR_MODE()]) return ora_player_get();
-    if (pl_active[CUR_MODE()]) return pl_player_get();
-    return eu_player_get();
+    int k = seq_cur[CUR_MODE()];
+    return k >= 0 ? op1_seqs[k]->player_get() : ((void *(*)(void))0x019ED460)();
 }
-extern const op1_screen_t SCREEN_euclid, SCREEN_dots, SCREEN_oracle, SCREEN_peal;
-void pl_press(int pos, int knob, int shift);
-void pl_turn(int pos, int knob, int delta, int shift);
-static uint32_t pl_scr[32], pl_scr_vt[10];
-static int pl_scr_ready;
-void ora_press(int pos, int knob, int shift);
-void ora_turn(int pos, int knob, int delta);
-void ora_shift_turn(int pos, int knob, int delta);
-void ora_clip(int pos, int op, int all);
-static uint32_t ora_scr[32], ora_scr_vt[10];
-static int ora_scr_ready;
-void dt_press(int pos, int knob);
-void dt_turn(int pos, int knob, int delta, int shift);
-void dt_select(int pos, int delta);
-void dt_clip(int pos, int op, int all);
-void dt_rec_key(int pos);
-static uint32_t dt_scr[32], dt_scr_vt[10];
-static int dt_scr_ready;
-void eu_press(int pos, int knob);
-void eu_clip(int pos, int op, int all);           /* 0 copy, 1 paste, 2 cut; all: whole pattern, else selected slot */
-void eu_turn(int pos, int knob, int delta);
-void eu_select(int pos, int delta);
-extern volatile uint8_t eu_rec_play;
-void eu_run_all(int pos, int delta);   /* Shift (byte 0x01DD7F78) + white */
+extern volatile uint8_t eu_rec_play;            /* seq/seq_core.c */
 #define EUCLID_SCREEN_ID 0x2D
-static uint32_t eu_scr[32], eu_scr_vt[10];
+static uint32_t seq_scr[OP1_SEQ_MAX][32], seq_scr_vt[OP1_SEQ_MAX][10];
+static uint8_t seq_scr_ready[OP1_SEQ_MAX];
 static void *finger_screen;
-static int eu_scr_ready;
 static void eu_sync_screen(void);
 
 /* ---- quad LFO (lfo/quadlfo.c) ---- */
@@ -457,11 +437,9 @@ int fx_name_eq(const char *name, const dstring *s)
 
 static void eu_sync_screen(void)
 {
-    if (!eu_scr_ready) return;
-    SCREEN_TABLE[EUCLID_SCREEN_ID] = dt_active[CUR_MODE()] && dt_scr_ready ? (void *)dt_scr
-                                   : ora_active[CUR_MODE()] && ora_scr_ready ? (void *)ora_scr
-                                   : pl_active[CUR_MODE()] && pl_scr_ready ? (void *)pl_scr
-                                   : eu_active[CUR_MODE()] ? (void *)eu_scr : finger_screen;
+    if (!finger_screen) return;
+    int k = seq_cur[CUR_MODE()];
+    SCREEN_TABLE[EUCLID_SCREEN_ID] = k >= 0 && seq_scr_ready[k] ? (void *)seq_scr[k] : finger_screen;
 }
 
 static uint32_t fxscr[64];                 /* screen object (iter layout uses up to +0x74) */
@@ -661,41 +639,15 @@ void *screens_ctor_hook(void)
             dpu_objects(i)[3] = (uint32_t)vt;
         }
     }
-    {                                                            /* euclid screen object */
+    for (int k = 0; k < op1_seq_count; k++) {                    /* sequencer plugin screens (slot 0x2D) */
+        if (!op1_seq_screens[k] || !op1_seq_svgs[k]) continue;
         void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
-        SCREEN_CTOR(eu_scr, EUCLID_SCREEN_ID, "euclid.svg");
+        SCREEN_CTOR(seq_scr[k], EUCLID_SCREEN_ID, op1_seq_svgs[k]);
         SCREEN_TABLE[EUCLID_SCREEN_ID] = saved;
-        for (int i = 0; i < 10; i++) eu_scr_vt[i] = ITER_SCREEN_VT[i];   /* is_visible: id == 0x2D */
-        eu_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_euclid.update;
-        eu_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_euclid.init;
-        eu_scr[3] = (uint32_t)eu_scr_vt;
-    }
-    {                                                            /* dots screen object (same slot) */
-        void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
-        SCREEN_CTOR(dt_scr, EUCLID_SCREEN_ID, "dots.svg");
-        SCREEN_TABLE[EUCLID_SCREEN_ID] = saved;
-        for (int i = 0; i < 10; i++) dt_scr_vt[i] = ITER_SCREEN_VT[i];
-        dt_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_dots.update;
-        dt_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_dots.init;
-        dt_scr[3] = (uint32_t)dt_scr_vt;
-    }
-    {                                                            /* oracle screen object (same slot) */
-        void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
-        SCREEN_CTOR(ora_scr, EUCLID_SCREEN_ID, "oracle.svg");
-        SCREEN_TABLE[EUCLID_SCREEN_ID] = saved;
-        for (int i = 0; i < 10; i++) ora_scr_vt[i] = ITER_SCREEN_VT[i];
-        ora_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_oracle.update;
-        ora_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_oracle.init;
-        ora_scr[3] = (uint32_t)ora_scr_vt;
-    }
-    {                                                            /* peal screen object (same slot) */
-        void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
-        SCREEN_CTOR(pl_scr, EUCLID_SCREEN_ID, "peal.svg");
-        SCREEN_TABLE[EUCLID_SCREEN_ID] = saved;
-        for (int i = 0; i < 10; i++) pl_scr_vt[i] = ITER_SCREEN_VT[i];
-        pl_scr_vt[3 * 2 + 1] = (uint32_t)SCREEN_peal.update;
-        pl_scr_vt[4 * 2 + 1] = (uint32_t)SCREEN_peal.init;
-        pl_scr[3] = (uint32_t)pl_scr_vt;
+        for (int i = 0; i < 10; i++) seq_scr_vt[k][i] = ITER_SCREEN_VT[i];   /* is_visible: id == 0x2D */
+        seq_scr_vt[k][3 * 2 + 1] = (uint32_t)op1_seq_screens[k]->update;
+        seq_scr_vt[k][4 * 2 + 1] = (uint32_t)op1_seq_screens[k]->init;
+        seq_scr[k][3] = (uint32_t)seq_scr_vt[k];
     }
     return r;
 }
@@ -747,23 +699,13 @@ void screens_load_hook(void *table)
         a[0] = (uint32_t)SVG_LOAD((void *)a[2]); b[0] = (uint32_t)SVG_LOAD((void *)b[2]);
         if (a[0] && b[0]) { SCREEN_drumplus.init(a); dpu_set_stock(SCREEN_TABLE[0x10], SCREEN_TABLE[0x17]); }
     }
-    if (dt_scr[2]) {                                             /* dots screen (slot 0x2D, before euclid's sync) */
-        dt_scr[0] = (uint32_t)SVG_LOAD((void *)dt_scr[2]);
-        if (dt_scr[0]) { SCREEN_dots.init(dt_scr); dt_scr_ready = 1; }
+    finger_screen = SCREEN_TABLE[EUCLID_SCREEN_ID];              /* sequencer plugin screens (swapped into 0x2D) */
+    for (int k = 0; k < op1_seq_count; k++) {
+        if (!seq_scr[k][2]) continue;
+        seq_scr[k][0] = (uint32_t)SVG_LOAD((void *)seq_scr[k][2]);
+        if (seq_scr[k][0]) { op1_seq_screens[k]->init(seq_scr[k]); seq_scr_ready[k] = 1; }
     }
-    if (ora_scr[2]) {                                            /* oracle screen (slot 0x2D, before euclid's sync) */
-        ora_scr[0] = (uint32_t)SVG_LOAD((void *)ora_scr[2]);
-        if (ora_scr[0]) { SCREEN_oracle.init(ora_scr); ora_scr_ready = 1; }
-    }
-    if (pl_scr[2]) {                                             /* peal screen (slot 0x2D, before euclid's sync) */
-        pl_scr[0] = (uint32_t)SVG_LOAD((void *)pl_scr[2]);
-        if (pl_scr[0]) { SCREEN_peal.init(pl_scr); pl_scr_ready = 1; }
-    }
-    if (eu_scr[2]) {                                             /* euclid screen (swapped into slot 0x2D) */
-        eu_scr[0] = (uint32_t)SVG_LOAD((void *)eu_scr[2]);
-        finger_screen = SCREEN_TABLE[EUCLID_SCREEN_ID];
-        if (eu_scr[0]) { SCREEN_euclid.init(eu_scr); eu_scr_ready = 1; eu_sync_screen(); }
-    }
+    eu_sync_screen();
     if (fxscr[2]) {
         fxscr[0] = (uint32_t)SVG_LOAD((void *)fxscr[2]);
         if (fxscr[0]) { ITER_INIT_NODES(fxscr); fxscr_ready = 1; }
@@ -825,25 +767,11 @@ static void eu_octave(int dir)
     ((void (*)(void *))vt[0x34 / 4])(patch + (int16_t)vt[0x30 / 4]);
 }
 
-static int euclid_page(void)
+static const op1_seq_t *seq_page(void)          /* the sequencer plugin whose screen is shown, or 0 */
 {
     eu_sync_screen();
-    return eu_scr_ready && eu_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
-}
-static int dots_page(void)
-{
-    eu_sync_screen();
-    return dt_scr_ready && dt_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
-}
-static int oracle_page(void)
-{
-    eu_sync_screen();
-    return ora_scr_ready && ora_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
-}
-static int peal_page(void)
-{
-    eu_sync_screen();
-    return pl_scr_ready && pl_active[CUR_MODE()] && CURRENT_SCREEN == EUCLID_SCREEN_ID;
+    int k = seq_cur[CUR_MODE()];
+    return k >= 0 && seq_scr_ready[k] && CURRENT_SCREEN == EUCLID_SCREEN_ID ? op1_seqs[k] : 0;
 }
 
 /* the live words (LFO 0xFF8014C4 / 0xFF801644, synth knobs 0xFF8013C4 + slot * 16) are reloaded from the
@@ -953,49 +881,13 @@ void key_event_hook(int code, int pressed)
         sm_on = 0;
         SCREEN_TABLE[CLOCK_SCREEN_ID] = clock_base();
     }
-    if (dots_page()) {                                          /* dots: octave, clipboard, red press = record */
-        int m = *(volatile int *)0x01DE4C40 == 1;
-        if (code == 0x24 || code == 0x25) { if (pressed) eu_octave(code == 0x25 ? 1 : -1); return; }
-        if (code >= 0x0A && code <= 0x0C) {
-            if (pressed) dt_clip(m, code == 0x0A ? 0 : code == 0x0B ? 1 : 2, *(volatile uint8_t *)0x01DD7F78);
-            return;
+    {                                                            /* sequencer plugin page (docs/44) */
+        const op1_seq_t *q = seq_page();
+        if (q) {
+            if (code == 0x24 || code == 0x25) { if (pressed) eu_octave(code == 0x25 ? 1 : -1); return; }   /* octave */
+            int knob = code >= 0x3B && code <= 0x3E ? press_knob[code - 0x3B] : -1;
+            if (q->key(*(volatile int *)0x01DE4C40 == 1, code, pressed, knob, *(volatile uint8_t *)0x01DD7F78)) return;
         }
-        if (code >= 0x3B && code <= 0x3E) { if (pressed) dt_press(m, press_knob[code - 0x3B]); return; }
-        if (code == 0x21) { if (pressed) dt_rec_key(m); return; }  /* REC: step / live record (tape REC not armed) */
-    }
-    if (oracle_page()) {                                        /* oracle: see seq/oracle.c */
-        int m = *(volatile int *)0x01DE4C40 == 1;
-        if (code == 0x24 || code == 0x25) { if (pressed) eu_octave(code == 0x25 ? 1 : -1); return; }
-        if (code >= 0x0A && code <= 0x0C) {                     /* lift / drop / scissors (Shift: whole pattern) */
-            if (pressed) ora_clip(m, code == 0x0A ? 0 : code == 0x0B ? 1 : 2, *(volatile uint8_t *)0x01DD7F78);
-            return;
-        }
-        if (code >= 0x3B && code <= 0x3E) {                     /* re-cast; Shift: white EDIT, red voicing */
-            if (pressed) ora_press(m, press_knob[code - 0x3B], *(volatile uint8_t *)0x01DD7F78);
-            return;
-        }
-    }
-    if (peal_page()) {                                          /* peal: see seq/peal.c */
-        int m = *(volatile int *)0x01DE4C40 == 1;
-        if (code == 0x24 || code == 0x25) { if (pressed) eu_octave(code == 0x25 ? 1 : -1); return; }
-        if (code >= 0x0A && code <= 0x0C) return;               /* lift / drop / scissors: nothing (finger is not running) */
-        if (code >= 0x3B && code <= 0x3E) {                     /* gap, that's all, Bob (Shift: Single), look to */
-            if (pressed) pl_press(m, press_knob[code - 0x3B], *(volatile uint8_t *)0x01DD7F78);
-            return;
-        }
-    }
-    if ((code == 0x24 || code == 0x25) && euclid_page()) {      /* euclid: left / right = keyboard octave */
-        if (pressed) eu_octave(code == 0x25 ? 1 : -1);
-        return;
-    }
-    if (code >= 0x0A && code <= 0x0C && euclid_page()) {        /* euclid: lift / drop / scissors = copy / paste / cut */
-        if (pressed) eu_clip(*(volatile int *)0x01DE4C40 == 1, code == 0x0A ? 0 : code == 0x0B ? 1 : 2,
-                             *(volatile uint8_t *)0x01DD7F78);   /* Shift: whole pattern */
-        return;
-    }
-    if (code >= 0x3B && code <= 0x3E && euclid_page()) {        /* euclid: press toggles page 2 */
-        if (pressed) eu_press(*(volatile int *)0x01DE4C40 == 1, press_knob[code - 0x3B]);
-        return;
     }
     if (code >= 0x3B && code <= 0x3E && quad_lfo_page()) {      /* quad LFO: press selects LFO 1..4 */
         if (pressed) ql_press(lfo_page_pos(), press_knob[code - 0x3B]);
@@ -1104,10 +996,6 @@ void midi_cc_hook(void *vec)
  *   0 / armed 1 / initialised 0 -> its tick restarts it from the first step at beat counter 0. Latch and held keys are
  *   kept (the stock stop 0x01A08BC0 clears them, the pattern would then stop itself); euclid / dots: running slots
  *   restart at step 0. */
-void eu_midi_start(void);
-void dt_midi_start(void);
-void ora_midi_start(void);
-void pl_midi_start(void);
 void midi_start_hook(void)
 {
     ((void (*)(void))0x01A5E7D0)();                              /* stock: beat counters 0x018C187C / 1880 / 1884 = 0 */
@@ -1135,10 +1023,7 @@ void midi_start_hook(void)
         p[0x10] = 1;
         pst[0] = 0; pst[3] = 0; pst[1] = 1;                       /* armed: starts at beat counter 0 */
     }
-    eu_midi_start();
-    dt_midi_start();
-    ora_midi_start();
-    pl_midi_start();
+    for (int k = 0; k < op1_seq_count; k++) op1_seqs[k]->midi_start();   /* sequencer plugins */
 }
 
 void knob_event_hook(int knob, int16_t *delta)
@@ -1150,28 +1035,9 @@ void knob_event_hook(int knob, int16_t *delta)
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
     { extern int ms_knob(int knob, int delta); if (ms_knob(knob, *delta)) return; }   /* MIDI seq view: white */
     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */
-    if (knob >= 0 && knob < 4 && dots_page()) {                  /* dots: see seq/dots.c */
-        int m = *(volatile int *)0x01DE4C40 == 1, sh = *(volatile uint8_t *)0x01DD7F78;
-        if (knob == 2 && sh) dt_select(m, *delta);
-        else dt_turn(m, knob, *delta, sh);                      /* blue, green / white (record mode), red */
-        return;
-    }
-    if (knob >= 0 && knob < 4 && oracle_page()) {               /* oracle: Mothers; Shift: rate gate lane run */
-        int m = *(volatile int *)0x01DE4C40 == 1;
-        if (*(volatile uint8_t *)0x01DD7F78) ora_shift_turn(m, knob, *delta); else ora_turn(m, knob, *delta);
-        return;
-    }
-    if (knob >= 0 && knob < 4 && peal_page()) {                 /* peal: method rate call rough; Shift: oct gate level run */
-        pl_turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta, *(volatile uint8_t *)0x01DD7F78);
-        return;
-    }
-    if (knob >= 0 && knob < 4 && euclid_page()) {                /* euclid: edit the selected sequencer */
-        if (knob == 2 && *(volatile uint8_t *)0x01DD7F78)        /* Shift + white: select slot 1..6 (wraps) */
-            eu_select(*(volatile int *)0x01DE4C40 == 1, *delta);
-        else if (knob == 3 && *(volatile uint8_t *)0x01DD7F78)   /* Shift + red: start / stop all */
-            eu_run_all(*(volatile int *)0x01DE4C40 == 1, *delta);
-        else eu_turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta);
-        return;
+    if (knob >= 0 && knob < 4) {                                 /* sequencer plugin page (docs/44) */
+        const op1_seq_t *q = seq_page();
+        if (q) { q->turn(*(volatile int *)0x01DE4C40 == 1, knob, *delta, *(volatile uint8_t *)0x01DD7F78); return; }
     }
     if (knob >= 0 && knob < 4 && quad_lfo_page()) {              /* quad LFO: edit the selected LFO */
         int pos = lfo_page_pos();

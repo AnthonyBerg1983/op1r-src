@@ -1,0 +1,13 @@
+{
+  "name": "dots",
+  "author": "pcppcp",
+  "kind": "seq",
+  "symbol": "SEQ_dots",
+  "sources": [
+    "../../seq/dots.c"
+  ],
+  "screen": {
+    "svg": "../../display/dots.svg",
+    "symbol": "SCREEN_dots"
+  }
+}

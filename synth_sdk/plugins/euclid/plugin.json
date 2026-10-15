@@ -1,0 +1,13 @@
+{
+  "name": "euclid",
+  "author": "pcppcp",
+  "kind": "seq",
+  "symbol": "SEQ_euclid",
+  "sources": [
+    "../../seq/euclid.c"
+  ],
+  "screen": {
+    "svg": "../../display/euclid.svg",
+    "symbol": "SCREEN_euclid"
+  }
+}

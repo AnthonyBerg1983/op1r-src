@@ -25,6 +25,11 @@ int                 op1_fx_count;
 const char         *op1_fx_names[OP1_SLOTS + 1];
 const op1_screen_t *op1_fx_screens[OP1_SLOTS];
 const char         *op1_fx_svgs[OP1_SLOTS];
+const op1_seq_t    *op1_seqs[OP1_SEQ_MAX];                     /* sequencer plugins (docs/44), in load order */
+const char         *op1_seq_names[OP1_SEQ_MAX];
+const op1_screen_t *op1_seq_screens[OP1_SEQ_MAX];
+const char         *op1_seq_svgs[OP1_SEQ_MAX];
+int                 op1_seq_count;
 extern const op1_engine_t *const op1_builtin_engines[];
 extern const int                 op1_builtin_engine_count;
 extern const char *const         op1_builtin_engine_names[], *const op1_builtin_sample_engine_names[];
@@ -57,6 +62,9 @@ static void tables_init(void)
 extern volatile uint8_t op1_eng_page[4];
 extern volatile uint8_t op1_fx_page[3][4];
 void *read_fx_param_safe(int slot, int pos);
+int  eu_fw_note_on(int pos, int note, int key, int vel);           /* seq/seq_core.c */
+void eu_fw_note_off(int midi);
+extern volatile uint8_t eu_rec_play;
 
 #define Y_OPEN     ((int (*)(const char *, int, int))0x01A997F4)
 #define Y_CLOSE    ((int (*)(int))0x01A99908)
@@ -89,6 +97,11 @@ static const struct { const char *name; void *addr; } exports[] = {
     { "sq_line", (void *)sq_line }, { "sq_text", (void *)sq_text }, { "sq_num", (void *)sq_num },
     { "sq_cat", (void *)sq_cat }, { "sq_node_rotate", (void *)sq_node_rotate },
     { "sq_synth_knobs_live", (void *)sq_synth_knobs_live }, { "sq_fx_knobs_live", (void *)sq_fx_knobs_live },
+    /* sequencers (docs/44) */
+    { "sq_dot", (void *)sq_dot }, { "sq_join", (void *)sq_join }, { "sq_split", (void *)sq_split },
+    { "sq_store_load", (void *)sq_store_load }, { "sq_store_dirty", (void *)sq_store_dirty },
+    { "op1_db_last_err", (void *)&op1_db_last_err }, { "eu_fw_note_on", (void *)eu_fw_note_on },
+    { "eu_fw_note_off", (void *)eu_fw_note_off }, { "eu_rec_play", (void *)&eu_rec_play },
 };
 
 /* boot report (resource monitor later): loaded count, refused count, last error, skipped by the crash marker */
@@ -117,7 +130,7 @@ static void map_load(void *db)
     while (p < e && map_n < MAP_MAX) {
         int present = 1;
         if (*p == '-') { present = 0; p++; }
-        if (e - p < 4 || (p[0] != 's' && p[0] != 'f') || p[1] != ':') break;
+        if (e - p < 4 || (p[0] != 's' && p[0] != 'f' && p[0] != 'q') || p[1] != ':') break;
         char k = p[0]; p += 2;
         int i = 0;
         while (p < e && *p != '=' && i < 15) map[map_n].name[i++] = *p++;
@@ -188,7 +201,8 @@ static void row_ensure(void *db, const op1p_hdr *h, int n)
 static void row_delete(void *db, char kind, const char *name)
 {
     char sql[96];
-    char *o = scat(scat(sql, kind == 'f' ? "DELETE FROM fx_types" : "DELETE FROM synth_types"), " WHERE type='");
+    char *o = scat(scat(sql, kind == 'f' ? "DELETE FROM fx_types" : kind == 'q' ? "DELETE FROM seq_types"
+                                                                               : "DELETE FROM synth_types"), " WHERE type='");
     scat(scat(o, name), "'");
     op1_db_write(db, sql);
 }
@@ -257,6 +271,31 @@ static void cache_sync(uint8_t *p, uint32_t n)
     __asm__ volatile("CSYNC;" : : : "memory");
 }
 
+/* ---- sequencer plugins (docs/44): registered by name, seq_types row; map entries 'q' (number unused, 1) ---- */
+static const char *const stock_seqs[] = { "pattern", "endless", "tombola", "finger", "sketch", "arpeggio" };
+static int seq_taken(const char *name)
+{
+    for (unsigned i = 0; i < sizeof stock_seqs / sizeof stock_seqs[0]; i++) if (seq(stock_seqs[i], name)) return 1;
+    for (int i = 0; i < op1_seq_count; i++) if (seq(op1_seq_names[i], name)) return 1;
+    return 0;
+}
+static void seq_row(void *db, const char *name)
+{
+    char sql[160];
+    char *o = scat(scat(sql, "INSERT INTO seq_types (type) SELECT '"), name);     /* id: INTEGER PRIMARY KEY = next */
+    o = scat(scat(o, "' WHERE NOT EXISTS (SELECT 1 FROM seq_types WHERE type='"), name);
+    scat(o, "')");
+    op1_db_write(db, sql);
+}
+static void seq_map(const char *name)
+{
+    for (int i = 0; i < map_n; i++)
+        if (map[i].kind == 'q' && seq(map[i].name, name)) { if (!map[i].present) { map[i].present = 1; map_dirty = 1; } return; }
+    if (map_n >= MAP_MAX) return;
+    map[map_n].kind = 'q'; map[map_n].present = 1; map[map_n].n = 1;
+    scat(map[map_n].name, name); map_n++; map_dirty = 1;
+}
+
 static uint32_t total;
 static int load_one(void *db, const char *file)
 {
@@ -282,6 +321,31 @@ static int load_one(void *db, const char *file)
     if (!r && total + v.mem_size > TOTAL_CAP) r = OP1P_E_SIZE;
     int kind = r ? 0 : (int)v.hdr->kind;
     const char *name = r ? 0 : sdup(v.hdr->name);
+    if (!r && kind == OP1P_SEQ) {                                   /* sequencer: no number, own table */
+        if (!name || seq_taken(name) || op1_seq_count >= OP1_SEQ_MAX) r = OP1P_E_HEADER;
+        uint8_t *mem = r ? 0 : MALLOC(v.mem_size);
+        if (!r && !mem) r = OP1P_E_SIZE;
+        if (!r) {
+            op1p_relocate(&v, mem, (uint32_t)mem, imp);
+            cache_sync(mem, v.mem_size);
+            total += v.mem_size;
+            const char *svg = 0;
+            if (v.svg_len && v.hdr->screen_off != OP1P_NO_SCREEN) {
+                char t[64];
+                scat(scat(t, "../../plugins/"), file);
+                svg = sdup(t);
+            }
+            int i = op1_seq_count++;
+            op1_seqs[i] = (const op1_seq_t *)(mem + v.hdr->entry_off);
+            op1_seq_names[i] = name;
+            op1_seq_screens[i] = svg ? (const op1_screen_t *)(mem + v.hdr->screen_off) : 0;
+            op1_seq_svgs[i] = svg;
+            seq_row(DB_FACTORY(), name);
+            seq_map(name);
+        }
+        if (buf) FREE(buf);
+        return r;
+    }
     int builtin = r || !name ? 0 : find_number(kind, name);
     if (!r && (!name || (builtin && from_file[kind][builtin]))) r = OP1P_E_HEADER;   /* same name in two files */
     int n = r ? 0 : builtin ? builtin : number_for(kind, name, OP1P_PREF(v.hdr->flags) < OP1_FILE_FIRST ? OP1P_PREF(v.hdr->flags) : 0);
@@ -374,7 +438,8 @@ void plug_boot(void)
     for (int i = 0; i < map_n; i++) {                      /* file plugins gone since the last boot: drop rows */
         if (!map[i].present) continue;
         int here = map[i].kind == 's' ? map[i].n < op1_engine_count && op1_engines[map[i].n]
-                                      : map[i].n < op1_fx_count && op1_fxs[map[i].n];
+                 : map[i].kind == 'f' ? map[i].n < op1_fx_count && op1_fxs[map[i].n]
+                 : seq_taken(map[i].name);
         if (!here) { row_delete(DB_FACTORY(), map[i].kind, map[i].name); map[i].present = 0; map_dirty = 1; }
     }
     if (map_dirty) map_save(db);
