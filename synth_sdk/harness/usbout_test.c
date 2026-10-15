@@ -44,6 +44,12 @@ int main(int argc, char **argv)
 
     usbout_turn(-1024); assert(usbout_host_saved == 0);      /* already there: no change */
     usbout_turn(300); usbout_turn(300); assert(usb_tracks_live == 0);   /* < 1 detent */
+    assert(!ms_enabled);                                      /* sequencer: opt-in, off by default */
+    usbout_seq_turn(1024); assert(ms_enabled && usbout_host_seq_saved == 1);
+    frame("green right: sequencer on", render);
+    usbout_seq_turn(-1024); assert(!ms_enabled && usbout_host_seq_saved == 0);
+    usbout_host_seq_saved = 1; usbout_load(); assert(ms_enabled);   /* loaded at boot */
+    usbout_seq_turn(-1024);
     if (!render) printf("ok\n");
     return 0;
 }

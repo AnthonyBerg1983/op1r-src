@@ -328,7 +328,7 @@ static uint32_t sm_scr[32], sm_vt[10];
 static void *clock_screen;
 static int sm_ready, sm_on;                                     /* sm_on: 0 clock, 1 monitor (T1), 2 usb out (T2) */
 extern const op1_screen_t SCREEN_usbout;
-extern void usbout_turn(int delta);
+extern void usbout_turn(int delta), usbout_seq_turn(int delta);
 static uint32_t us_scr[32], us_vt[10];
 static int us_ready;
 /* Oblique Strategies card (screens/oblique.c, docs/23): clock mode base view, Shift+help toggles card / clock */
@@ -1143,6 +1143,7 @@ void knob_event_hook(int knob, int16_t *delta)
     if (knob >= 0 && knob < 4 && se_is_open()) { se_knob(knob, *delta); return; }   /* sample editor */
     if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
+    if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_seq_turn(*delta); return; }   /* sequencer on / off: green */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
     { extern int ms_knob(int knob, int delta); if (ms_knob(knob, *delta)) return; }   /* MIDI seq view: white */
     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */

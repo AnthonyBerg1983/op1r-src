@@ -1,6 +1,8 @@
 /* MIDI sequencer device, firmware glue (docs/39): the device view on the tape screen (SEQ + TAPE), keys, recording
  * inputs (VoiceCtl entries, MIDI CCs), destinations, file I/O, drawing. The core (ms_core.c) is host-tested.
  *
+* Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
+ * (switching off closes the view, silences, saves pending slots, then idles).
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
  * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
@@ -33,6 +35,7 @@
 #define MS_FILE     "/yaffs2/user/op1r_seq.mseq"
 #define MS_HEAD_SZ  4096
 
+extern volatile uint8_t ms_enabled;                    /* screens/usbout.c: clock + T2, green (opt-in) */
 static ms_t *ms;                            /* heap (~60 KB), allocated by the main loop */
 /* the view is its own screen object (iter screen class, empty SVG, drawing in code) swapped into the tape screen's
  * slot while open; made on first use with the tape screen's id (the current screen when the view opens) */
@@ -189,7 +192,7 @@ void ms_midi_rx(const volatile uint8_t *pk)
 /* ---- audio thread (tape/countin.c, once per block) ---- */
 void ms_fw_block(void)
 {
-    if (!ms) return;
+    if (!ms || !ms_enabled) return;
     ms->sel = ms->sel & 3;
     ms->rec = recording();
     ms_block(ms);
@@ -205,8 +208,21 @@ void ms_fw_block(void)
 /* ---- main loop (tape/countin.c ci_service) ---- */
 void ms_fw_service(void)
 {
-    static uint8_t dead;
+    static uint8_t dead, was_on;
     if (dead) return;
+    if (!ms_enabled) {                                    /* off (or switched off): close, silence, save, then idle */
+        if (!ms) return;
+        if (was_on) {
+            was_on = 0; rec_held = rec_latch = 0; seq_down = 0;
+            if (view) view_set(0);
+            uint32_t m = irq_off(); ms_all_off(ms); irq_on(m);
+        }
+        int dirty = ms->head_dirty;
+        for (int b = 0; b < MS_RAM && !dirty; b++) dirty = ms->ram_slot[b] != MS_NONE && ms->ram_dirty[b];
+        if (dirty) ms_service(ms, 4);
+        return;
+    }
+    was_on = 1;
     if (!ms) {
         ms_t *s = (ms_t *)NEW_ARR(sizeof(ms_t));
         if (!s) { dead = 1; return; }
@@ -244,6 +260,7 @@ static void view_set(int on)                          /* key thread */
 int ms_key(int code, int pressed, int on_tape)
 {
     (void)on_tape;
+    if (!ms_enabled || !ms) return 0;                     /* off: SEQ / TAPE stay stock */
     if (code < 0 || code >= 0x40) return 0;
     if (!pressed && swallow[code]) { swallow[code] = 0; if (code == 0x21) rec_held = 0; return 1; }
     if (code == 0x15) {                                   /* SEQ: held for the SEQ + TAPE chord */
