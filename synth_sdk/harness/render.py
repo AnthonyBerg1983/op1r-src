@@ -23,6 +23,14 @@ STATES_BY_NAME = {
                  ('red page 2: gain 3x', None, 1, 8, -1, 0b1000, 0, 0, 24576),
                  ('page 1 again, gain 3x kept', None, 1, 8, -1, 0, 0, 0, 24576)],
 }
+STATES_BY_NAME['aether'] = [                     # HOST_ACCEL: sensor X,Y,Z after the note-on (home = flat)
+    ('flat (home), note held', None, 1, 40, -1),
+    ('front edge up 20 deg: pitch up', None, 1, 60, -1, 0, 0, 0, 0, {'HOST_ACCEL': '0,-5604,15396'}),
+    ('back 15 deg, left side up 20 deg', None, 1, 60, -1, 0, 0, 0, 0, {'HOST_ACCEL': '5604,4240,14500'}),
+    ('right side up 25 deg: volume down', None, 1, 60, -1, 0, 0, 0, 0, {'HOST_ACCEL': '-6924,0,14849'}),
+    ('blue + white page 2 (dead zone, rate)', None, 1, 40, -1, 0b0101, 20000, 0, 26000),
+    ('all knobs max, front up 40 deg', (32767,) * 4, 1, 60, -1, 0, 0, 0, 0, {'HOST_ACCEL': '0,-10531,12551'}),
+]
 FX_STATES_BY_NAME = {
     'reverb': [('defaults', None, 0, 4, -1),
                ('all min: 1 arm, dim skulls, no fire', (0, 0, 0, 0), 0, 4, -1),
@@ -157,8 +165,9 @@ def main(engine, out=None):
     ctx = cairo.Context(surf); ctx.set_source_rgb(0.25, 0.25, 0.27); ctx.paint()
     for n, (label, knobs, note, frames, rel, *extra) in enumerate(states):
         knobs = knobs or e['defaults']
+        env = dict(os.environ, **extra.pop()) if extra and isinstance(extra[-1], dict) else None   # e.g. HOST_ACCEL
         res = subprocess.run([exe, *map(str, knobs), str(note), str(frames), str(rel), *map(str, extra)],
-                             check=True, capture_output=True, text=True)
+                             check=True, capture_output=True, text=True, env=env)
         if res.stderr: print(res.stderr, file=sys.stderr)
         fr = json.loads(res.stdout)
         x0, y0 = pad + (n % cols) * (W + pad), pad + (n // cols) * (H + pad + lab)

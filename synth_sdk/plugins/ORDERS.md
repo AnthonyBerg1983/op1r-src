@@ -16,3 +16,4 @@ whose number has no plugin in a build plays the stock iter (synth) or filter (FX
 | 7 | elg (hundekraft) | in a room (Musica Obscura, #1) |
 | 8 | mixtur (Musica Obscura, #1) | |
 | 9 | arc (Musica Obscura, #1) | |
+| 10 | aether (op1r) | |

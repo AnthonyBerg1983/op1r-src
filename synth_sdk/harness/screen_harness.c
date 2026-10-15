@@ -16,7 +16,7 @@
 int16_t  host_sine[8192];
 int32_t  host_pitch_inc[128];
 uint8_t  host_voice_mem[6 * 0x24];
-int16_t  host_voice_vel[6];
+int16_t  host_voice_vel[6]; int16_t host_accel[3] = { 0, 0, 16384 };
 int16_t  host_knobs[8][8];
 int      host_slot;
 const uint8_t *host_sample_buffer[8];
@@ -118,6 +118,7 @@ int main(int argc, char **argv)
     void *v0 = OP1_VOICE(0);
     *(uint32_t *)v0 = 0xdeadbeef;                           /* firmware vtable word */
     if (note) ENGINE.note_on(v0, host_knobs[0]);
+    if (getenv("HOST_ACCEL")) sscanf(getenv("HOST_ACCEL"), "%hd,%hd,%hd", &host_accel[0], &host_accel[1], &host_accel[2]);   /* after note-on: tilted from home */
     SCREEN.init(0);
     for (int f = 0; f < frames; f++) {
         if (f == rel && ENGINE.note_off) ENGINE.note_off(v0);

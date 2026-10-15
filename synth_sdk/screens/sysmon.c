@@ -223,6 +223,15 @@ static void bar(void *r, int x0, int x1, int y, int32_t v, int32_t pk, const uin
     }
 }
 
+static void bottom_text(void *r, const char *t)            /* the shared bottom line: rebuilt only on change */
+{
+    static char last[48];
+    int k = 0;
+    while (t[k] && t[k] == last[k]) k++;
+    if (t[k] != last[k]) { op1_text_set(txt_mem[2 * SM_ROWS + 2], t); for (k = 0; (last[k] = t[k]) != 0; k++) ; }
+    op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+}
+
 static void sm_update(void *scr, int dt)
 {
     if ((frame & 7) == 0) sample_fast();
@@ -259,20 +268,11 @@ static void sm_update(void *scr, int dt)
     if (dp_line) {                                           /* "drum+ 9 stock 3" (% of the audio time, peaks) */
         char t[32], *q = put_s(t, "drum+ "); q = put_u(q, (uint32_t)dp_pk[0]);
         q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]); *q = 0;
-        static char lastd[32];
-        int k = 0;
-        while (t[k] && t[k] == lastd[k]) k++;
-        if (t[k] != lastd[k]) { op1_text_set(txt_mem[2 * SM_ROWS + 2], t); for (k = 0; (lastd[k] = t[k]) != 0; k++) ; }
-        op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+        bottom_text(r, t);
     }
     if (!dp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
-        static int32_t shown = 0;
-        if (shown != op1_db_last_err) {
-            char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;
-            op1_text_set(txt_mem[2 * SM_ROWS + 2], t);
-            shown = op1_db_last_err;
-        }
-        op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+        char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;
+        bottom_text(r, t);
     }
     if (ps_prof) {                                           /* "paul 41 f12 m5 s9 b1 i12 o2" (% of the audio time) */
         static const char tag[7] = { 'g', 'f', 'm', 's', 'b', 'i', 'o' };
@@ -282,11 +282,7 @@ static void sm_update(void *scr, int dt)
         q = put_u(q, (uint32_t)sum);
         for (int i = 0; i < 7; i++) { *q++ = ' '; *q++ = tag[i]; q = put_u(q, (uint32_t)prof_pct[i]); }
         *q = 0;
-        static char lastp[48];
-        int k = 0;
-        while (t[k] && t[k] == lastp[k]) k++;
-        if (t[k] != lastp[k]) { op1_text_set(txt_mem[2 * SM_ROWS + 2], t); for (k = 0; (lastp[k] = t[k]) != 0; k++) ; }
-        op1_text_draw(txt_mem[2 * SM_ROWS + 2], r, ident);
+        bottom_text(r, t);
     }
 }
 

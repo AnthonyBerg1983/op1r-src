@@ -1,0 +1,19 @@
+{
+  "name": "aether",
+  "kind": "synth",
+  "order": 10,
+  "symbol": "ENGINE_aether",
+  "sources": [
+    "aether.c"
+  ],
+  "defaults": [
+    15671,
+    11469,
+    16384,
+    32767
+  ],
+  "screen": {
+    "svg": "aether.svg",
+    "symbol": "SCREEN_aether"
+  }
+}

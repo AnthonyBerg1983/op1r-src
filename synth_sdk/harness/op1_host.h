@@ -9,6 +9,7 @@ extern int16_t  host_sine[8192];
 extern int32_t  host_pitch_inc[128];
 extern uint8_t  host_voice_mem[6 * 0x24];
 extern int16_t  host_voice_vel[6];
+extern int16_t  host_accel[3];                  /* accelerometer X, Y, Z (aether) */
 extern int16_t  host_knobs[8][8];
 extern int      host_slot;
 extern const uint8_t *host_sample_buffer[8];
