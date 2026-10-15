@@ -49,6 +49,7 @@ def build(cmd, seq, payload=b''):
     return m
 
 
+FACTORY_DB = 'content/op1_factory.db'   # goes with every new firmware (a new engine row rarely changes its size)
 USER_DATA = ('content/audio/drum/', 'content/audio/synth/', 'content/op1.db', 'content/tape.db')
 
 
@@ -178,6 +179,9 @@ def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
                 same = st == 0 and struct.unpack('<I', pl[:4])[0] == len(data)
                 if not same: log(f'  {"missing " if st else "differs "} {path}')
             if not same: keep.append(path)
+        if 'OP1_vdk.ldr' in keep and FACTORY_DB in paths and FACTORY_DB not in keep:
+            keep.append(FACTORY_DB)                               # engine / FX rows: often the same size
+            log(f'  with the firmware: {FACTORY_DB}')
         log(f'{len(keep)} of {len(paths)} files differ (checked in {time.time() - t0:.1f} s)')
         paths = keep
     if dry or not paths:
