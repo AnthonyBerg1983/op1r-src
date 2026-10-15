@@ -49,6 +49,14 @@ def build(cmd, seq, payload=b''):
     return m
 
 
+USER_DATA = ('content/audio/drum/', 'content/audio/synth/', 'content/op1.db', 'content/tape.db')
+
+
+def user_data(p):
+    """the user's sampler slots, settings / patches and tape clips: never sent unless named with --files"""
+    return p.startswith(USER_DATA)
+
+
 def path_ok(p):
     low = p.lower()
     return (all(c.isalnum() or c in '_.-/' for c in p) and 0 < len(p) < 96 and not p.startswith('/')
@@ -224,6 +232,7 @@ def selftest():
         b = bytes(r.randrange(256) for _ in range(n))
         assert unpack7(pack7(b)) == b and all(x < 0x80 for x in pack7(b))
     assert len(build(DATA, 5, b'\0' * (4 + MAX_DATA))) <= MAX_MSG
+    assert user_data('content/audio/drum/drum_1.raw') and user_data('content/op1.db') and not user_data('content/op1_factory.db')
     assert not path_ok('te-boot.ldr') and not path_ok('content/TE-Boot.op1') and not path_ok('../x')
     assert path_ok('OP1_vdk.ldr') and path_ok('content/display/a.svg') and not path_ok('/content/x')
     assert ldr_ident(b'x' + b'\n' * 17 + b' ' * 20 + b'op1r 31 2026-10-14 20:28\0\0') == 'op1r 31 2026-10-14 20:28'
@@ -249,7 +258,7 @@ def main():
     if a.files is None:                                           # every file of the tree the device accepts
         a.files = [os.path.relpath(os.path.join(r, f), a.tree).replace(os.sep, '/')
                    for r, _, fs in os.walk(a.tree) for f in fs if not f.startswith('.')]
-        a.files = [p for p in a.files if path_ok(p)]
+        a.files = [p for p in a.files if path_ok(p) and not user_data(p)]
     if a.port:
         return push(a.port, a.tree, sorted(a.files), select, a.dry_run)
     files = [(p, open(os.path.join(a.tree, p), 'rb').read()) for p in sorted(a.files)]
