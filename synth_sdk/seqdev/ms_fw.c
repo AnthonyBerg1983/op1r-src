@@ -49,13 +49,16 @@ static uint32_t ms_scr[32], ms_vt[10];
 static int ms_scr_id = -1;
 static void *tape_obj;
 static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_chord, sel_set, own_play;
+/* the view is on screen (tape mode, its screen current): keys / encoders / recording only then. The view flag itself
+ * stays while another mode is shown (back in tape mode the recorder is still there). */
+static int shown(void) { return view && CUR_MODE_ID == 2 && ms_scr_id >= 0 && CUR_SCREEN == ms_scr_id; }
 static int32_t sel_a = -1, sel_b = -1;
 static uint8_t io_sel;                                   /* white knob edits: 0 output, 1 input */
 static int io_acc;
 /* white turn: one step per detent through I, S, M1..M16 (wraps) for the selected track's input or output */
 int ms_knob(int knob, int delta)
 {
-    if (!view || !ms || knob != 2) return 0;
+    if (!shown() || !ms || knob != 2) return 0;
     if ((io_acc > 0 && delta < 0) || (io_acc < 0 && delta > 0)) io_acc = 0;
     io_acc += delta;
     int st = io_acc / 1024;
@@ -158,7 +161,7 @@ static void q_put(int cc, int d1, int d2, int ch)
     if (qw - qr < QN) { q[qw % QN].cc = (uint8_t)cc; q[qw % QN].d1 = (uint8_t)d1; q[qw % QN].d2 = (uint8_t)d2; q[qw % QN].ch = (uint8_t)ch; qw++; }
     irq_on(m);
 }
-static int recording(void) { return ms && view && (rec_held || rec_latch); }
+static int recording(void) { return ms && shown() && (rec_held || rec_latch); }
 /* input source of a VoiceCtl note, from its caller: the keyboard (global_controller key down / up with no sequencer
  * taking the key), received MIDI (VoiceCtl note on / off), else a player (the stock sequencers, arpeggio, ...) */
 static int src_of(uint32_t ret)
@@ -278,7 +281,7 @@ int ms_key(int code, int pressed, int on_tape)
         return 0;                                         /* (the tape mode itself is stock's) */
     }
     if (pressed && view && (code == 0x02 || code == 0x03 || code == 0x05 || code == 0x00 || code == 0x01 || code == 0x2C)) view_set(0);
-    if (!view || !ms || !pressed) return 0;
+    if (!shown() || !ms || !pressed) return 0;
     int sh = SHIFT;
     if (code >= 0x06 && code <= 0x09) {
         int t = code - 0x06;
