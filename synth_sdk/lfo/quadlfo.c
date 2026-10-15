@@ -65,6 +65,10 @@
                           (*(volatile int *)((pos) ? 0xFF8016D8 : 0xFF8016D4) & 7) * 16))
 #define TEMPO_RATE()     (*(volatile uint32_t *)0x01AADAD4)   /* metronome: phase inc per block for 8 cycles per beat */
 #define SHIFT_HELD()     (*(volatile uint8_t *)0x01DD7F78)
+/* LFO switched on (Shift + T4) in the current slot: synth 0x01AAAC28[synth slot], drum 0x01AAAC38[drum slot 0x01AAAC10]
+ * (getters 0x0196726C / 0x0196724C; the stock note-on 0x019673DC / 0x0196735E checks the same bytes) */
+#define LFO_ON(pos)      (((volatile uint8_t *)((pos) ? 0x01AAAC38 : 0x01AAAC28))[(pos) ? (*(volatile int *)0x01AAAC10 & 7) \
+                                                                                        : (*(volatile int *)0xFF8016D4 & 7)])
 #else                                                          /* host test: harness/quadlfo_test.c */
 void host_knob_range_synth(int, int16_t *, int, void *);
 void host_fx_knob_mod(int16_t *, const int16_t *, int16_t *);
@@ -91,6 +95,8 @@ void host_knob_range_drum(int, int16_t *, int, void *);
 extern uint32_t host_cycles, host_tempo_rate; extern int host_shift, host_pos;
 #define TEMPO_RATE()     (host_tempo_rate)
 #define SHIFT_HELD()     (host_shift)
+extern int host_lfo_on[2];
+#define LFO_ON(pos)      (host_lfo_on[pos])
 #define READ_CYCLES()    (host_cycles)
 #endif
 #ifndef READ_CYCLES
@@ -330,6 +336,7 @@ static const ql_lfo *ql_params(const int16_t *w, int pos, int v, ql_lfo *buf)
 int ql_apply_synth(void *self, const int16_t *w, int pass)
 {
     if (pass != 0 && pass != 1) return 0;                         /* synth knobs 0, envelope 1: nothing else here */
+    if (!LFO_ON(0)) return 0;                                     /* LFO off: nothing runs, nothing applied */
     int engine = SYNTH_ENGINE();
     int applied = 0, v = 0;
     for (int k = 0; k < 6; k++) if (SYNTH_LFO_OBJ[k] == self) { v = k; break; }
@@ -359,6 +366,7 @@ int ql_apply_synth(void *self, const int16_t *w, int pass)
 static int ql_drum(const int16_t *w, int pass)
 {
     if (pass != 3 && pass != 4) return 0;
+    if (!LFO_ON(1)) return 0;
     ql_lfo Lb[4]; const ql_lfo *L = ql_params(w, 1, -1, Lb);
     ql_advance_pos(1, L);
     int engine = DRUM_ENGINE(), applied = 0;
@@ -380,6 +388,7 @@ int ql_apply_fx(void *self, const int16_t *w, int pass)
     if (pass == 3 || pass == 4) return ql_drum(w, pass);         /* drum engine / envelope via this object */
     if (pass != 2 && pass != 5) return 0;                         /* 2 = synth FX, 5 = drum FX */
     int pos = pass == 5;
+    if (!LFO_ON(pos)) return 0;
     int fxtype = pos ? DRUM_FX_TYPE() : SYNTH_FX_TYPE();
     int applied = 0;
     ql_lfo Lb[4]; const ql_lfo *L = ql_params(w, pos, -1, Lb);
@@ -574,8 +583,9 @@ static void ql_screen_update(void *scr, int dt)
     op1_screen_draw(scr, dt);
     void *r = op1_raster();
     ql_lfo L[4], Lm[4]; ql_dec_all(w, L); ql_dec_shared(w, pos, Lm);   /* text: set values, lane: modulated */
+    int lfo_on = LFO_ON(pos);
     uint32_t b = blocks_q16(READ_CYCLES(), ph_cyc_all[pos]);
-    if (b > (4u << 16)) ql_advance_pos(pos, Lm);                       /* audio idle (no voice / FX calls): advance here */
+    if (lfo_on && b > (4u << 16)) ql_advance_pos(pos, Lm);       /* audio idle: advance here (LFO off: ticks centred) */
     if (SHIFT_HELD()) { ql_table(r, w, sel); return; }
     for (int i = 0; i < 4; i++) {
         const ql_lfo *o = &L[i];
@@ -591,7 +601,7 @@ static void ql_screen_update(void *scr, int dt)
             dc[3] = 0xFF;
             qline(r, OP1_Q10(QL_LANE_MID) - span, y, OP1_Q10(QL_LANE_MID) + span, y, QL_SPAN_W, dc);
         }
-        int16_t out = ql_out(ql_shared(pos, o) ? sh_st[pos][i].val : disp_all[pos][i], Lm[i].a128);
+        int16_t out = lfo_on ? ql_out(ql_shared(pos, o) ? sh_st[pos][i].val : disp_all[pos][i], Lm[i].a128) : 0;
         int32_t x = OP1_Q10(QL_LANE_MID) + (int32_t)(((int64_t)out * OP1_Q10(QL_LANE_HALF)) >> 15);
         qline(r, x, y - OP1_Q10(QL_TICK_H), x, y + OP1_Q10(QL_TICK_H), 0x800, ql_col[i]);
         if (on) qline(r, OP1_Q10(QL_DOT_X - 7), y + OP1_Q10(10), OP1_Q10(QL_DOT_X + 7), y + OP1_Q10(10), 0x600, ql_col[i]);

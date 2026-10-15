@@ -13,7 +13,7 @@ int16_t host_sine[8192]; int32_t host_pitch_inc[128]; uint8_t host_voice_mem[6 *
 int16_t host_knobs[8][8]; int host_slot; const uint8_t *host_sample_buffer[8];
 int16_t host_fx_knobs[3][8]; int16_t host_fx_meter[3]; void *host_fx_scratch[3];
 volatile uint8_t op1_fx_page[3][4];
-void *host_lfo_obj[6]; int16_t host_lfo_words[8]; uint32_t host_cycles, host_tempo_rate; int host_shift, host_pos;
+void *host_lfo_obj[6]; int16_t host_lfo_words[8]; uint32_t host_cycles, host_tempo_rate; int host_shift, host_pos, host_lfo_on[2] = { 1, 1 };
 
 /* recorded firmware calls */
 static int n_synth, n_env, n_fx, last_idx; static int16_t last_mod, max_mod;
@@ -95,6 +95,13 @@ int main(int argc, char **argv)
     n_fx = 0;
     for (int b = 0; b < 10; b++) { host_cycles += 1161000; ql_apply_fx(0, w, 2); ql_apply_fx(0, w, 3); }
     CHECK(n_fx == 10 && last_idx == 3, "fx calls %d idx %d", n_fx, last_idx);
+
+    /* LFO switched off in the slot: no calls, no phase movement (synth and drum) */
+    {   ql_st keep = sh_st[0][2]; host_lfo_on[0] = host_lfo_on[1] = 0; n_synth = n_env = n_fx = 0; int any = 0;
+        for (int b = 0; b < 50; b++) { host_cycles += 1161000; any |= ql_apply_synth(host_lfo_obj[0], w, 0) | ql_apply_synth(host_lfo_obj[0], w, 1)
+                                       | ql_apply_fx(0, w, 2) | ql_apply_fx(0, w, 5) | ql_apply_drum(0, w, 3); }
+        CHECK(!any && !n_synth && !n_env && !n_fx && sh_st[0][2].ph == keep.ph, "LFO off still runs (%d %d %d)", n_synth, n_env, n_fx);
+        host_lfo_on[0] = host_lfo_on[1] = 1; }
 
     /* frequency: rate 0 / 31 / 63 */
     { int16_t q[8] = { fq(0,0,0,0,0), fq(31,0,0,0,0), fq(63,0,0,0,0), 0, ct(0,0,0), ct(0,0,0), ct(0,0,0), ct(0,0,0) }; pk(q);
