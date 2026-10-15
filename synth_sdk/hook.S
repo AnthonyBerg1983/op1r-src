@@ -399,6 +399,10 @@ __hook_ciservice:
 	.global __hook_taperase
 __hook_taperase:
 	call _fast_tape_erase;
+	.section .hook_tapesave,"ax"
+	.global __hook_tapesave
+__hook_tapesave:
+	call _tape_safe_write;
 	.section .hook_dpkeep,"ax"
 	.global __hook_dpkeep
 __hook_dpkeep:
