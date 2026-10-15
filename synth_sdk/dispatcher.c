@@ -877,6 +877,8 @@ void dpu_sync_auto(void) { se_swap(); }
 void key_event_hook(int code, int pressed)
 {
     if (du_prompt_key(code, pressed)) return;                    /* dev update prompt: T1 restart / T2 cancel */
+    extern int ms_key(int code, int pressed, int on_tape);
+    if (ms_key(code, pressed, tape_page())) return;              /* MIDI sequencer device: SEQ + TAPE (docs/39) */
     se_swap();                                                   /* drum+ / stock pages follow the drum slot */
     if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
     /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,
@@ -1065,6 +1067,8 @@ void midi_cc_hook(void *vec)
 {
     ((void (*)(void *))0x01A84F8C)(vec);                         /* stock: CC table (MIDI LFO) */
     const uint8_t *m = *(const uint8_t **)((char *)vec + 4);     /* status, cc, value (size asserted by stock) */
+    extern void ms_midi_cc(const uint8_t *m);
+    ms_midi_cc(m);                                               /* MIDI sequencer device: CC recording */
     int code = m[1] - 5, v = m[2], down = v >= 64, knob = m[1] - 102;
     unsigned imask;
     if (m[1] >= 106 && m[1] <= 118) { midi_cc_mixer(m[1], v); return; }

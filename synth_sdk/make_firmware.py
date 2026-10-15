@@ -58,6 +58,8 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x019C2E5E: ('hook_apsynth1', bytes.fromhex('01e34df1')),     # CALL apply_synth (key-handler job) -> name lookup
          0x01A01866: ('hook_apsynth2', bytes.fromhex('ffe349fc')),     # CALL apply_synth (boot patch load)
          0x01A50F1C: ('hook_apsynth3', bytes.fromhex('fde3ee80')),     # CALL apply_synth (synth_controller::load_patch)
+         0x01A85750: ('hook_vcdown', bytes.fromhex('00e80400')),         # VoiceCtl key_down entry (LINK): MIDI sequencer recording
+         0x01A85840: ('hook_vcup', bytes.fromhex('00e80800')),           # VoiceCtl key_up entry (LINK)
          0x019F07D2: ('hook_screenload', bytes.fromhex('02e33f59')),   # boot: load all screens
          0x019427B8: ('hook_rfp019427b8', bytes.fromhex('07e3f432')),   # CALL read_fx_param
          0x01984F60: ('hook_rfp01984f60', bytes.fromhex('05e3201f')),   # CALL read_fx_param
@@ -199,7 +201,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:

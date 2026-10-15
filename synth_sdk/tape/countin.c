@@ -68,9 +68,13 @@ static void restore_metro(void)
 
 /* L1 audio callback: replaces the call to metronome::render (0x019DE548) */
 extern void pu_block(void), pu_service(void);              /* tape/punch.c */
+extern void ms_fw_block(void), ms_fw_service(void);        /* seqdev/ms_fw.c */
 void ci_metro_render(void)
 {
     pu_block();                                                   /* punch: marker crossings (audio thread) */
+#ifndef OP1_HOST
+    ms_fw_block();                                                /* MIDI sequencer device (docs/39) */
+#endif
     /* will this block wrap (as the render computes it)? then set the accent pitch before the click starts */
     int restart = (TAPE_RUN == 1 || TAPE_RUN == 2) && !M_RESET;  /* the render resets the phase to 0 first */
     int32_t step = M_TAPE ? (TAPE_SPEED >> 21) * 0x4000 : 0x100000;   /* the render's own phase step */
@@ -151,6 +155,9 @@ int ci_service(int arg)
         ((int (*)(int))0x01A54710)(arg);
 #endif
     pu_service();                                                 /* punch in / out (main loop) */
+#ifndef OP1_HOST
+    ms_fw_service();                                              /* MIDI sequencer: load, prefetch, save */
+#endif
     extern void du_service(void) __attribute__((weak));
     if (du_service) du_service();                                 /* dev update over SysEx (--dev, docs/35) */
     extern void plug_service(void) __attribute__((weak));

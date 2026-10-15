@@ -1,0 +1,300 @@
+/* MIDI sequencer device, firmware glue (docs/39): the device view on the tape screen (SEQ + TAPE), keys, recording
+ * inputs (VoiceCtl entries, MIDI CCs), destinations, file I/O, drawing. The core (ms_core.c) is host-tested.
+ *
+ * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
+ * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
+ * the selection start / end, LIFT cuts it (no selection: the 1.5 s page under the playhead), Shift + LIFT copies, DROP
+ * pastes at the playhead, red press cycles the track destination (instrument / sequencer / MIDI out), white press its
+ * MIDI channel. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
+#pragma GCC optimize ("Os", "no-tree-loop-distribute-patterns")
+#include "../op1_synth.h"
+#include "../seq/seq_text.h"
+#include "ms_core.h"
+
+#define TAPE_STATE  (*(volatile int32_t *)0x018C17D4)
+#define TAPE_POS    (*(volatile int32_t *)0xFF802974)            /* 1/64 samples */
+#define LOOP_IN     (*(volatile int32_t *)0x01B4EF34)
+#define LOOP_OUT    (*(volatile int32_t *)0x01B4EF38)
+#define LOOP_ON     (*(volatile uint8_t *)0xFF8029C5)
+#define SHIFT       (*(volatile uint8_t *)0x01DD7F78)
+#define VC_DOWN(r, p) (((void (*)(int32_t *, int))0x01A85750)((r), (p)))   /* VoiceCtl key_down (through our hook) */
+#define VC_UP(r)    (((void (*)(int32_t *))0x01A85840)(r))
+#define VC_MIDI_MSG ((void (*)(void *))0x01A84F8C)                         /* VoiceCtl::midi_message (CC table) */
+#define TX_ENQ      ((void (*)(int, const void *, unsigned))0x019E0D18)    /* usbmidi_tx_enqueue(_, packets, n) */
+#define KEY_DISPATCH ((void (*)(int, int))0x019B6C74)
+#define NEW_ARR     ((void *(*)(unsigned))0x01AA370C)
+#define Y_OPEN      ((int (*)(const char *, int, int))0x01A997F4)
+#define Y_CLOSE     ((int (*)(int))0x01A99908)
+#define Y_READ      ((int (*)(int, void *, unsigned))0x01A99C90)
+#define Y_PWRITE    ((int (*)(int, const void *, unsigned, int))0x01A99F9C)
+#define Y_LSEEK     ((int (*)(int, int, int))0x01A9A0E4)
+#define O_RDWR_CREAT 0x42
+#define MS_FILE     "/yaffs2/user/op1r_seq.mseq"
+#define MS_HEAD_SZ  4096
+
+static ms_t *ms;                            /* heap (~60 KB), allocated by the main loop */
+/* the view is its own screen object (iter screen class, empty SVG, drawing in code) swapped into the tape screen's
+ * slot while open; made on first use with the tape screen's id (the current screen when the view opens) */
+#define SCREEN_TABLE  ((void **)0x01DF4E54)
+#define CUR_MODE_ID   (*(volatile int *)0xFF907D58)              /* ModeSwitcher: active mode, tape = 2 */
+#define CUR_SCREEN    (*(volatile int *)0x018B65C8)
+#define SCREEN_CTOR   ((void *(*)(void *, int, const char *))0x01A3BAB0)
+#define ITER_SCREEN_VT ((const uint32_t *)0x019103FC)
+#define SVG_LOAD      ((void *(*)(void *))0x01A503D8)
+static uint32_t ms_scr[32], ms_vt[10];
+static int ms_scr_id = -1;
+static void *tape_obj;
+static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_chord, sel_set, own_play;
+static int32_t sel_a = -1, sel_b = -1;
+static uint8_t swallow[0x40];
+
+/* ---- env ---- */
+static uint32_t irq_off(void) { uint32_t m; __asm__ volatile ("cli %0;" : "=d"(m)); return m; }
+static void irq_on(uint32_t m) { __asm__ volatile ("sti %0;" : : "d"(m)); }
+static int32_t e_pos(void) { return TAPE_POS >> 6; }
+static int e_playing(void) { int st = TAPE_STATE; return st == 10 || st == 9 || st == 4 || st == 5; }
+static int e_loop(int32_t *a, int32_t *b) { *a = LOOP_IN; *b = LOOP_OUT; return LOOP_ON; }
+/* built-in sequencer: the note as a keyboard key (key i plays 53 + i at octave 0), through the KeyHandler queue like a
+ * physical key, so the active stock sequencer gets it in order with the real keys */
+static const uint8_t kb_keys[24] = { 39, 13, 40, 14, 41, 15, 42, 28, 32, 29, 22, 30, 31, 23, 48, 24, 49, 25, 50, 51, 26, 52, 27, 53 };
+static uint8_t kb_down[24];
+static void kb_push(int code, int down)
+{
+    volatile uint32_t *rd = (volatile uint32_t *)0x01DD5244, *wr = (volatile uint32_t *)0x01DD5248;
+    uint32_t m = irq_off(), w = *wr, n = (w + 1) & 0xFF;
+    if (n != *rd && !*(volatile uint8_t *)0x01DD524D) ((volatile uint16_t *)0x01DD5044)[w] = (uint16_t)(code | down << 8), *wr = n;
+    irq_on(m);
+    ((void (*)(void))0x019C2F04)();                               /* wake KeyHandler */
+}
+static void e_play(int t, int dest, int ch, int kind, int d1, int d2, int on)
+{
+    (void)t;
+    if (dest == MS_DEST_MIDI) {                                   /* USB MIDI out, the track's channel */
+        uint32_t st = kind == MS_CC ? 0xB0 : on ? 0x90 : 0x80, p = (st >> 4) | (st | (ch & 15)) << 8 | (uint32_t)d1 << 16 |
+                      (uint32_t)(kind == MS_CC ? d2 : on ? d2 : 64) << 24;
+        TX_ENQ(0, &p, 1);
+        return;
+    }
+    if (kind == MS_CC) {                                          /* as a received MIDI CC (stock: CC table, MIDI LFO) */
+        static uint8_t msg[3];
+        static struct { uint32_t a; uint8_t *b, *e; uint32_t c; } vec;
+        msg[0] = (uint8_t)(0xB0 | (ch & 15)); msg[1] = (uint8_t)d1; msg[2] = (uint8_t)d2;
+        vec.b = msg; vec.e = msg + 3;
+        VC_MIDI_MSG(&vec);
+        return;
+    }
+    if (dest == MS_DEST_SEQ) {
+        int i = d1 - 53;
+        while (i < 0) i += 12;
+        while (i > 23) i -= 12;
+        if (!on == !kb_down[i]) return;                           /* never a second down of a held key (stock asserts) */
+        kb_down[i] = (uint8_t)on;
+        kb_push(kb_keys[i], on);
+        return;
+    }
+    int32_t r[4] = { d1, on ? d2 : 0, 0, 0 };
+    own_play = 1;
+    if (on) VC_DOWN(r, 0); else VC_UP(r);
+    own_play = 0;
+}
+static int open_rw(void) { return Y_OPEN(MS_FILE, O_RDWR_CREAT, 0x180); }
+static int e_read(int off, void *p, int n)
+{
+    int fd = Y_OPEN(MS_FILE, 0, 0), r = -1;
+    if (fd < 0) return -1;
+    if (Y_LSEEK(fd, off, 0) == off && Y_READ(fd, p, (unsigned)n) == n) r = 0;
+    Y_CLOSE(fd);
+    return r;
+}
+static int e_write(int off, const void *p, int n)
+{
+    int fd = open_rw(), r = -1;
+    if (fd < 0) return -1;
+    if (Y_PWRITE(fd, p, (unsigned)n, off) == n) r = 0;
+    Y_CLOSE(fd);
+    return r;
+}
+static int e_rs(int sl, ms_slot *o) { return e_read(MS_HEAD_SZ + sl * (int)sizeof(ms_slot), o, (int)sizeof *o); }
+static int e_ws(int sl, const ms_slot *i) { return e_write(MS_HEAD_SZ + sl * (int)sizeof(ms_slot), i, (int)sizeof *i); }
+static int e_rh(void *h, int n) { return e_read(0, h, n); }
+static int e_wh(const void *h, int n) { return e_write(0, h, n); }
+static const ms_env env = { e_pos, e_playing, e_loop, e_play, e_rs, e_ws, e_rh, e_wh, irq_off, irq_on };
+
+static void view_set(int on);
+
+/* ---- recording inputs: queued from any thread, inserted by the audio thread ---- */
+#define QN 64
+static struct { uint8_t cc, d1, d2, ch; } q[QN];
+static volatile uint32_t qw, qr;
+static void q_put(int cc, int d1, int d2, int ch)
+{
+    uint32_t m = irq_off();
+    if (qw - qr < QN) { q[qw % QN].cc = (uint8_t)cc; q[qw % QN].d1 = (uint8_t)d1; q[qw % QN].d2 = (uint8_t)d2; q[qw % QN].ch = (uint8_t)ch; qw++; }
+    irq_on(m);
+}
+static int recording(void) { return ms && view && (rec_held || rec_latch); }
+void ms_vc_down(const int32_t *rec, int param)        /* VoiceCtl key_down entry (hook.S): every note played */
+{
+    (void)param;
+    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127) return;
+    q_put(0, rec[0], rec[1] < 1 ? 100 : rec[1] > 127 ? 127 : rec[1], 1);
+}
+void ms_vc_up(const int32_t *rec)
+{
+    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127) return;
+    q_put(0, rec[0], 0, 0);
+}
+void ms_midi_cc(const uint8_t *m)                     /* received MIDI CC (dispatcher.c midi_cc_hook) */
+{
+    if (recording() && m[1] < 128) q_put(1, m[1], m[2] & 127, m[0] & 15);
+}
+
+/* ---- audio thread (tape/countin.c, once per block) ---- */
+void ms_fw_block(void)
+{
+    if (!ms) return;
+    ms->sel = ms->sel & 3;
+    ms->rec = recording();
+    ms_block(ms);
+    while (qr != qw) {
+        int i = qr % QN;
+        if (q[i].cc) ms_cc_in(ms, q[i].d1, q[i].d2, q[i].ch);
+        else ms_note_in(ms, q[i].d1, q[i].d2, 0, q[i].ch);   /* (notes: ch 1 = note-on, 0 = note-off) */
+        qr++;
+    }
+    if (!e_playing()) rec_latch = 0;
+}
+
+/* ---- main loop (tape/countin.c ci_service) ---- */
+void ms_fw_service(void)
+{
+    static uint8_t dead;
+    if (dead) return;
+    if (!ms) {
+        ms_t *s = (ms_t *)NEW_ARR(sizeof(ms_t));
+        if (!s) { dead = 1; return; }
+        ms_init(s, &env);
+        ms_load(s);
+        ms = s;
+        return;
+    }
+    ms_service(ms, 4);
+    if (seq_open_req && CUR_MODE_ID == 2) { seq_open_req = 0; view_set(1); }   /* SEQ + TAPE from another mode */
+}
+
+/* ---- keys (key thread, dispatcher.c key_event_hook): 1 = consumed ---- */
+static void ms_scr_update(void *self, int dt);
+static void ms_scr_init(void *self) { (void)self; }
+static void view_set(int on)                          /* key thread */
+{
+    if (on && ms_scr_id < 0) {                         /* first open: the tape screen is the current one */
+        int id = CUR_SCREEN;
+        if (id < 0 || id >= 0x44 || !SCREEN_TABLE[id]) return;
+        void *saved = SCREEN_TABLE[id];
+        SCREEN_CTOR(ms_scr, id, "usbout.svg");         /* (empty SVG, shipped for the USB out page) */
+        SCREEN_TABLE[id] = saved;
+        for (int i = 0; i < 10; i++) ms_vt[i] = ITER_SCREEN_VT[i];   /* is_visible: id == ours */
+        ms_vt[3 * 2 + 1] = (uint32_t)ms_scr_update;
+        ms_vt[4 * 2 + 1] = (uint32_t)ms_scr_init;
+        ms_scr[3] = (uint32_t)ms_vt;
+        ms_scr[0] = (uint32_t)SVG_LOAD((void *)ms_scr[2]);
+        if (!ms_scr[0]) return;
+        tape_obj = saved; ms_scr_id = id;
+    }
+    view = (uint8_t)on;
+    if (ms_scr_id >= 0) SCREEN_TABLE[ms_scr_id] = on ? (void *)ms_scr : tape_obj;
+}
+int ms_key(int code, int pressed, int on_tape)
+{
+    (void)on_tape;
+    if (code < 0 || code >= 0x40) return 0;
+    if (!pressed && swallow[code]) { swallow[code] = 0; if (code == 0x21) rec_held = 0; return 1; }
+    if (code == 0x15) {                                   /* SEQ: held for the SEQ + TAPE chord */
+        if (pressed) { seq_down = 1; seq_chord = 0; return 1; }
+        seq_down = 0;
+        if (!seq_chord) { KEY_DISPATCH(0x15, 1); KEY_DISPATCH(0x15, 0); }   /* plain SEQ: stock, late */
+        return 1;
+    }
+    if (code == 0x04 && pressed) {                        /* TAPE: with SEQ held opens the view, alone closes it */
+        if (seq_down && CUR_MODE_ID == 2) { seq_chord = 1; if (!view) view_set(1); swallow[code] = 1; return 1; }
+        if (seq_down) { seq_chord = 1; seq_open_req = 1; return 0; }   /* not in tape mode yet: stock switches, then open */
+        if (view) view_set(0);
+        return 0;                                         /* (the tape mode itself is stock's) */
+    }
+    if (pressed && view && (code == 0x02 || code == 0x03 || code == 0x05 || code == 0x00 || code == 0x01 || code == 0x2C)) view_set(0);
+    if (!view || !ms || !pressed) return 0;
+    int sh = SHIFT;
+    if (code >= 0x06 && code <= 0x09) {
+        int t = code - 0x06;
+        if (sh) { ms->h.mute[t] ^= 1; ms->head_dirty = 1; if (ms->h.mute[t]) { uint32_t m = irq_off(); ms_all_off(ms); irq_on(m); } }
+        else { ms->sel = t; rec_latch = 0; }
+        swallow[code] = 1; return 1;
+    }
+    if (code == 0x21) { if (sh) rec_latch ^= 1; else rec_held = 1; swallow[code] = 1; return 1; }
+    int32_t ph = TAPE_POS >> 6;
+    if (code == 0x0C) {                                   /* scissors: selection start, then end */
+        if (!sel_set || sel_b >= 0) { sel_a = ph; sel_b = -1; sel_set = 1; }
+        else { sel_b = ph; if (sel_b < sel_a) { int32_t x = sel_a; sel_a = sel_b; sel_b = x; } }
+        swallow[code] = 1; return 1;
+    }
+    if (code == 0x0A) {                                   /* lift: cut, Shift: copy */
+        int32_t a = sel_b >= 0 ? sel_a : ph & ~0xFFFF, b = sel_b >= 0 ? sel_b : (ph | 0xFFFF) + 1;
+        if (sh) ms_copy(ms, a, b); else ms_cut(ms, a, b);
+        sel_set = 0; sel_a = sel_b = -1;
+        swallow[code] = 1; return 1;
+    }
+    if (code == 0x0B) { ms_paste(ms, ph); swallow[code] = 1; return 1; }
+    if (code == 0x3E) { int t = ms->sel; ms->h.dest[t] = (uint8_t)((ms->h.dest[t] + 1) % 3); ms->head_dirty = 1; swallow[code] = 1; return 1; }
+    if (code == 0x3D) { int t = ms->sel; ms->h.ch[t] = (uint8_t)((ms->h.ch[t] + 1) & 15); ms->head_dirty = 1; swallow[code] = 1; return 1; }
+    return 0;
+}
+int ms_view(void) { return view; }
+
+/* ---- drawing: the view screen's update (GUI thread, every frame) ---- */
+extern int32_t tm_zoom_q10(void);
+static const uint8_t c_lane[4] = { 0x35, 0x32, 0x38, 255 }, c_white[4] = { 255, 255, 255, 255 },
+                     c_blue[4] = { 0x4D, 0x9E, 0xFF, 255 }, c_green[4] = { 0x00, 0xED, 0x95, 255 },
+                     c_red[4] = { 0xFF, 0x3A, 0x5D, 255 }, c_grey[4] = { 0x6F, 0x71, 0x73, 255 };
+static void ms_scr_update(void *self, int dt)
+{
+    (void)self; (void)dt;
+    if (!ms) return;
+    void *r = op1_raster();
+    int32_t ph = TAPE_POS >> 6, z = tm_zoom_q10();               /* Q10 px per second */
+    int32_t k = (int32_t)(((int64_t)z << 16) / 44100);           /* Q10 px per sample << 16 */
+    int32_t span = (int32_t)(((int64_t)OP1_Q10(140) << 16) / (k ? k : 1));   /* samples to the screen edge */
+    static ms_ev ev[96]; static int32_t ps[96];
+    static const char *const dn[3] = { "I", "S", "M" };
+    for (int t = 0; t < MS_TRACKS; t++) {
+        int32_t y = OP1_Q10(28 + t * 28);
+        const uint8_t *lc = t == ms->sel ? (recording() ? c_red : c_white) : ms->h.mute[t] ? c_grey : c_blue;
+        sq_line(r, OP1_Q10(30), y + OP1_Q10(10), OP1_Q10(318), y + OP1_Q10(10), 0x300, c_lane);
+        char lab[8], *o = lab;
+        *o++ = (char)('1' + t); *o++ = ' '; o = sq_cat(o, dn[ms->h.dest[t] % 3]);
+        if (ms->h.dest[t] == MS_DEST_MIDI) o = sq_num(o, ms->h.ch[t] + 1u, 0);
+        sq_text(r, OP1_Q10(4), y - OP1_Q10(2), OP1_Q10(1.6), lab, 0x500, lc);
+        int n = ms_events(ms, t, ph - span, ph + span, ev, ps, 96);
+        for (int i = 0; i < n; i++) {
+            int32_t x0 = OP1_Q10(160) + (int32_t)(((int64_t)(ps[i] - ph) * k) >> 16);
+            if (x0 < OP1_Q10(30) || x0 > OP1_Q10(318)) continue;
+            if (ev[i].kind == MS_CC) { int32_t yy = y + OP1_Q10(20) - ev[i].d2 * OP1_Q10(16) / 127; sq_line(r, x0, yy, x0 + OP1_Q10(1), yy, 0x400, c_green); continue; }
+            int32_t x1 = x0 + (int32_t)(((int64_t)ev[i].len * 64 * k) >> 16);
+            if (x1 < x0 + OP1_Q10(1)) x1 = x0 + OP1_Q10(1);
+            if (x1 > OP1_Q10(318)) x1 = OP1_Q10(318);
+            int32_t yy = y + OP1_Q10(20) - (ev[i].d1 % 24) * OP1_Q10(16) / 23;
+            sq_line(r, x0, yy, x1, yy, 0x500, lc);
+        }
+    }
+    if (sel_a >= 0) {
+        int32_t xa = OP1_Q10(160) + (int32_t)(((int64_t)(sel_a - ph) * k) >> 16);
+        if (xa > OP1_Q10(30) && xa < OP1_Q10(318)) sq_line(r, xa, OP1_Q10(22), xa, OP1_Q10(138), 0x300, c_green);
+        if (sel_b >= 0) {
+            int32_t xb = OP1_Q10(160) + (int32_t)(((int64_t)(sel_b - ph) * k) >> 16);
+            if (xb > OP1_Q10(30) && xb < OP1_Q10(318)) sq_line(r, xb, OP1_Q10(22), xb, OP1_Q10(138), 0x300, c_green);
+        }
+    }
+    sq_line(r, OP1_Q10(160), OP1_Q10(22), OP1_Q10(160), OP1_Q10(138), 0x300, recording() ? c_red : c_white);
+    char hd[24], *o = sq_cat(hd, "MIDI SEQ");
+    if (ms->underruns) { o = sq_cat(o, " U"); sq_num(o, ms->underruns, 0); }
+    sq_text(r, OP1_Q10(110), OP1_Q10(4), OP1_Q10(1.6), hd, 0x500, c_white);
+}

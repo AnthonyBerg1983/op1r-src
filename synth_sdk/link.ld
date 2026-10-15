@@ -22,6 +22,10 @@ SECTIONS {
   .hook_apsynth1 0x019C2E5E : { KEEP(*(.hook_apsynth1)) }
   .hook_apsynth2 0x01A01866 : { KEEP(*(.hook_apsynth2)) }
   .hook_apsynth3 0x01A50F1C : { KEEP(*(.hook_apsynth3)) }
+  .hook_vcdown 0x01A85750 : { KEEP(*(.hook_vcdown)) }
+  .hook_vcup 0x01A85840 : { KEEP(*(.hook_vcup)) }
+  _vc_down_body = 0x01A85754;      /* VoiceCtl key_down after its LINK 0x10 (sequencer hook) */
+  _vc_up_body = 0x01A85844;        /* VoiceCtl key_up after its LINK 0x20 */
   .hook_screenload 0x019F07D2 : { KEEP(*(.hook_screenload)) }
   .hook_rfp019427b8 0x019427B8 : { KEEP(*(.hook_rfp019427b8)) }
   .hook_rfp01984f60 0x01984F60 : { KEEP(*(.hook_rfp01984f60)) }

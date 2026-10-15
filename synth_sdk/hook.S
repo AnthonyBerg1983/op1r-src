@@ -51,6 +51,39 @@ _fx_screen_case5:
 	.section .hook_apsynth3,"ax"
 	call _plug_apply_synth;
 
+/* MIDI sequencer device (seqdev/ms_fw.c): VoiceCtl key_down 0x01A85750 / key_up 0x01A85840 entries (LINK 0x10 /
+ * LINK 0x20) -> JUMP.L here: the note is offered to the recorder (R0 = record, R1 = param; the functions read no
+ * other argument registers, checked), then the original LINK and on. (Stubs from the MIDI track PR.) */
+	.section .hook_vcdown,"ax"
+	jump.l _ms_vc_down_stub;
+	.section .hook_vcup,"ax"
+	jump.l _ms_vc_up_stub;
+	.text
+	.align 2
+_ms_vc_down_stub:
+	[--SP] = RETS;
+	[--SP] = R0;
+	[--SP] = R1;
+	SP += -12;
+	call _ms_vc_down;
+	SP += 12;
+	R1 = [SP++];
+	R0 = [SP++];
+	RETS = [SP++];
+	LINK 16;
+	jump.l _vc_down_body;
+	.align 2
+_ms_vc_up_stub:
+	[--SP] = RETS;
+	[--SP] = R0;
+	SP += -12;
+	call _ms_vc_up;
+	SP += 12;
+	R0 = [SP++];
+	RETS = [SP++];
+	LINK 32;
+	jump.l _vc_up_body;
+
 	.section .hook_screenload,"ax"
 	call _screens_load_hook;
 
