@@ -1,7 +1,7 @@
 /* MIDI sequencer device, firmware glue (docs/39): the device view on the tape screen (SEQ + TAPE), keys, recording
  * inputs (VoiceCtl entries, MIDI CCs), destinations, file I/O, drawing. The core (ms_core.c) is host-tested.
  *
-* Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
+ * Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
  * (switching off closes the view, silences, saves pending slots, then idles).
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
