@@ -154,20 +154,36 @@ static void q_put(int cc, int d1, int d2, int ch)
     irq_on(m);
 }
 static int recording(void) { return ms && view && (rec_held || rec_latch); }
-void ms_vc_down(const int32_t *rec, int param)        /* VoiceCtl key_down entry (hook.S): every note played */
+/* input source of a VoiceCtl note, from its caller: the keyboard (global_controller key down / up with no sequencer
+ * taking the key), received MIDI (VoiceCtl note on / off), else a player (the stock sequencers, arpeggio, ...) */
+static int src_of(uint32_t ret)
+{
+    if ((ret >= 0x019AC0B0 && ret < 0x019AC2F2) || (ret >= 0x019AC2F8 && ret < 0x019AC3C6)) return MS_DEST_INSTR;
+    if ((ret >= 0x01A858D8 && ret < 0x01A85C16)) return -1;            /* MIDI: taken from the packets (ms_midi_rx) */
+    return MS_DEST_SEQ;
+}
+static int in_kind(void) { return ms->h.in[ms->sel & 3] & 15; }
+void ms_vc_down(const int32_t *rec, int param, uint32_t ret)      /* VoiceCtl key_down entry (hook.S): every note played */
 {
     (void)param;
-    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127) return;
+    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], rec[1] < 1 ? 100 : rec[1] > 127 ? 127 : rec[1], 1);
 }
-void ms_vc_up(const int32_t *rec)
+void ms_vc_up(const int32_t *rec, uint32_t ret)
 {
-    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127) return;
+    if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], 0, 0);
 }
-void ms_midi_cc(const uint8_t *m)                     /* received MIDI CC (dispatcher.c midi_cc_hook) */
+/* received USB-MIDI packet (devupd/du_fw.c du_rx_poll, before the stock parser, every channel): input M<ch> takes
+ * notes and CCs on its channel; inputs I / S take CCs on the OP-1's MIDI channel (what stock receives) */
+void ms_midi_rx(const volatile uint8_t *pk)
 {
-    if (recording() && m[1] < 128) q_put(1, m[1], m[2] & 127, m[0] & 15);
+    int cin = pk[0] & 15, ch = pk[1] & 15, d1 = pk[2] & 127, d2 = pk[3] & 127;
+    if (!recording() || (cin != 8 && cin != 9 && cin != 11)) return;
+    int in = ms->h.in[ms->sel & 3], mine = (in & 15) == MS_DEST_MIDI ? ch == in >> 4 : cin == 11 && ch == (*(volatile int *)0x01AADB20 & 15);
+    if (!mine) return;
+    if (cin == 11) q_put(1, d1, d2, ch);
+    else q_put(0, d1, cin == 9 ? d2 : 0, cin == 9 && d2);           /* note on with velocity 0 = off */
 }
 
 /* ---- audio thread (tape/countin.c, once per block) ---- */

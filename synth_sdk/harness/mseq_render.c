@@ -56,7 +56,7 @@ int main(void)
     for (int i = 0; i < 64; i++) { S.sel = 2; S.prev = 44100 + i * beat / 4; S.cc_last[74] = -10000; ms_cc_in(&S, 74, (i * 8) % 128, 0); }   /* CC sweep */
     for (int i = 0; i < 16; i++) note(3, 44100 + i * beat, i % 4 == 0 ? 36 : 42, 60);        /* drums */
     S.rec = 0; S.h.dest[1] = MS_DEST_MIDI; S.h.ch[1] = 1; S.h.dest[3] = MS_DEST_SEQ; S.h.mute[2] = 0;
-    S.h.in[2] = MS_DEST_MIDI | 4 << 4;                          /* track 3: input MIDI channel 5 (placeholder) */
+    S.h.in[2] = MS_DEST_MIDI | 4 << 4;                          /* track 3: input MIDI channel 5 */
     static const int32_t tm[3] = { 66150, 132300, 220500 };
     ms_view v = { 0 };
     v.ph = 110250; v.zoom_q10 = 40 << 10; v.bpm_q8 = 120 << 8; v.loop_on = 1; v.loop_in = 88200; v.loop_out = 176400;

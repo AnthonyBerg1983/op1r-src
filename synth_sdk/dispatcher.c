@@ -1068,8 +1068,6 @@ void midi_cc_hook(void *vec)
 {
     ((void (*)(void *))0x01A84F8C)(vec);                         /* stock: CC table (MIDI LFO) */
     const uint8_t *m = *(const uint8_t **)((char *)vec + 4);     /* status, cc, value (size asserted by stock) */
-    extern void ms_midi_cc(const uint8_t *m);
-    ms_midi_cc(m);                                               /* MIDI sequencer device: CC recording */
     int code = m[1] - 5, v = m[2], down = v >= 64, knob = m[1] - 102;
     unsigned imask;
     if (m[1] >= 106 && m[1] <= 118) { midi_cc_mixer(m[1], v); return; }

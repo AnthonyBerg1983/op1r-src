@@ -59,7 +59,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
 
     /* status bar (y 3..17): selected track number in a square of the bar's height (grey while muted), position
      * bar.beat.sixteenth (Ableton style, 1.1.1 at tape 0) left, time m:ss.hh centred, input -> output right (I
-     * instrument, S sequencer, M<channel> MIDI; the input is a placeholder, not used yet). Stock font. */
+     * instrument, S sequencer, M<channel> MIDI; input: what is recorded, output: where it plays). Stock font. */
     {
         int st = v->sel_track & 3, mu = s->h.mute[st];
         const uint8_t *cb = mu ? c_grey : c_white;

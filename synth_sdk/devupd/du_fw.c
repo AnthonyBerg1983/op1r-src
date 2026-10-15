@@ -239,6 +239,8 @@ void du_rx_poll(void)
         volatile uint8_t *p = RX_RING + (rx_pos & 0x3FF) * 4;
         int cin = p[0] & 15, k = cin == 5 ? 1 : cin == 6 ? 2 : (cin == 4 || cin == 7) ? 3 : 0;
         for (int i = 0; i < k; i++) rx_byte(p[1 + i]);
+        extern void ms_midi_rx(const volatile uint8_t *pk);
+        ms_midi_rx(p);                                             /* MIDI sequencer: input M<channel> (any channel) */
     }
     RX_PARSE();
 }

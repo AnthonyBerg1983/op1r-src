@@ -64,6 +64,7 @@ _ms_vc_down_stub:
 	[--SP] = RETS;
 	[--SP] = R0;
 	[--SP] = R1;
+	R2 = RETS;			/* caller: the input source (ms_fw.c src_of) */
 	SP += -12;
 	call _ms_vc_down;
 	SP += 12;
@@ -76,6 +77,7 @@ _ms_vc_down_stub:
 _ms_vc_up_stub:
 	[--SP] = RETS;
 	[--SP] = R0;
+	R1 = RETS;
 	SP += -12;
 	call _ms_vc_up;
 	SP += 12;
