@@ -26,7 +26,7 @@ static void txt(void *r, ms_txt *t, int32_t x, int32_t y, const uint8_t *c, int 
     if (str[k] != t->last[k]) { op1_text_set(t->mem, str); for (k = 0; k < 11 && (t->last[k] = str[k]) != 0; k++) ; t->last[11] = 0; }
     op1_text_draw(t->mem, r, ident);
 }
-enum { T_TRACK_W, T_TRACK_G, T_POS, T_TIME, T_IN, T_OUT, T_N };
+enum { T_TRACK_W, T_TRACK_G, T_POS, T_MIN, T_COLON, T_S1, T_S2, T_DOT, T_H1, T_H2, T_IN_W, T_IN_B, T_OUT_W, T_OUT_B, T_N };
 static ms_txt tx[T_N];
 
 static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0x4A, 0x52, 255 },
@@ -39,6 +39,7 @@ static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0
 #define LANE_Y(t) OP1_Q10(34 + (t) * 26)     /* top of lane t, 26 px each, separators below */
 #define BAND_Y  OP1_Q10(28)                  /* loop bar / marker carets */
 #define TXT_Y   4                            /* status bar text, px */
+#define TIME_X  160                          /* time: second digit's cell centre, px */
 #define ARROW_X 280                          /* input -> output arrow, px */
 
 static void ring(void *r, int32_t x, int32_t y, int32_t rad, int32_t w, const uint8_t *c)   /* octagon outline */
@@ -47,8 +48,6 @@ static void ring(void *r, int32_t x, int32_t y, int32_t rad, int32_t w, const ui
     for (int i = 0; i < 8; i++)
         sq_line(r, x + px[i] * rad / 10, y + py[i] * rad / 10, x + px[i + 1] * rad / 10, y + py[i + 1] * rad / 10, w, c);
 }
-static int32_t slen(const char *t) { int32_t n = 0; while (t[n]) n++; return n; }
-static char *two(char *o, uint32_t v) { *o++ = (char)('0' + v / 10 % 10); *o++ = (char)('0' + v % 10); *o = 0; return o; }
 
 void ms_draw(void *r, const ms_view *v, ms_t *s)
 {
@@ -75,23 +74,28 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         o = sq_num(o, (uint32_t)b + 1, 0); *o++ = '.'; o = sq_num(o, (uint32_t)q + 1, 0); *o++ = '.'; sq_num(o, (uint32_t)x + 1, 0);
         txt(r, &tx[T_POS], OP1_Q10(30), TXT_Y, c_white, 0, t);
         uint32_t cs = (uint32_t)((int64_t)p * 100 / 44100);
-        o = t; o = sq_num(o, cs / 6000, 0); *o++ = ':'; o = two(o, cs / 100 % 60); *o++ = '.'; two(o, cs % 100);
-        txt(r, &tx[T_TIME], OP1_Q10(160), TXT_Y, c_white, 1, t);
+        /* time: one text per digit in fixed cells (the stock font is proportional, a single string jumps) */
+        sq_num(t, cs / 6000, 0);
+        txt(r, &tx[T_MIN], OP1_Q10(TIME_X - 15), TXT_Y, c_white, 2, t);
+        txt(r, &tx[T_COLON], OP1_Q10(TIME_X - 13), TXT_Y, c_white, 1, ":");
+        char dg[2] = { 0, 0 }; uint32_t sec = cs / 100 % 60, hs = cs % 100;
+        dg[0] = (char)('0' + sec / 10); txt(r, &tx[T_S1], OP1_Q10(TIME_X - 7), TXT_Y, c_white, 1, dg);
+        dg[0] = (char)('0' + sec % 10); txt(r, &tx[T_S2], OP1_Q10(TIME_X), TXT_Y, c_white, 1, dg);
+        txt(r, &tx[T_DOT], OP1_Q10(TIME_X + 5), TXT_Y, c_white, 1, ".");
+        dg[0] = (char)('0' + hs / 10); txt(r, &tx[T_H1], OP1_Q10(TIME_X + 10), TXT_Y, c_white, 1, dg);
+        dg[0] = (char)('0' + hs % 10); txt(r, &tx[T_H2], OP1_Q10(TIME_X + 17), TXT_Y, c_white, 1, dg);
         static const char *const dl[3] = { "i", "s", "m" };   /* (the stock font draws a-z as capitals) */
         int ik = s->h.in[st] & 15, ok = s->h.dest[st] % 3;
         o = sq_cat(t, dl[ik % 3]);
         if (ik == MS_DEST_MIDI) sq_num(o, (s->h.in[st] >> 4) + 1u, 0);
-        txt(r, &tx[T_IN], OP1_Q10(ARROW_X - 4), TXT_Y, c_white, 2, t);
-        int32_t ul = OP1_Q10(19);                                     /* white knob edits the underlined side */
-        if (v->io) sq_line(r, OP1_Q10(ARROW_X - 1) - OP1_Q10(7) * slen(t), ul, OP1_Q10(ARROW_X - 1), ul, 0x300, c_white);
+        txt(r, &tx[v->io ? T_IN_B : T_IN_W], OP1_Q10(ARROW_X - 4), TXT_Y, v->io ? c_blue : c_white, 2, t);   /* blue: white knob edits it */
         int32_t ax = OP1_Q10(ARROW_X), ay = OP1_Q10(10);              /* arrow */
         sq_line(r, ax, ay, ax + OP1_Q10(9), ay, 0x500, c_grey);
         sq_line(r, ax + OP1_Q10(5), ay - OP1_Q10(3.5), ax + OP1_Q10(9), ay, 0x500, c_grey);
         sq_line(r, ax + OP1_Q10(5), ay + OP1_Q10(3.5), ax + OP1_Q10(9), ay, 0x500, c_grey);
         o = sq_cat(t, dl[ok]);
         if (ok == MS_DEST_MIDI) sq_num(o, s->h.ch[st] + 1u, 0);
-        txt(r, &tx[T_OUT], ax + OP1_Q10(13), TXT_Y, c_white, 0, t);
-        if (!v->io) sq_line(r, ax + OP1_Q10(13), ul, ax + OP1_Q10(13) + OP1_Q10(7) * slen(t), ul, 0x300, c_white);
+        txt(r, &tx[v->io ? T_OUT_W : T_OUT_B], ax + OP1_Q10(13), TXT_Y, v->io ? c_white : c_blue, 0, t);
     }
 
     /* bars and beats: lines through the lanes (bars thicker), beat ticks above the lanes when there is room */

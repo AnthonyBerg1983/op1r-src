@@ -49,7 +49,7 @@ static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_c
 static int32_t sel_a = -1, sel_b = -1;
 static uint8_t io_sel;                                   /* white knob edits: 0 output, 1 input */
 static int io_acc;
-/* white turn: one step per detent through I, S, M1..M16 (clamped) for the selected track's input or output */
+/* white turn: one step per detent through I, S, M1..M16 (wraps) for the selected track's input or output */
 int ms_knob(int knob, int delta)
 {
     if (!view || !ms || knob != 2) return 0;
@@ -61,7 +61,7 @@ int ms_knob(int knob, int delta)
     int t = ms->sel & 3, k, ch;
     if (io_sel) { k = ms->h.in[t] & 15; ch = ms->h.in[t] >> 4; } else { k = ms->h.dest[t] % 3; ch = ms->h.ch[t] & 15; }
     int i = k == MS_DEST_MIDI ? 2 + ch : k == MS_DEST_SEQ ? 1 : 0;   /* list index */
-    i += st; if (i < 0) i = 0; if (i > 17) i = 17;
+    i = ((i + st) % 18 + 18) % 18;
     k = i >= 2 ? MS_DEST_MIDI : i == 1 ? MS_DEST_SEQ : MS_DEST_INSTR; ch = i >= 2 ? i - 2 : ch;
     if (io_sel) ms->h.in[t] = (uint8_t)(k | ch << 4); else { ms->h.dest[t] = (uint8_t)k; ms->h.ch[t] = (uint8_t)ch; }
     ms->head_dirty = 1;
