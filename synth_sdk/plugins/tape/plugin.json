@@ -1,5 +1,6 @@
 {
   "name": "tape",
+  "author": "pcppcp",
   "kind": "fx",
   "order": 1,
   "symbol": "FX_tape",

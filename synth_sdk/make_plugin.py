@@ -164,8 +164,10 @@ def build(name, out_dir=OUT):
                       len(rel), len(imports))
     assert len(hdr) == 76
     names = [i[len('__imp_'):] if i.startswith('__imp_') else i.lstrip('_') for i in imports]
+    meta = ''.join(f'{k}={e[k]}\n' for k in ('author',) if e.get(k))   # optional text after the imports (op1p.h)
+    assert all(c >= ' ' and c not in '\x7f' for c in meta.replace('\n', '')), 'metadata: printable text only'
     body = hdr + bytes(img0) + b''.join(struct.pack('<IIIi', *r) for r in rel) + \
-        b''.join(n.encode() + b'\0' for n in names)
+        b''.join(n.encode() + b'\0' for n in names) + meta.encode()
     head = b''
     if scr:
         head = open(os.path.join(HERE, scr['svg']), 'rb').read()

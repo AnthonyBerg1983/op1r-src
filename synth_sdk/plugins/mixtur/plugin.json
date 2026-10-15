@@ -1,5 +1,6 @@
 {
   "name": "mixtur",
+  "author": "ultralazr",
   "kind": "synth",
   "order": 8,
   "symbol": "ENGINE_mixtur",

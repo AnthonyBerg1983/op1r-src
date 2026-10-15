@@ -1,5 +1,6 @@
 {
   "name": "aether",
+  "author": "pcppcp",
   "kind": "synth",
   "order": 10,
   "symbol": "ENGINE_aether",

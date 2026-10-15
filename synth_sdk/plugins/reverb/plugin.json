@@ -1,5 +1,6 @@
 {
   "name": "reverb",
+  "author": "pcppcp",
   "kind": "fx",
   "order": 3,
   "symbol": "FX_reverb",

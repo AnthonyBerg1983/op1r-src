@@ -1,5 +1,6 @@
 {
   "name": "mysynth",
+  "author": "your name",
   "kind": "synth",
   "symbol": "ENGINE_mysynth",
   "sources": [

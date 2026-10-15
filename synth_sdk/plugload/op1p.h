@@ -7,6 +7,8 @@
  *   image[image_size]                     code + rodata + data, linked at address 0
  *   op1p_reloc[n_relocs]
  *   import names                          n_imports NUL-terminated names (core exports, e.g. "sq_line")
+ *   metadata (optional)                   UTF-8 "key=value\n" lines up to the end of the binary part, e.g.
+ *                                         "author=pcppcp\n" (shown by the web patcher; ignored by the loader)
  *   op1p_trailer                          last 16 bytes of the file
  *
  * Relocation: the 32-bit value v = (target & OP1P_IMPORT ? export_addr[target & 0xFFFF] : base + target) + addend;

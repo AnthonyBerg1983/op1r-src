@@ -3,6 +3,7 @@
 plugin.json fields (paths relative to the plugin folder):
   name           type name shown on the OP-1: lowercase, <= 15 chars, no clash with built-in types
   kind           "synth" or "fx"
+  author         (optional) who made it: shown in the web patcher (stored in the plugin file)
   order          (optional) the number of a plugin that was compiled into earlier releases (knobs[4] = 0x5300 + order,
                  1..31): kept so its old sounds work, never change it. Needed only to compile a plugin in (--builtin).
                  New plugins leave it out: sounds find a plugin file by its name (docs/37). Taken: plugins/ORDERS.md

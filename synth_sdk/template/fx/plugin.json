@@ -1,5 +1,6 @@
 {
   "name": "myfx",
+  "author": "your name",
   "kind": "fx",
   "symbol": "FX_myfx",
   "sources": [

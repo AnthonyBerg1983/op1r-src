@@ -1,5 +1,6 @@
 {
   "name": "supersaw",
+  "author": "pcppcp",
   "kind": "synth",
   "order": 1,
   "symbol": "ENGINE_supersaw",

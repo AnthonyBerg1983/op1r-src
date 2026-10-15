@@ -1,5 +1,6 @@
 {
   "name": "clouds",
+  "author": "pcppcp",
   "kind": "fx",
   "order": 2,
   "symbol": "FX_clouds",

@@ -1,5 +1,6 @@
 {
   "name": "fmbell",
+  "author": "pcppcp",
   "kind": "synth",
   "order": 2,
   "symbol": "ENGINE_fmbell",
