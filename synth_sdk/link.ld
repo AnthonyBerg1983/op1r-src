@@ -17,6 +17,11 @@ SECTIONS {
   .hook_fxnamecmp 0x019AAD8E : { KEEP(*(.hook_fxnamecmp)) }
   .hook_iterread 0x019B9EF8 : { KEEP(*(.hook_iterread)) }
   .hook_screenctor 0x01A3BD58 : { KEEP(*(.hook_screenctor)) }
+  .hook_plugboot 0x019F02EE : { KEEP(*(.hook_plugboot)) }
+  .hook_masterload 0x019F054A : { KEEP(*(.hook_masterload)) }
+  .hook_apsynth1 0x019C2E5E : { KEEP(*(.hook_apsynth1)) }
+  .hook_apsynth2 0x01A01866 : { KEEP(*(.hook_apsynth2)) }
+  .hook_apsynth3 0x01A50F1C : { KEEP(*(.hook_apsynth3)) }
   .hook_screenload 0x019F07D2 : { KEEP(*(.hook_screenload)) }
   .hook_rfp019427b8 0x019427B8 : { KEEP(*(.hook_rfp019427b8)) }
   .hook_rfp01984f60 0x01984F60 : { KEEP(*(.hook_rfp01984f60)) }

@@ -64,6 +64,18 @@ static int contains_ci(const char *s, const char *w)
     return 0;
 }
 
+static int du_plugin_path(const char *p, int n)          /* plugins/<name>.op1p, no subfolder (docs/37) */
+{
+    static const char pre[] = "plugins/", suf[] = ".op1p";
+    for (int i = 0; i < 8; i++) if (p[i] != pre[i]) return 0;
+    for (int i = 8; i < n; i++) if (p[i] == '/') return 0;
+    if (n < 8 + 6) return 0;
+    for (int i = 0; i < 5; i++) if (p[n - 5 + i] != suf[i]) return 0;
+    return 1;
+}
+
+int du_plugin_file(const char *p) { int n = 0; while (p[n]) n++; return du_path_ok(p) && du_plugin_path(p, n); }
+
 int du_path_ok(const char *p)
 {
     int n = 0;
@@ -78,7 +90,7 @@ int du_path_ok(const char *p)
     if (!(p[0] == 'O' && p[1] == 'P' && p[2] == '1' && p[3] == '_' && p[4] == 'v' && p[5] == 'd' && p[6] == 'k' &&
           p[7] == '.' && p[8] == 'l' && p[9] == 'd' && p[10] == 'r' && p[11] == 0) &&
         !(p[0] == 'c' && p[1] == 'o' && p[2] == 'n' && p[3] == 't' && p[4] == 'e' && p[5] == 'n' && p[6] == 't' &&
-          p[7] == '/'))
+          p[7] == '/') && !du_plugin_path(p, n))
         return 0;
     return 1;
 }
@@ -189,6 +201,31 @@ int du_handle(du_session *s, const uint8_t *msg, int n, uint8_t *rep)
         s->fs->reboot(s->fs->ctx);                                /* (firmware: after the reply went out) */
         return r;
     }
+    case DU_DELETE: {                                             /* path: staged delete (no data) */
+        if (s->open) return reply(rep, cmd, seq, DU_E_STATE, 0, 0);
+        if (pn < 2 || pl[pn - 1] != 0) return reply(rep, cmd, seq, DU_E_FORMAT, 0, 0);
+        const char *path = (const char *)pl;
+        if (!du_plugin_file(path)) return reply(rep, cmd, seq, DU_E_PATH, 0, 0);
+        if (s->n >= DU_MAX_FILES) return reply(rep, cmd, seq, DU_E_FULL, 0, 0);
+        for (int i = 0; i < s->n; i++) {
+            const char *a = s->f[i].path, *b = path;
+            while (*a && *a == *b) a++, b++;
+            if (*a == *b) return reply(rep, cmd, seq, DU_E_STATE, 0, 0);
+        }
+        du_file *f = &s->f[s->n++];
+        int k = 0; while (path[k]) { f->path[k] = path[k]; k++; } f->path[k] = 0;
+        f->size = DU_DEL_SIZE; f->crc = 0;
+        return reply(rep, cmd, seq, DU_OK, 0, 0);
+    }
+    case DU_LIST: {                                               /* u16 index */
+        if (pn != 2) return reply(rep, cmd, seq, DU_E_FORMAT, 0, 0);
+        uint32_t size;
+        if (!s->fs->list || s->fs->list(s->fs->ctx, pl[0] | pl[1] << 8, (char *)out + 4, DU_MAX_REPLY - 6, &size))
+            return reply(rep, cmd, seq, DU_E_NOFILE, 0, 0);
+        wr32(out, size);
+        int k = 0; while (k < DU_MAX_REPLY - 6 && out[4 + k]) k++;
+        return reply(rep, cmd, seq, DU_OK, out, 4 + k);
+    }
     case DU_STAT: {                                               /* path (0-terminated) */
         if (pn < 2 || pl[pn - 1] != 0) return reply(rep, cmd, seq, DU_E_FORMAT, 0, 0);
         if (!du_path_ok((const char *)pl)) return reply(rep, cmd, seq, DU_E_PATH, 0, 0);
@@ -277,7 +314,8 @@ int du_manifest_parse(const char *t, du_file *f, int *n)
         int i = 0;
         while (*p && *p != '\n') { if (i >= DU_MAX_PATH - 1) return -1; f[k].path[i++] = *p++; }
         f[k].path[i] = 0;
-        if (*p++ != '\n' || !du_path_ok(f[k].path) || f[k].size > 127u * DU_BLOCK) return -1;
+        if (*p++ != '\n' || !du_path_ok(f[k].path)) return -1;
+        if (f[k].size == DU_DEL_SIZE ? !du_plugin_file(f[k].path) : f[k].size > 127u * DU_BLOCK) return -1;
         k++;
     }
     uint32_t c = du_crc32(0, (const uint8_t *)t, (uint32_t)(p - t)), cnt, cc;

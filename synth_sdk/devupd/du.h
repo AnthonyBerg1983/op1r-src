@@ -12,8 +12,11 @@
 #define DU_MAX_DATA       192               /* raw bytes per DATA message (offset 4 + data packed -> <= 230 bytes) */
 enum { DU_HELLO = 1, DU_BEGIN = 2, DU_DATA = 3, DU_END = 4, DU_COMMIT = 5, DU_ABORT = 6,
        DU_STAT = 7,                         /* path -> u32 size of /yaffs2/<path> (DU_E_NOFILE: missing) */
-       DU_IDENT = 8 };                      /* -> running firmware's version text (boot screen "op1r <n> [time]") */
-#define DU_PROTOCOL 2
+       DU_IDENT = 8,                        /* -> running firmware's version text (boot screen "op1r <n> [time]") */
+       DU_DELETE = 9,                       /* path (plugins/<name>.op1p only) -> staged delete, applied like files */
+       DU_LIST = 10 };                      /* u16 index -> u32 size + name of the index-th plugins/ file (E_NOFILE: end) */
+#define DU_PROTOCOL 3
+#define DU_DEL_SIZE 0xFFFFFFFFu             /* manifest / session size of a delete entry (no staged data) */
 enum { DU_REPLY = 0x40 };                   /* reply: cmd | 0x40, seq, status, payload */
 enum { DU_OK = 0, DU_E_FORMAT = 1, DU_E_STATE = 2, DU_E_PATH = 3, DU_E_SIZE = 4, DU_E_OFFSET = 5, DU_E_CRC = 6,
        DU_E_IO = 7, DU_E_FULL = 8, DU_WAIT_KEY = 9, DU_E_NOFILE = 10 };
@@ -24,7 +27,8 @@ int du_pack7(const uint8_t *in, int n, uint8_t *out);             /* 7 bytes -> 
 int du_unpack7(const uint8_t *in, int n, uint8_t *out);           /* inverse; -1 if a byte has bit 7 set */
 /* build a message (host / replies); returns its length or -1 if it would exceed DU_MAX_MSG */
 int du_build(uint8_t *msg, int cmd, int seq, const uint8_t *payload, int n);
-int du_path_ok(const char *path);                                 /* allow-list: OP1_vdk.ldr, content/...; never te-boot */
+int du_path_ok(const char *path);                                 /* allow-list: OP1_vdk.ldr, content/..., plugins/<name>.op1p; never te-boot */
+int du_plugin_file(const char *path);                             /* plugins/<name>.op1p (deletable) */
 
 /* ---- device side session ---- */
 #define DU_MAX_FILES 160                    /* a whole tree (--force) is ~125 files */
@@ -39,6 +43,7 @@ typedef struct {                            /* file system callbacks (firmware: 
     void *ctx;
     int (*stat)(void *ctx, const char *path, uint32_t *size);     /* 0 ok, else missing */
     int (*ident)(void *ctx, char *out, int cap);                  /* version text, returns its length */
+    int (*list)(void *ctx, int index, char *name, int cap, uint32_t *size);   /* plugins/ entry: 0 ok, else end */
 } du_fs;
 typedef struct {
     char path[DU_MAX_PATH];

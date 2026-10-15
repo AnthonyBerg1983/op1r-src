@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Build custom synth engines and an installable OP-1 firmware (fw 246).
 
-  ./make_firmware.py [--opz] [--release]   -> ../op1_246_custom-repacked.op1   (synths / FX: plugins/*/plugin.json)
+  ./make_firmware.py [--opz] [--release] [--builtin a,b|all]   -> ../op1_246_custom-repacked.op1
+      (synths / FX: plugins/*/plugin.json, by default built as /yaffs2/plugins/<name>.op1p files, docs/37;
+       --builtin: those compiled into the firmware instead)
                                               + ../op1_246_custom-delta.op1 (changes since the installed tree, docs/34)
 
   --release  boot screen shows only "op1r <VERSION>" (use for the patcher); local builds add the build time
@@ -51,6 +53,11 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x019AAD8E: ('hook_fxnamecmp', bytes.fromhex('18300b32')),    # fx_types name compare
          0x019B9EF8: ('hook_iterread', bytes.fromhex('03e38c71')),     # iter screen: read knobs
          0x01A3BD58: ('hook_screenctor', bytes.fromhex('fbe3d0f2')),   # screen ctor list
+         0x019F02EE: ('hook_plugboot', bytes.fromhex('fbe3cd65')),     # boot: CALL Clips::load -> + plugin loader (docs/37)
+         0x019F054A: ('hook_masterload', bytes.fromhex('ffe3393a')),   # boot: CALL MasterController::load -> + name lookup
+         0x019C2E5E: ('hook_apsynth1', bytes.fromhex('01e34df1')),     # CALL apply_synth (key-handler job) -> name lookup
+         0x01A01866: ('hook_apsynth2', bytes.fromhex('ffe349fc')),     # CALL apply_synth (boot patch load)
+         0x01A50F1C: ('hook_apsynth3', bytes.fromhex('fde3ee80')),     # CALL apply_synth (synth_controller::load_patch)
          0x019F07D2: ('hook_screenload', bytes.fromhex('02e33f59')),   # boot: load all screens
          0x019427B8: ('hook_rfp019427b8', bytes.fromhex('07e3f432')),   # CALL read_fx_param
          0x01984F60: ('hook_rfp01984f60', bytes.fromhex('05e3201f')),   # CALL read_fx_param
@@ -105,7 +112,10 @@ DATA_PATCHES = {0x018F7FF8: ('fx_screen_case5', 0x01A3BF26),          # ScreenId
                 0x01910868: ('ql_trig_drum', 0x019CCE2E),             # LfoMidi drum vtable +0x1c (RTS)
                 0x01910888: ('ql_trig_fx', 0x019CCE2C),               # LfoMidi FX vtable +0x1c (RTS)
                 0x01911B98: ('sm_idle_run', 0x01A5E240),              # kTE_Idle vtable run: remember thread (sysmon)
-                0x01911B78: ('tm_screen_draw', 0x01A5CF94)}           # tape screen draw: + markers (tape/markers.c)              # kTE_Idle vtable run: remember thread (sysmon)
+                0x01911B78: ('tm_screen_draw', 0x01A5CF94),           # tape screen draw: + markers (tape/markers.c)
+                0x01910FB0: ('plug_apply_synth', 0x01A010F8),         # synth patch vtable: apply_synth -> name lookup (docs/37)
+                0x01910FB8: ('plug_apply_synth_fx', 0x01A00DC4),      # synth patch vtable: apply_synth_fx
+                0x01910F80: ('plug_apply_drum_fx', 0x01A0010C)}       # drum patch vtable: apply_drum_fx           # tape screen draw: + markers (tape/markers.c)              # kTE_Idle vtable run: remember thread (sysmon)
 # 32-bit immediates loaded as Rx.L = lo; Rx.H = hi (two 4-byte instructions): address -> (symbol, original value)
 IMM_PATCHES = {0x0191AB52: ('sm_audio_cb', 0xFFA04804)}             # audio::init: DMA callback = audio render (sysmon)
 # The same, in the encrypted L1 image. These patches are precomputed: public builds replay the byte differences in
@@ -159,40 +169,37 @@ def by_order(lst):
     return out
 
 def gen_table(engs, fxs):
-    # every table is indexed by order (the number stored in patches); unused orders are 0 (stock iter / filter)
+    # built-in plugins, indexed by number (order, stored in patches); unused numbers 0 (stock iter / filter). Compact
+    # const tables: the plugin loader (plugload/plugload.c) copies them into the RAM tables (OP1_SLOTS entries, .bss)
+    # at boot and adds the plugin files.
     eo, fo = by_order(engs), by_order(fxs)
+    assert all(e['order'] < 32 for e in engs + fxs), 'built-in orders are 1..31 (32.. = plugin files)'
+    ptr = lambda lst, f: ''.join(', ' + f(e) if e else ', 0' for e in lst[1:])
+    name = lambda lst: ''.join(json.dumps(e['name'] if e else '') + ', ' for e in lst[1:]) + '0'
+    svg = lambda e: json.dumps(os.path.basename(e['screen']['svg'])) if e.get('screen') else '0'
+    scr = lambda e: '&' + e['screen']['symbol'] if e.get('screen') else '0'
     lines = ['#include "op1_synth.h"']
     lines += [f'extern const op1_engine_t {e["symbol"]};' for e in engs]
-    lines.append('const op1_engine_t *const op1_engines[] = { 0' +
-                 ''.join(', &' + e['symbol'] if e else ', 0' for e in eo[1:]) + ' };')
-    lines.append(f'const int op1_engine_count = {len(eo)};')
-    lines.append('const char *const op1_engine_names[] = { ' +
-                 ''.join(json.dumps(e['name'] if e else '') + ', ' for e in eo[1:]) + '0 };')
-    lines.append('const char *const op1_sample_engine_names[] = { ' +
-                 ''.join(json.dumps(e['name']) + ', ' for e in engs if e.get('uses_sample')) + '0 };')
-    lines += [f'extern const op1_screen_t {e["screen"]["symbol"]};' for e in engs if e.get('screen')]
-    lines.append('const op1_screen_t *const op1_engine_screens[] = { 0' +
-                 ''.join(', &' + e['screen']['symbol'] if e and e.get('screen') else ', 0' for e in eo[1:]) + ' };')
-    lines.append('const char *const op1_engine_svgs[] = { 0' +
-                 ''.join(', ' + json.dumps(os.path.basename(e['screen']['svg'])) if e and e.get('screen') else ', 0'
-                         for e in eo[1:]) + ' };')
     lines += [f'extern const op1_fx_t {f["symbol"]};' for f in fxs]
-    lines += [f'extern const op1_screen_t {f["screen"]["symbol"]};' for f in fxs if f.get('screen')]
-    lines.append('const op1_screen_t *const op1_fx_screens[] = { 0' +
-                 ''.join(', &' + f['screen']['symbol'] if f and f.get('screen') else ', 0' for f in fo[1:]) + ' };')
-    lines.append('const char *const op1_fx_svgs[] = { 0' +
-                 ''.join(', ' + json.dumps(os.path.basename(f['screen']['svg'])) if f and f.get('screen') else ', 0'
-                         for f in fo[1:]) + ' };')
-    lines.append('const op1_fx_t *const op1_fxs[] = { 0' + ''.join(', &' + f['symbol'] if f else ', 0' for f in fo[1:]) + ' };')
-    lines.append(f'const int op1_fx_count = {len(fo)};')
-    lines.append('const char *const op1_fx_names[] = { ' +
-                 ''.join(json.dumps(f['name']) + ', ' for f in fxs) + '0 };')
+    lines += [f'extern const op1_screen_t {e["screen"]["symbol"]};' for e in engs + fxs if e.get('screen')]
+    lines.append('const op1_engine_t *const op1_builtin_engines[] = { 0' + ptr(eo, lambda e: '&' + e['symbol']) + ' };')
+    lines.append(f'const int op1_builtin_engine_count = {len(eo)};')
+    lines.append('const char *const op1_builtin_engine_names[] = { ' + name(eo) + ' };')
+    lines.append('const char *const op1_builtin_sample_engine_names[] = { ' +
+                 ''.join(json.dumps(e['name']) + ', ' for e in engs if e.get('uses_sample')) + '0 };')
+    lines.append('const op1_screen_t *const op1_builtin_engine_screens[] = { 0' + ptr(eo, scr) + ' };')
+    lines.append('const char *const op1_builtin_engine_svgs[] = { 0' + ptr(eo, svg) + ' };')
+    lines.append('const op1_fx_t *const op1_builtin_fxs[] = { 0' + ptr(fo, lambda f: '&' + f['symbol']) + ' };')
+    lines.append(f'const int op1_builtin_fx_count = {len(fo)};')
+    lines.append('const char *const op1_builtin_fx_names[] = { ' + name(fo) + ' };')
+    lines.append('const op1_screen_t *const op1_builtin_fx_screens[] = { 0' + ptr(fo, scr) + ' };')
+    lines.append('const char *const op1_builtin_fx_svgs[] = { 0' + ptr(fo, svg) + ' };')
     open(os.path.join(HERE, 'build', 'engines_table.c'), 'w').write('\n'.join(lines) + '\n')
 
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -304,6 +311,9 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     for addr, data in hooks.items():
         if addr in HOOKS: ldr_poke(d, addr, data, HOOKS[addr][1])
     ldr_poke(d, BOOT_TEXT_ADDR, boot_text(release), BOOT_TEXT_ORIG)   # boot screen: op1r <version> [build time]
+    # boot audio burst (stock): volume knob byte starts at 0xFF = full volume until the first TWI knob read
+    # (callback 0xFFA0521C); start at 0 so the output ramp (0x01A10DE4) rises from silence to the real knob level
+    ldr_poke(d, 0x018B62A4, b'\x00', b'\xff')
     for addr, (sym, orig) in DATA_PATCHES.items():
         ldr_poke(d, addr, struct.pack('<I', syms[sym]), struct.pack('<I', orig))
     for addr, (sym, orig) in IMM_PATCHES.items():              # keep the opcodes, swap the 16-bit halves
@@ -403,9 +413,21 @@ def patch_db(dbp, engs, fxs):
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
     c.close()
 
-def main(opz=False, release=False):
+def main(opz=False, release=False, plugin_files='all', builtin=''):
     engs, fxs = plugins.load()
-    assert engs                                 # order = the number stored in patches (MAGIC + n): never renumber;
+    # plugin files (docs/37, default: all) are built into the tree's plugins/ instead of being compiled in;
+    # --builtin compiles the named ones (or all) into the firmware
+    names = {e['name'] for e in engs + fxs}
+    pick = lambda arg: names if arg == 'all' else {n.strip() for n in arg.split(',') if n.strip()}
+    as_files, comp = pick(plugin_files), pick(builtin)
+    assert as_files <= names and comp <= names, f'unknown plugins: {sorted((as_files | comp) - names)}'
+    as_files -= comp
+    missing = sorted(e['name'] for e in engs + fxs if e['name'] not in as_files and not e.get('order'))
+    assert not missing, f'compiled-in plugins need an order (plugin.json): {missing}'
+    file_plugins = [e for e in engs + fxs if e['name'] in as_files]
+    engs = [e for e in engs if e['name'] not in as_files]
+    fxs = [f for f in fxs if f['name'] not in as_files]
+    # order = the number stored in patches (MAGIC + n): never renumber;
     for lst in (engs, fxs):                     # gaps are fine (an order no plugin has plays as stock iter / filter)
         assert all(1 <= e['order'] <= MAX_ORDER for e in lst), [e['order'] for e in lst]
     for f in fxs:
@@ -428,6 +450,10 @@ def main(opz=False, release=False):
     code, hooks, syms = build(engs, fxs)
     assert len(code) < 0x100000
     shutil.rmtree(OUT_FW, ignore_errors=True); shutil.copytree(SRC_FW, OUT_FW)
+    if file_plugins:
+        import make_plugin                       # plugin files keep their order as preferred number (old sounds)
+        for e in file_plugins:
+            make_plugin.build(e['name'], os.path.join(OUT_FW, 'plugins'))
     patch_ldr(os.path.join(SRC_FW, 'OP1_vdk.ldr'), os.path.join(OUT_FW, 'OP1_vdk.ldr'), code, hooks, syms, opz, release)
     print(f'code {len(code)} bytes @{CODE_BASE:#x}; ' + ', '.join(f'{k}={syms[k]:#x}' for k in SLOTS))
     patch_db(os.path.join(OUT_FW, 'content', 'op1_factory.db'), engs, fxs)
@@ -458,5 +484,9 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--opz', action='store_true', help='enable hidden OP-Z controller mode (via SysEx 00 01 03)')
     ap.add_argument('--release', action='store_true', help='boot screen without build time (patcher builds)')
+    ap.add_argument('--plugin-files', default='all', metavar='NAMES',
+                    help='plugins built as plugin files (tree plugins/), comma-separated or "all" (default)')
+    ap.add_argument('--builtin', default='', metavar='NAMES',
+                    help='plugins compiled into the firmware instead, comma-separated or "all"')
     a = ap.parse_args()
-    main(a.opz, a.release)
+    main(a.opz, a.release, a.plugin_files, a.builtin)

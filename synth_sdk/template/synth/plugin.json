@@ -1,8 +1,14 @@
 {
   "name": "mysynth",
   "kind": "synth",
-  "order": 99,
   "symbol": "ENGINE_mysynth",
-  "sources": ["mysynth.c"],
-  "defaults": [4000, 12000, 6000, 24000]
+  "sources": [
+    "mysynth.c"
+  ],
+  "defaults": [
+    4000,
+    12000,
+    6000,
+    24000
+  ]
 }

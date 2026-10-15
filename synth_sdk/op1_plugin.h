@@ -35,7 +35,9 @@
 #define OP1_VOICES       6
 #define OP1_SAMPLE_RATE  44100
 #define OP1_ENGINE_MAGIC 0x5300          /* knobs[4] = 0x5300 + engine index (21248 + n) */
-#define OP1_MAX_ORDER    31              /* highest plugin.json "order" per kind (synth, FX); gaps allowed */
+#define OP1_MAX_ORDER    63              /* highest selector number per kind (synth, FX); gaps allowed */
+#define OP1_SLOTS        (OP1_MAX_ORDER + 1)
+#define OP1_FILE_FIRST   32              /* built-in plugins use 1..31, plugin files (docs/37) 32..63 */
 
 #ifndef OP1_HOST
 /* per-sample phase increment of the voice being rendered (2^32 = one cycle/sample) */

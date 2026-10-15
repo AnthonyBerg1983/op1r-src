@@ -6,6 +6,8 @@
     op1push.py op1_246_custom --port ... --force          # every file of the tree, without asking
     op1push.py op1_246_custom --port ... --files content/display/x.svg OP1_vdk.ldr   # these, unconditionally
     op1push.py --dump session.bin op1_246_custom          # the session as SysEx messages (C host test)
+    op1push.py --port ... --list                          # plugin files on the OP-1 (protocol 3)
+    op1push.py --port ... --delete plugins/x.op1p         # delete plugin files (staged, T1 confirm, at restart)
 
 What differs is asked from the device (protocol 2): STAT gives the size of each content file on the OP-1
 (missing or other size: sent; same size with other content is NOT detected: --files / --force), IDENT gives the
@@ -18,7 +20,7 @@ Never sends te-boot files (the device refuses them too). Message: F0 00 20 76 7D
 import argparse, binascii, os, struct, sys
 
 HDR = bytes([0xF0, 0x00, 0x20, 0x76, 0x7D])
-HELLO, BEGIN, DATA, END, COMMIT, ABORT, STAT, IDENT = 1, 2, 3, 4, 5, 6, 7, 8
+HELLO, BEGIN, DATA, END, COMMIT, ABORT, STAT, IDENT, DELETE, LIST = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 MAX_MSG, MAX_DATA = 256, 192
 WINDOW = 8                                        # DATA messages in flight (device queue: 16, RX ring ~3 KB)
 
@@ -62,7 +64,9 @@ def path_ok(p):
     low = p.lower()
     return (all(c.isalnum() or c in '_.-/' for c in p) and 0 < len(p) < 96 and not p.startswith('/')
             and not p.endswith('/') and 'te-boot' not in low and 'te_boot' not in low and 'teboot' not in low
-            and '..' not in p and '//' not in p and (p == 'OP1_vdk.ldr' or p.startswith('content/')))
+            and '..' not in p and '//' not in p and (p == 'OP1_vdk.ldr' or p.startswith('content/') or
+                                                     (p.startswith('plugins/') and p.endswith('.op1p') and
+                                                      '/' not in p[8:] and len(p) >= 14)))
 
 
 def session(files):
@@ -147,7 +151,7 @@ def ldr_ident(data):
     return m.group(1).decode() if m else None
 
 
-def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
+def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print, deletes=(), list_only=False):
     """paths: candidates (tree-relative); select: send only those that differ on the device"""
     import time
     p = UsbipPort(port[6:]) if port.startswith('usbip:') else Port(port); seq = 0
@@ -164,6 +168,17 @@ def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
     st, pl = ask(HELLO)
     proto = struct.unpack("<I", pl[:4])[0]
     log(f'OP-1 devupd protocol {proto}')
+    if (list_only or deletes) and proto < 3:
+        sys.exit('the OP-1 cannot list / delete plugin files (protocol < 3): update its firmware first')
+    if list_only:
+        i = 0
+        while True:
+            st, pl = ask(LIST, struct.pack('<H', i))
+            if st: break
+            log(f'{struct.unpack("<I", pl[:4])[0]:9d}  plugins/{pl[4:].decode(errors="replace")}')
+            i += 1
+        log(f'{i} plugin files')
+        return
     if select:
         if proto < 2: sys.exit('the OP-1 cannot report its files (protocol 1): use --files')
         t0 = time.time(); keep = []
@@ -184,7 +199,7 @@ def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
             log(f'  with the firmware: {FACTORY_DB}')
         log(f'{len(keep)} of {len(paths)} files differ (checked in {time.time() - t0:.1f} s)')
         paths = keep
-    if dry or not paths:
+    if dry or not (paths or deletes):
         return
     files = [(q, open(os.path.join(tree, q), 'rb').read()) for q in paths]
     ask(ABORT)                                                    # clean start: staging cleared
@@ -217,6 +232,10 @@ def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
         st, _ = ask(END)
         if st: sys.exit(f'{path}: END refused ({ST.get(st, st)})')
         log(f'{path}: staged ({len(data)} bytes)')
+    for path in deletes:
+        st, _ = ask(DELETE, path.encode() + b'\0')
+        if st: sys.exit(f'{path}: DELETE refused ({ST.get(st, st)})')
+        log(f'{path}: delete staged')
     log('confirm on the OP-1: T1 restart, T2 cancel')
     asked = False
     while True:
@@ -226,7 +245,8 @@ def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
         if st != 9: sys.exit(f'COMMIT refused ({ST.get(st, st)})')
         asked = True
         time.sleep(0.3)
-    log(f'sent {len(files)} files ({total} bytes) in {time.time() - t0:.0f} s; the OP-1 restarts and applies the update.')
+    log(f'sent {len(files)} files ({total} bytes), {len(deletes)} deletes in {time.time() - t0:.0f} s; '
+        'the OP-1 restarts and applies the update.')
 
 
 def selftest():
@@ -239,6 +259,7 @@ def selftest():
     assert user_data('content/audio/drum/drum_1.raw') and user_data('content/op1.db') and not user_data('content/op1_factory.db')
     assert not path_ok('te-boot.ldr') and not path_ok('content/TE-Boot.op1') and not path_ok('../x')
     assert path_ok('OP1_vdk.ldr') and path_ok('content/display/a.svg') and not path_ok('/content/x')
+    assert path_ok('plugins/bell.op1p') and not path_ok('plugins/a/b.op1p') and not path_ok('plugins/x.svg')
     assert ldr_ident(b'x' + b'\n' * 17 + b' ' * 20 + b'op1r 31 2026-10-14 20:28\0\0') == 'op1r 31 2026-10-14 20:28'
     assert ldr_ident(b'\n' * 17 + b' ' * 33 + b'R. 00246') is None
 
@@ -252,10 +273,17 @@ def main():
     ap.add_argument('--dry-run', action='store_true', help='only list what differs on the device')
     ap.add_argument('--force', action='store_true', help='send every file of the tree without checking the device')
     ap.add_argument('--selftest', action='store_true')
+    ap.add_argument('--list', action='store_true', help='list the plugin files on the OP-1 (/yaffs2/plugins)')
+    ap.add_argument('--delete', nargs='+', default=[], metavar='PATH',
+                    help='delete plugin files on the OP-1 (plugins/<name>.op1p), applied at the restart')
     a = ap.parse_args()
     selftest()
     if a.selftest:
         print('ok'); return
+    if (a.list or a.delete) and a.port:
+        for d in a.delete:
+            if not (path_ok(d) and d.startswith('plugins/')): sys.exit(f'{d}: only plugins/<name>.op1p can be deleted')
+        return push(a.port, a.tree or '.', sorted(a.files or []), False, False, deletes=a.delete, list_only=a.list)
     if not a.tree or not (a.dump or a.port):
         sys.exit('tree and --port (or --dump) needed')
     select = a.files is None and not a.force
@@ -263,6 +291,9 @@ def main():
         a.files = [os.path.relpath(os.path.join(r, f), a.tree).replace(os.sep, '/')
                    for r, _, fs in os.walk(a.tree) for f in fs if not f.startswith('.')]
         a.files = [p for p in a.files if path_ok(p) and not user_data(p)]
+    if not select and 'OP1_vdk.ldr' in a.files and FACTORY_DB not in a.files and \
+            os.path.exists(os.path.join(a.tree, FACTORY_DB)):
+        a.files.append(FACTORY_DB)                                # engine / FX rows belong to the firmware build
     if a.port:
         return push(a.port, a.tree, sorted(a.files), select, a.dry_run)
     files = [(p, open(os.path.join(a.tree, p), 'rb').read()) for p in sorted(a.files)]

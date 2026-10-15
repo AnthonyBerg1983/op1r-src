@@ -24,14 +24,14 @@ before they can crash an OP-1.
 ## plugin.json
 
 ```json
-{ "name": "mysynth", "kind": "synth", "order": 99, "symbol": "ENGINE_mysynth",
+{ "name": "mysynth", "kind": "synth", "symbol": "ENGINE_mysynth",
   "sources": ["mysynth.c"], "defaults": [4000, 12000, 6000, 24000] }
 ```
 
 - `name`: shown on the OP-1; lowercase, at most 15 characters, not a stock type name.
 - `kind`: `synth` or `fx`.
-- `order`: the plugin's number. It is stored in every saved preset, so it must never change once released. Use 99
-  in your submission; the maintainers assign the final number.
+- `order` (optional): leave it out. Sounds find a plugin file by its name. Only plugins that were compiled into
+  earlier releases keep their old number here.
 - `symbol`: your `op1_engine_t` / `op1_fx_t` object; `sources`: C files, the first one defines `symbol`.
 - `defaults`: initial positions of the 4 knobs (blue, green, white, red), 0..32767.
 - Optional: `page2_defaults` (FX second-page knobs), `uses_sample` (synth reads the slot's sampler recording),
@@ -80,6 +80,17 @@ Without `screen`, synths use the stock iter graphics and FX a generic page with 
 Preview: `python3 harness/render.py mysynth out.png`. Look at `plugins/supersaw` (synth) or `plugins/tape` (FX).
 Colours: blue #4D9EFF, green #00ED95, white #FFFFFF, red #FF3A5D, grey #6F7173. Line ends are flat and zero-length
 lines are not drawn (draw a dot as two short crossing lines).
+
+## Plugin file (no firmware build)
+
+```sh
+python3 make_plugin.py plugins/mysynth        # or a plugin name -> build/plugins/mysynth.op1p
+python3 ../tools/op1push.py <tree> --port <midi port> --files plugins/mysynth.op1p   # tree/plugins/ holds the file
+```
+
+The OP-1 (op1r with the plugin loader) loads every `/yaffs2/plugins/*.op1p` at boot: code, defaults and screen (the
+SVG is inside the file). A plugin file with the name of a built-in replaces it. Maintainers choose per firmware build
+which plugins are compiled in and which ship as files: `make_firmware.py --plugin-files a,b` (or `all`).
 
 ## Submitting
 

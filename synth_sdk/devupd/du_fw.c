@@ -15,7 +15,7 @@
 #define Y_UNLINK  ((int (*)(const char *))0x01A9A3FC)
 #define Y_LSEEK   ((int (*)(int, int, int))0x01A9A0E4)        /* yaffs_lseek(fd, off, whence); 2 = SEEK_END -> size */
 #define Y_ACCESS  ((int (*)(const char *, int))0x01A9A6B0)        /* 0 = exists */
-#define Y_MKDIR   ((int (*)(const char *, int))0x01A9A888)
+#define Y_MKDIR   ((int (*)(const char *, int))0x01A9A886)   /* entry: P0 = R0 (path); 0x01A9A888 skips it */
 #define O_READ    0
 #define O_CREATE  0x241                                           /* O_WRONLY | O_CREAT | O_TRUNC (as the firmware) */
 #define NEW_ARR   ((void *(*)(unsigned))0x01AA370C)
@@ -131,13 +131,19 @@ static int apply(void)
     int ldr = -1;
     for (int i = 0; i < nf; i++) {                                 /* everything checked before anything changes */
         du_stage_name(i, name);
-        if (!file_crc(name, f[i].size, f[i].crc)) return 10 + i;
+        if (f[i].size != DU_DEL_SIZE && !file_crc(name, f[i].size, f[i].crc)) return 10 + i;
         if (f[i].path[0] == 'O') ldr = i;                          /* (du_path_ok: "OP1_vdk.ldr" or "content/...") */
     }
     for (int i = 0; i < nf; i++) {
         if (i == ldr) continue;
         du_stage_name(i, name);
         CONSOLE(f[i].path);
+        if (f[i].size == DU_DEL_SIZE) {                            /* delete (plugins/<name>.op1p, checked by parse) */
+            char dst[DU_MAX_PATH + 16];
+            cat(dst, "/yaffs2/", f[i].path);
+            Y_UNLINK(dst);                                         /* missing: nothing to do */
+            continue;
+        }
         if (!copy_file(name, f[i].path)) return 100 + i;
     }
     if (ldr >= 0) {
@@ -274,7 +280,7 @@ static int f_key(void *c)                                         /* COMMIT asks
     if (!prompt) {
         uint32_t b = 0;
         dp_fw = 0;
-        for (int i = 0; i < sess.n; i++) { b += sess.f[i].size; if (sess.f[i].path[0] == 'O') dp_fw = 1; }   /* OP1_vdk.ldr */
+        for (int i = 0; i < sess.n; i++) { if (sess.f[i].size != DU_DEL_SIZE) b += sess.f[i].size; if (sess.f[i].path[0] == 'O') dp_fw = 1; }   /* OP1_vdk.ldr */
         dp_files = sess.n; dp_kb = (int)((b + 1023) / 1024); dp_restarting = 0;
         confirmed = cancel_req = 0; prompt = 1;
     }
@@ -294,6 +300,30 @@ static int f_stat(void *c, const char *rel, uint32_t *size)      /* /yaffs2/<rel
     *size = (uint32_t)n;
     return 0;
 }
+#define Y_OPENDIR  ((void *(*)(const char *))0x01A9B450)
+#define Y_READDIR  ((uint8_t *(*)(void *))0x01A9B648)            /* dirent: d_name at +0xB */
+#define Y_CLOSEDIR ((int (*)(void *))0x01A9B74C)
+static int f_list(void *c, int index, char *name, int cap, uint32_t *size)   /* index-th plugins/ file */
+{
+    void *d = Y_OPENDIR("/yaffs2/plugins");
+    if (!d) return 1;
+    uint8_t *e;
+    int r = 1;
+    while ((e = Y_READDIR(d))) {
+        const char *s = (const char *)e + 0xB;
+        if (s[0] == '.' || index--) continue;
+        int k = 0;
+        while (s[k] && k < cap - 1) { name[k] = s[k]; k++; }
+        name[k] = 0;
+        char rel[DU_MAX_PATH];
+        cat(rel, "plugins/", name);
+        if (f_stat(c, rel, size)) *size = 0;
+        r = 0;
+        break;
+    }
+    Y_CLOSEDIR(d);
+    return r;
+}
 #define BOOT_TEXT ((const char *)0x018F7358)                      /* make_firmware.py BOOT_TEXT_ADDR, 58 bytes */
 static int f_ident(void *c, char *out, int cap)                   /* "op1r <n> [YYYY-MM-DD HH:MM]" (stock: "R. 00246") */
 {
@@ -303,7 +333,7 @@ static int f_ident(void *c, char *out, int cap)                   /* "op1r <n> [
     while (i < 58 && BOOT_TEXT[i] && k < cap) out[k++] = BOOT_TEXT[i++];
     return k;
 }
-static const du_fs fw_fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident };
+static const du_fs fw_fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident, f_list };
 
 static void send_sysex(const uint8_t *m, int n)
 {

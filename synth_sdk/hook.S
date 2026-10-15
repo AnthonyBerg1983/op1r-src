@@ -39,6 +39,18 @@ _fx_screen_case5:
 	call _iter_read_hook;
 	.section .hook_screenctor,"ax"
 	call _screens_ctor_hook;
+	.section .hook_plugboot,"ax"
+	call _plug_boot_hook;
+
+	.section .hook_masterload,"ax"
+	call _plug_master_load;
+	.section .hook_apsynth1,"ax"
+	call _plug_apply_synth;
+	.section .hook_apsynth2,"ax"
+	call _plug_apply_synth;
+	.section .hook_apsynth3,"ax"
+	call _plug_apply_synth;
+
 	.section .hook_screenload,"ax"
 	call _screens_load_hook;
 

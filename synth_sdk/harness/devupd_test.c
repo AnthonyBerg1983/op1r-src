@@ -39,7 +39,16 @@ static int f_stat(void *c, const char *rel, uint32_t *size)
     *size = fsf[i].size; return 0;
 }
 static int f_ident(void *c, char *o, int cap) { (void)c; const char *v = "op1r 31 2026-10-14 20:28"; int k = 0; while (v[k] && k < cap) { o[k] = v[k]; k++; } return k; }
-static const du_fs fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident };
+static int f_list(void *c, int index, char *name, int cap, uint32_t *size)   /* /yaffs2/plugins/ entries */
+{
+    (void)c;
+    for (int i = 0; i < NF; i++)
+        if (fsf[i].used && !strncmp(fsf[i].name, "/yaffs2/plugins/", 16) && fsf[i].name[16] != '.' && !index--) {
+            snprintf(name, (size_t)cap, "%s", fsf[i].name + 16); *size = fsf[i].size; return 0;
+        }
+    return 1;
+}
+static const du_fs fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident, f_list };
 static uint8_t last[DU_MAX_REPLY]; static int lastn;          /* payload of the last reply (after the status) */
 static int nfiles(void) { int n = 0; for (int i = 0; i < NF; i++) n += fsf[i].used; return n; }
 
@@ -117,6 +126,8 @@ int main(int argc, char **argv)
     assert(du_build(msg, DU_DATA, 1, big, sizeof big) > 0 && du_build(msg, DU_DATA, 1, big, 300) < 0);
     /* paths */
     assert(du_path_ok("OP1_vdk.ldr") && du_path_ok("content/display/a.svg") && du_path_ok("content/op1_factory.db"));
+    assert(du_path_ok("plugins/bell.op1p") && !du_path_ok("plugins/a/bell.op1p") && !du_path_ok("plugins/bell.svg") &&
+           !du_path_ok("plugins/.op1p") && !du_path_ok("plugins/../x.op1p"));
     const char *badp[] = { "te-boot.ldr", "content/te-boot.op1", "content/TE-BOOT.op1", "content/te_boot.ldr", "/content/x",
                            "content/../te-boot.ldr", "OP1_vdk.ldr.x", "x/OP1_vdk.ldr", "content/", "", "content//x", "content/a b" };
     for (unsigned i = 0; i < sizeof badp / sizeof *badp; i++) assert(!du_path_ok(badp[i]));
@@ -161,6 +172,33 @@ int main(int argc, char **argv)
     text[20] ^= 1; assert(du_manifest_parse(text, mf, &mn) != 0);  /* any change breaks the manifest checksum */
     send(&s, DU_ABORT, 11, 0, 0, DU_OK); assert(nfiles() == 0);
     printf("session: refusals, offsets, CRC, key prompt, manifest, abort ok\n");
+
+    {   /* LIST + DELETE (protocol 3, docs/37) */
+        f_open(0, "/yaffs2/plugins/a.op1p"); f_write(0, data, 300); f_close(0);
+        f_open(0, "/yaffs2/plugins/.boot"); f_close(0);
+        f_open(0, "/yaffs2/plugins/bb.op1p"); f_write(0, data, 7); f_close(0);
+        uint8_t ix[2] = { 0, 0 }; uint32_t v;
+        send(&s, DU_LIST, 1, ix, 2, DU_OK); memcpy(&v, last, 4); assert(v == 300 && lastn == 4 + 6 && !memcmp(last + 4, "a.op1p", 6));
+        ix[0] = 1; send(&s, DU_LIST, 2, ix, 2, DU_OK); memcpy(&v, last, 4); assert(v == 7 && !memcmp(last + 4, "bb.op1p", 7));
+        ix[0] = 2; send(&s, DU_LIST, 3, ix, 2, DU_E_NOFILE);                  /* hidden .boot skipped: end */
+        send(&s, DU_LIST, 4, ix, 1, DU_E_FORMAT);
+        send(&s, DU_DELETE, 5, (const uint8_t *)"content/op1.db", 15, DU_E_PATH);   /* only plugin files */
+        send(&s, DU_DELETE, 6, (const uint8_t *)"plugins/a.svg", 14, DU_E_PATH);
+        send(&s, DU_DELETE, 7, (const uint8_t *)"plugins/x/a.op1p", 17, DU_E_PATH);
+        send(&s, DU_DELETE, 8, (const uint8_t *)"plugins/a.op1p", 15, DU_OK);
+        send(&s, DU_DELETE, 9, (const uint8_t *)"plugins/a.op1p", 15, DU_E_STATE);  /* twice */
+        put_file(&s, "plugins/c.op1p", data, 50);
+        key_ok = 1; send(&s, DU_COMMIT, 10, 0, 0, DU_OK);
+        int k = find(DU_MANIFEST); assert(k >= 0);
+        memcpy(text, fsf[k].data, fsf[k].size); text[fsf[k].size] = 0;
+        assert(du_manifest_parse(text, mf, &mn) == 0 && mn == 2 && mf[0].size == DU_DEL_SIZE &&
+               !strcmp(mf[0].path, "plugins/a.op1p") && mf[1].size == 50);
+        /* a delete outside plugins/ is refused by the manifest parser */
+        du_session t; t.n = 1; snprintf(t.f[0].path, DU_MAX_PATH, "content/op1.db"); t.f[0].size = DU_DEL_SIZE; t.f[0].crc = 0;
+        assert(du_manifest_write(&t, text, sizeof text) > 0 && du_manifest_parse(text, mf, &mn) != 0);
+        send(&s, DU_ABORT, 11, 0, 0, DU_OK);
+        printf("list, delete: paths, staging, manifest ok\n");
+    }
 
     /* replay a session from tools/op1push.py */
     if (argc == 3) {
