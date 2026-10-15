@@ -83,7 +83,7 @@ static void tm_load(void)
 }
 #endif
 static uint8_t tm_loaded;
-static void tm_ready(void) { if (!tm_loaded) { tm_loaded = 1; tm_load(); } }
+void tm_ready(void) { if (!tm_loaded) { tm_loaded = 1; tm_load(); } }   /* (also seqdev/ms_fw.c) */
 
 /* ---- edits ---- */
 /* zoom (IEEE float px/s from the firmware) -> Q10 integer, clamped to 1..4096 px/s; no soft-float */

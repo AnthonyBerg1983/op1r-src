@@ -858,10 +858,11 @@ static int peal_page(void)
 /* tape markers (tape/markers.c, docs/22): only while the stock tape screen is the current one */
 extern void *tm_scr;
 extern void tm_add(void), tm_remove(void), tm_turn(int delta);
+extern int ms_view_open(void);                                 /* seqdev/ms_fw.c: the sequencer view replaces the tape screen */
 static int tape_page(void)
 {
     int id = *(volatile int *)0x018B65C8;                      /* current screen id -> object via the screen table */
-    return tm_scr && CUR_MODE_ID == 2 && id >= 0 && id < 0x40 && SCREEN_TABLE[id] == tm_scr;
+    return tm_scr && CUR_MODE_ID == 2 && id >= 0 && id < 0x40 && (SCREEN_TABLE[id] == tm_scr || ms_view_open());
 }
 
 static void se_swap(void)                                           /* the open editor's screen into its slot, or stock */

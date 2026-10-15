@@ -53,6 +53,7 @@ int ms_load(ms_t *s)
     h->crc = c;
     for (int t = 0; t < MS_TRACKS; t++) {
         if (h->dest[t] > MS_DEST_MIDI) h->dest[t] = MS_DEST_INSTR;
+        if ((h->in[t] & 15) > MS_DEST_MIDI) h->in[t] = MS_DEST_INSTR;
         h->ch[t] &= 15; h->mute[t] &= 1;
         for (int p = 0; p < MS_PAGES; p++) if (h->first[t][p] != MS_NONE && h->first[t][p] >= MS_SLOTS) h->first[t][p] = MS_NONE;
     }

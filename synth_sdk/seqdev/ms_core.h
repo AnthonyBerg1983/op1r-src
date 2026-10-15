@@ -52,7 +52,8 @@ typedef struct {                            /* firmware / host services */
 
 typedef struct {                            /* file header, 4 KB, written after the slots it points to */
     uint32_t magic, ver;                    /* 'MSEQ', 1 */
-    uint8_t  dest[MS_TRACKS], ch[MS_TRACKS], mute[MS_TRACKS], pad[4];
+    uint8_t  dest[MS_TRACKS], ch[MS_TRACKS], mute[MS_TRACKS];
+    uint8_t  in[MS_TRACKS];                 /* input (placeholder, not used yet): low nibble MS_DEST_*, high nibble MIDI channel */
     uint16_t first[MS_TRACKS][MS_PAGES];    /* first slot of each (track, page) chain, MS_NONE: empty */
     uint8_t  used[MS_SLOTS / 8];            /* file slot allocation */
     uint32_t crc;

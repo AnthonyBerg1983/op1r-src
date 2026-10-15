@@ -4,12 +4,13 @@
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it), scissors marks
  * the selection start / end, LIFT cuts it (no selection: the 1.5 s page under the playhead), Shift + LIFT copies, DROP
- * pastes at the playhead, red press cycles the track destination (instrument / sequencer / MIDI out), white press its
- * MIDI channel. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
+ * pastes at the playhead, green press cycles the track destination (instrument / sequencer / MIDI out), white press
+ * its MIDI channel; red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
 #pragma GCC optimize ("Os", "no-tree-loop-distribute-patterns")
 #include "../op1_synth.h"
 #include "../seq/seq_text.h"
 #include "ms_core.h"
+#include "ms_draw.h"
 
 #define TAPE_STATE  (*(volatile int32_t *)0x018C17D4)
 #define TAPE_POS    (*(volatile int32_t *)0xFF802974)            /* 1/64 samples */
@@ -244,57 +245,35 @@ int ms_key(int code, int pressed, int on_tape)
         swallow[code] = 1; return 1;
     }
     if (code == 0x0B) { ms_paste(ms, ph); swallow[code] = 1; return 1; }
-    if (code == 0x3E) { int t = ms->sel; ms->h.dest[t] = (uint8_t)((ms->h.dest[t] + 1) % 3); ms->head_dirty = 1; swallow[code] = 1; return 1; }
+    if (code == 0x3C) { int t = ms->sel; ms->h.dest[t] = (uint8_t)((ms->h.dest[t] + 1) % 3); ms->head_dirty = 1; swallow[code] = 1; return 1; }
     if (code == 0x3D) { int t = ms->sel; ms->h.ch[t] = (uint8_t)((ms->h.ch[t] + 1) & 15); ms->head_dirty = 1; swallow[code] = 1; return 1; }
     return 0;
 }
-int ms_view(void) { return view; }
-
-/* ---- drawing: the view screen's update (GUI thread, every frame) ---- */
+/* ---- drawing: the view screen's update (GUI thread, every frame): seqdev/ms_draw.c ---- */
 extern int32_t tm_zoom_q10(void);
-static const uint8_t c_lane[4] = { 0x35, 0x32, 0x38, 255 }, c_white[4] = { 255, 255, 255, 255 },
-                     c_blue[4] = { 0x4D, 0x9E, 0xFF, 255 }, c_green[4] = { 0x00, 0xED, 0x95, 255 },
-                     c_red[4] = { 0xFF, 0x3A, 0x5D, 255 }, c_grey[4] = { 0x6F, 0x71, 0x73, 255 };
+extern void tm_ready(void);
+extern int tm_n;
+extern int32_t tm_pos[];
+extern volatile uint8_t pu_mode;                       /* tape/punch.c: punch mode on (markers red) */
+#define TE_BPM_BITS (*(volatile uint32_t *)0x018C1878)                 /* tempo, float 40..220 (read as bits) */
+static int32_t bpm_q8(void)                       /* float bits -> bpm in Q8, no soft-float; 120 if out of range */
+{
+    uint32_t b = TE_BPM_BITS;
+    int e = (int)((b >> 23) & 0xFF) - 127;
+    if ((b >> 31) || e < 5 || e > 7) return 120 << 8;                /* 32..255 */
+    uint32_t m = (b & 0x7FFFFF) | 0x800000;                            /* 1.m in Q23 */
+    return (int32_t)(m >> (15 - e));                                   /* Q23 * 2^e -> Q8 */
+}
+int ms_view_open(void) { return view; }
 static void ms_scr_update(void *self, int dt)
 {
     (void)self; (void)dt;
     if (!ms) return;
-    void *r = op1_raster();
-    int32_t ph = TAPE_POS >> 6, z = tm_zoom_q10();               /* Q10 px per second */
-    int32_t k = (int32_t)(((int64_t)z << 16) / 44100);           /* Q10 px per sample << 16 */
-    int32_t span = (int32_t)(((int64_t)OP1_Q10(140) << 16) / (k ? k : 1));   /* samples to the screen edge */
-    static ms_ev ev[96]; static int32_t ps[96];
-    static const char *const dn[3] = { "I", "S", "M" };
-    for (int t = 0; t < MS_TRACKS; t++) {
-        int32_t y = OP1_Q10(28 + t * 28);
-        const uint8_t *lc = t == ms->sel ? (recording() ? c_red : c_white) : ms->h.mute[t] ? c_grey : c_blue;
-        sq_line(r, OP1_Q10(30), y + OP1_Q10(10), OP1_Q10(318), y + OP1_Q10(10), 0x300, c_lane);
-        char lab[8], *o = lab;
-        *o++ = (char)('1' + t); *o++ = ' '; o = sq_cat(o, dn[ms->h.dest[t] % 3]);
-        if (ms->h.dest[t] == MS_DEST_MIDI) o = sq_num(o, ms->h.ch[t] + 1u, 0);
-        sq_text(r, OP1_Q10(4), y - OP1_Q10(2), OP1_Q10(1.6), lab, 0x500, lc);
-        int n = ms_events(ms, t, ph - span, ph + span, ev, ps, 96);
-        for (int i = 0; i < n; i++) {
-            int32_t x0 = OP1_Q10(160) + (int32_t)(((int64_t)(ps[i] - ph) * k) >> 16);
-            if (x0 < OP1_Q10(30) || x0 > OP1_Q10(318)) continue;
-            if (ev[i].kind == MS_CC) { int32_t yy = y + OP1_Q10(20) - ev[i].d2 * OP1_Q10(16) / 127; sq_line(r, x0, yy, x0 + OP1_Q10(1), yy, 0x400, c_green); continue; }
-            int32_t x1 = x0 + (int32_t)(((int64_t)ev[i].len * 64 * k) >> 16);
-            if (x1 < x0 + OP1_Q10(1)) x1 = x0 + OP1_Q10(1);
-            if (x1 > OP1_Q10(318)) x1 = OP1_Q10(318);
-            int32_t yy = y + OP1_Q10(20) - (ev[i].d1 % 24) * OP1_Q10(16) / 23;
-            sq_line(r, x0, yy, x1, yy, 0x500, lc);
-        }
-    }
-    if (sel_a >= 0) {
-        int32_t xa = OP1_Q10(160) + (int32_t)(((int64_t)(sel_a - ph) * k) >> 16);
-        if (xa > OP1_Q10(30) && xa < OP1_Q10(318)) sq_line(r, xa, OP1_Q10(22), xa, OP1_Q10(138), 0x300, c_green);
-        if (sel_b >= 0) {
-            int32_t xb = OP1_Q10(160) + (int32_t)(((int64_t)(sel_b - ph) * k) >> 16);
-            if (xb > OP1_Q10(30) && xb < OP1_Q10(318)) sq_line(r, xb, OP1_Q10(22), xb, OP1_Q10(138), 0x300, c_green);
-        }
-    }
-    sq_line(r, OP1_Q10(160), OP1_Q10(22), OP1_Q10(160), OP1_Q10(138), 0x300, recording() ? c_red : c_white);
-    char hd[24], *o = sq_cat(hd, "MIDI SEQ");
-    if (ms->underruns) { o = sq_cat(o, " U"); sq_num(o, ms->underruns, 0); }
-    sq_text(r, OP1_Q10(110), OP1_Q10(4), OP1_Q10(1.6), hd, 0x500, c_white);
+    tm_ready();
+    ms_view v;
+    v.ph = TAPE_POS >> 6; v.zoom_q10 = tm_zoom_q10(); v.bpm_q8 = bpm_q8();
+    v.loop_on = LOOP_ON; v.loop_in = LOOP_IN; v.loop_out = LOOP_OUT;
+    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode;
+    v.tm_n = tm_n; v.tm = tm_pos;
+    ms_draw(op1_raster(), &v, ms);
 }

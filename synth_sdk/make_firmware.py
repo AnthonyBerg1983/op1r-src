@@ -201,7 +201,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/euclid.c', 'seq/dots.c', 'seq/oracle.c', 'seq/peal.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'seqdev/ms_draw.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
