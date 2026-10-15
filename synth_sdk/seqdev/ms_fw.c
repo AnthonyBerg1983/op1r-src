@@ -100,6 +100,8 @@ static void e_play(int t, int dest, int ch, int kind, int d1, int d2, int on)
         return;
     }
     if (kind == MS_CC) {                                          /* as a received MIDI CC (stock: CC table, MIDI LFO) */
+        extern int mx_cc(int cc, int v);
+        if (mx_cc(d1, d2)) return;                                /* synth automation CC (midi/mx.c) */
         static uint8_t msg[3];
         static struct { uint32_t a; uint8_t *b, *e; uint32_t c; } vec;
         msg[0] = (uint8_t)(0xB0 | (ch & 15)); msg[1] = (uint8_t)d1; msg[2] = (uint8_t)d2;

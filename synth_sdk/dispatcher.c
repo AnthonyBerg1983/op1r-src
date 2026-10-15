@@ -877,6 +877,7 @@ void dpu_sync_auto(void) { se_swap(); }
 
 void key_event_hook(int code, int pressed)
 {
+    if (code == 0x3F) { extern void mx_apply(void); mx_apply(); return; }   /* midi/mx.c MX_KEY */
     if (du_prompt_key(code, pressed)) return;                    /* dev update prompt: T1 restart / T2 cancel */
     extern int ms_key(int code, int pressed, int on_tape);
     if (ms_key(code, pressed, tape_page())) return;              /* MIDI sequencer device: SEQ + TAPE (docs/39) */
@@ -1068,6 +1069,8 @@ void midi_cc_hook(void *vec)
 {
     ((void (*)(void *))0x01A84F8C)(vec);                         /* stock: CC table (MIDI LFO) */
     const uint8_t *m = *(const uint8_t **)((char *)vec + 4);     /* status, cc, value (size asserted by stock) */
+    extern int mx_cc(int cc, int v);
+    if (mx_cc(m[1], m[2])) return;                               /* synth automation CCs (midi/mx.c, docs/41) */
     int code = m[1] - 5, v = m[2], down = v >= 64, knob = m[1] - 102;
     unsigned imask;
     if (m[1] >= 106 && m[1] <= 118) { midi_cc_mixer(m[1], v); return; }
