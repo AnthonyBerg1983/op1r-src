@@ -88,8 +88,10 @@ void du_stage_name(int i, char *out)
     const char *d = DU_STAGE_DIR "/f";
     int o = 0;
     while (*d) out[o++] = *d++;
-    out[o++] = (char)('0' + i / 10 % 10); out[o++] = (char)('0' + i % 10); out[o] = 0;
+    out[o++] = (char)('0' + i / 100 % 10); out[o++] = (char)('0' + i / 10 % 10); out[o++] = (char)('0' + i % 10); out[o] = 0;
 }
+
+char du_text[DU_TEXT_CAP];
 
 void du_init(du_session *s, const du_fs *fs)
 {
@@ -101,10 +103,11 @@ static void wr32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v
 
 static int reply(uint8_t *rep, int cmd, int seq, int status, const uint8_t *pl, int n)
 {
-    uint8_t b[16];
+    uint8_t b[DU_MAX_REPLY];
+    if (n > DU_MAX_REPLY - 1) n = DU_MAX_REPLY - 1;
     b[0] = (uint8_t)status;
-    for (int i = 0; i < n && i < 15; i++) b[1 + i] = pl[i];
-    return du_build(rep, cmd | DU_REPLY, seq, b, 1 + (n < 15 ? n : 15));
+    for (int i = 0; i < n; i++) b[1 + i] = pl[i];
+    return du_build(rep, cmd | DU_REPLY, seq, b, 1 + n);
 }
 
 static void abort_session(du_session *s)
@@ -126,10 +129,10 @@ int du_handle(du_session *s, const uint8_t *msg, int n, uint8_t *rep)
     uint8_t pl[DU_MAX_MSG];
     int pn = du_unpack7(msg + 8, n - 9, pl);
     if (pn < 0) return reply(rep, cmd, seq, DU_E_FORMAT, 0, 0);
-    uint8_t out[8];
+    uint8_t out[DU_MAX_REPLY];
     switch (cmd) {
     case DU_HELLO:
-        wr32(out, 1);                                             /* protocol version */
+        wr32(out, DU_PROTOCOL);
         return reply(rep, cmd, seq, DU_OK, out, 4);
     case DU_BEGIN: {                                              /* u32 size, u32 crc, path (0-terminated) */
         if (s->open) return reply(rep, cmd, seq, DU_E_STATE, 0, 0);
@@ -176,9 +179,8 @@ int du_handle(du_session *s, const uint8_t *msg, int n, uint8_t *rep)
     case DU_COMMIT: {
         if (s->open || s->n == 0) return reply(rep, cmd, seq, DU_E_STATE, 0, 0);
         if (!s->fs->key_pressed(s->fs->ctx)) return reply(rep, cmd, seq, DU_WAIT_KEY, 0, 0);   /* host asks again */
-        static char text[DU_MAX_FILES * (DU_MAX_PATH + 32) + 64];
-        int len = du_manifest_write(s, text, (int)sizeof text);
-        if (len < 0 || s->fs->open_w(s->fs->ctx, DU_MANIFEST) || s->fs->write(s->fs->ctx, (const uint8_t *)text, (uint32_t)len)) {
+        int len = du_manifest_write(s, du_text, (int)sizeof du_text);
+        if (len < 0 || s->fs->open_w(s->fs->ctx, DU_MANIFEST) || s->fs->write(s->fs->ctx, (const uint8_t *)du_text, (uint32_t)len)) {
             abort_session(s); return reply(rep, cmd, seq, DU_E_IO, 0, 0);
         }
         s->fs->close(s->fs->ctx);
@@ -186,6 +188,18 @@ int du_handle(du_session *s, const uint8_t *msg, int n, uint8_t *rep)
         s->n = 0;
         s->fs->reboot(s->fs->ctx);                                /* (firmware: after the reply went out) */
         return r;
+    }
+    case DU_STAT: {                                               /* path (0-terminated) */
+        if (pn < 2 || pl[pn - 1] != 0) return reply(rep, cmd, seq, DU_E_FORMAT, 0, 0);
+        if (!du_path_ok((const char *)pl)) return reply(rep, cmd, seq, DU_E_PATH, 0, 0);
+        uint32_t size;
+        if (!s->fs->stat || s->fs->stat(s->fs->ctx, (const char *)pl, &size)) return reply(rep, cmd, seq, DU_E_NOFILE, 0, 0);
+        wr32(out, size);
+        return reply(rep, cmd, seq, DU_OK, out, 4);
+    }
+    case DU_IDENT: {
+        int k = s->fs->ident ? s->fs->ident(s->fs->ctx, (char *)out, DU_MAX_REPLY - 1) : 0;
+        return reply(rep, cmd, seq, DU_OK, out, k < 0 ? 0 : k);
     }
     case DU_ABORT:
         abort_session(s);

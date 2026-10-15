@@ -10,10 +10,14 @@
 #define DU_SYSEX_HDR      5                 /* F0 00 20 76 7D */
 #define DU_MAX_MSG        256               /* the firmware's SysEx buffer has no length check: stay well below */
 #define DU_MAX_DATA       192               /* raw bytes per DATA message (offset 4 + data packed -> <= 230 bytes) */
-enum { DU_HELLO = 1, DU_BEGIN = 2, DU_DATA = 3, DU_END = 4, DU_COMMIT = 5, DU_ABORT = 6 };
+enum { DU_HELLO = 1, DU_BEGIN = 2, DU_DATA = 3, DU_END = 4, DU_COMMIT = 5, DU_ABORT = 6,
+       DU_STAT = 7,                         /* path -> u32 size of /yaffs2/<path> (DU_E_NOFILE: missing) */
+       DU_IDENT = 8 };                      /* -> running firmware's version text (boot screen "op1r <n> [time]") */
+#define DU_PROTOCOL 2
 enum { DU_REPLY = 0x40 };                   /* reply: cmd | 0x40, seq, status, payload */
 enum { DU_OK = 0, DU_E_FORMAT = 1, DU_E_STATE = 2, DU_E_PATH = 3, DU_E_SIZE = 4, DU_E_OFFSET = 5, DU_E_CRC = 6,
-       DU_E_IO = 7, DU_E_FULL = 8, DU_WAIT_KEY = 9 };
+       DU_E_IO = 7, DU_E_FULL = 8, DU_WAIT_KEY = 9, DU_E_NOFILE = 10 };
+#define DU_MAX_REPLY 64                     /* reply payload bytes (status included) */
 
 uint32_t du_crc32(uint32_t crc, const uint8_t *p, uint32_t n);    /* crc = 0 to start (zlib CRC-32) */
 int du_pack7(const uint8_t *in, int n, uint8_t *out);             /* 7 bytes -> 8 (MSBs first); returns length */
@@ -23,7 +27,7 @@ int du_build(uint8_t *msg, int cmd, int seq, const uint8_t *payload, int n);
 int du_path_ok(const char *path);                                 /* allow-list: OP1_vdk.ldr, content/...; never te-boot */
 
 /* ---- device side session ---- */
-#define DU_MAX_FILES 64
+#define DU_MAX_FILES 160                    /* a whole tree (--force) is ~125 files */
 #define DU_MAX_PATH  96
 typedef struct {                            /* file system callbacks (firmware: YAFFS2) */
     int (*open_w)(void *ctx, const char *path);                   /* create / truncate; 0 ok */
@@ -33,6 +37,8 @@ typedef struct {                            /* file system callbacks (firmware: 
     int (*key_pressed)(void *ctx);                                /* the user confirmed the commit on the device */
     void (*reboot)(void *ctx);
     void *ctx;
+    int (*stat)(void *ctx, const char *path, uint32_t *size);     /* 0 ok, else missing */
+    int (*ident)(void *ctx, char *out, int cap);                  /* version text, returns its length */
 } du_fs;
 typedef struct {
     char path[DU_MAX_PATH];
@@ -55,7 +61,9 @@ int du_handle(du_session *s, const uint8_t *msg, int n, uint8_t *rep);
 /* manifest text for the staged files (written on COMMIT); parse: 0 ok, files into f[], count into *n */
 int du_manifest_write(const du_session *s, char *out, int cap);
 int du_manifest_parse(const char *text, du_file *f, int *n);
-void du_stage_name(int i, char *out);                             /* /yaffs2/op1r_stage/fNN */
+#define DU_TEXT_CAP (DU_MAX_FILES * (DU_MAX_PATH + 32) + 64)
+extern char du_text[DU_TEXT_CAP];                                 /* manifest text: COMMIT (running) or apply (boot) */
+void du_stage_name(int i, char *out);                             /* /yaffs2/op1r_stage/fNNN */
 
 /* ---- guarded boot-area flasher ---- */
 #define DU_BLOCK        0x20000             /* 128 KB per boot block (64 x 2 KB pages) */

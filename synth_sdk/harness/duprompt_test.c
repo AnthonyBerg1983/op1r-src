@@ -34,7 +34,10 @@ int main(int argc, char **argv)
     int render = argc > 1 && !strcmp(argv[1], "render");
     dp_files = 3; dp_kb = 2412; frame("push complete", render);
     assert(nt == 0 && nl > 40);
-    dp_files = 1; dp_kb = 1; frame("one file", render);
+    int nt0 = nl;
+    dp_fw = 1; frame("with firmware", render);
+    assert(nl > nt0);                                            /* warning line drawn */
+    dp_fw = 0; dp_files = 1; dp_kb = 1; frame("one file", render);
     dp_restarting = 1; frame("after T1", render);
     if (!render) printf("duprompt_test: ok\n");
     return 0;

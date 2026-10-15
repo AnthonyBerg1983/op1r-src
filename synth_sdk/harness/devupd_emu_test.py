@@ -48,7 +48,7 @@ def main():
         shutil.copy(f'{W}/base.bin', img)
         if l is not None:
             open(f'{W}/ldr', 'wb').write(l)
-            subprocess.run(inst + [img, '--fast', '--put', f'op1r_stage/f00={W}/svg', '--put', f'op1r_stage/f01={W}/ldr',
+            subprocess.run(inst + [img, '--fast', '--put', f'op1r_stage/f000={W}/svg', '--put', f'op1r_stage/f001={W}/ldr',
                                    '--put', f'op1r_stage/manifest={W}/manifest'], check=True, stdout=subprocess.DEVNULL)
         before = open(img, 'rb').read()[:132 * BLOCK]
         boot(img, 400, f'{res}:4:{W}/{t}.res')

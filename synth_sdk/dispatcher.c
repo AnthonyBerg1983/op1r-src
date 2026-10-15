@@ -351,6 +351,7 @@ static uint8_t rec_held, metro_swallow, tape_held, rec_swallow;
 extern const op1_screen_t SCREEN_duprompt;
 extern void *du_prompt_obj;
 extern int du_prompt_key(int code, int pressed);
+extern int du_prompt_active(void);
 static uint32_t du_scr[32], du_vt[10];
 static int du_always(void *self, int id) { (void)self; (void)id; return 1; }
 /* sample editor (screens/sampedit.c, docs/27): synth key + scissors on the sampler page */
@@ -1068,6 +1069,7 @@ void midi_cc_hook(void *vec)
         __asm__ volatile ("sti %0;" : : "d"(imask));
     } else {
         if (code < 0 || code >= (int)sizeof midi_key_ok || !midi_key_ok[code] || midi_key_down[code] == down) return;
+        if (du_prompt_active()) return;                          /* security: only physical keys confirm an update */
         midi_key_down[code] = down;
         volatile uint32_t *rd = (volatile uint32_t *)0x01DD5244, *wr = (volatile uint32_t *)0x01DD5248;
         __asm__ volatile ("cli %0;" : "=d"(imask));

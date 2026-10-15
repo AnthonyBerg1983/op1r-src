@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Development update over USB MIDI SysEx (docs/35) - host side. Needs a build on the OP-1.
 
-    op1push.py op1_246_custom --port /dev/snd/midiC3D0    # changed files (op1delta.py state) -> staged on the OP-1
-    op1push.py op1_246_custom --port ... --files content/display/x.svg OP1_vdk.ldr
+    op1push.py op1_246_custom --port /dev/snd/midiC3D0    # only what differs on the OP-1 -> staged
+    op1push.py op1_246_custom --port ... --dry-run        # list what would be sent
+    op1push.py op1_246_custom --port ... --force          # every file of the tree, without asking
+    op1push.py op1_246_custom --port ... --files content/display/x.svg OP1_vdk.ldr   # these, unconditionally
     op1push.py --dump session.bin op1_246_custom          # the session as SysEx messages (C host test)
+
+What differs is asked from the device (protocol 2): STAT gives the size of each content file on the OP-1
+(missing or other size: sent; same size with other content is NOT detected: --files / --force), IDENT gives the
+running firmware's version text, compared with the tree's OP1_vdk.ldr boot text ("op1r <n> [build time]"; release
+builds of one version are taken as equal).
 
 At the end the OP-1 asks: T1 restarts it (the update is applied at boot), T2 cancels.
 
@@ -11,7 +18,7 @@ Never sends te-boot files (the device refuses them too). Message: F0 00 20 76 7D
 import argparse, binascii, os, struct, sys
 
 HDR = bytes([0xF0, 0x00, 0x20, 0x76, 0x7D])
-HELLO, BEGIN, DATA, END, COMMIT, ABORT = 1, 2, 3, 4, 5, 6
+HELLO, BEGIN, DATA, END, COMMIT, ABORT, STAT, IDENT = 1, 2, 3, 4, 5, 6, 7, 8
 MAX_MSG, MAX_DATA = 256, 192
 WINDOW = 8                                        # DATA messages in flight (device queue: 16, RX ring ~3 KB)
 
@@ -97,7 +104,8 @@ class Port:
             self.buf += bytes(b for b in os.read(self.fd, 4096) if b < 0xF8)   # drop realtime (clock) bytes
 
 
-ST = {0: 'ok', 1: 'format', 2: 'state', 3: 'path', 4: 'size', 5: 'offset', 6: 'crc', 7: 'io', 8: 'full', 9: 'wait key'}
+ST = {0: 'ok', 1: 'format', 2: 'state', 3: 'path', 4: 'size', 5: 'offset', 6: 'crc', 7: 'io', 8: 'full', 9: 'wait key',
+      10: 'no file'}
 
 
 class UsbipPort:
@@ -123,7 +131,15 @@ class UsbipPort:
         return None
 
 
-def push(port, files, timeout=2.0, log=print):
+def ldr_ident(data):
+    """boot text in an OP1_vdk.ldr (make_firmware.py boot_text): 'op1r <n> [time]', None if not found"""
+    import re
+    m = re.search(rb'\n{17} *(op1r [ -~]*)', data)
+    return m.group(1).decode() if m else None
+
+
+def push(port, tree, paths, select=True, dry=False, timeout=2.0, log=print):
+    """paths: candidates (tree-relative); select: send only those that differ on the device"""
     import time
     p = UsbipPort(port[6:]) if port.startswith('usbip:') else Port(port); seq = 0
     def ask(cmd, pl=b'', tries=8):
@@ -137,7 +153,28 @@ def push(port, files, timeout=2.0, log=print):
                 if r[0] == cmd and r[1] == seq: return r[2], r[3]
         sys.exit(f'no reply to command {cmd} (dev build on the OP-1? right port?)')
     st, pl = ask(HELLO)
-    log(f'OP-1 devupd protocol {struct.unpack("<I", pl[:4])[0]}')
+    proto = struct.unpack("<I", pl[:4])[0]
+    log(f'OP-1 devupd protocol {proto}')
+    if select:
+        if proto < 2: sys.exit('the OP-1 cannot report its files (protocol 1): use --files')
+        t0 = time.time(); keep = []
+        for path in paths:
+            data = open(os.path.join(tree, path), 'rb').read()
+            if path == 'OP1_vdk.ldr':
+                st, pl = ask(IDENT); dev, mine = pl.decode(errors='replace'), ldr_ident(data)
+                same = mine is not None and dev == mine
+                log(f'  {"same    " if same else "differs "} {path}: OP-1 "{dev}", tree "{mine}"')
+            else:
+                st, pl = ask(STAT, path.encode() + b'\0')
+                if st not in (0, 10): sys.exit(f'{path}: STAT refused ({ST.get(st, st)})')
+                same = st == 0 and struct.unpack('<I', pl[:4])[0] == len(data)
+                if not same: log(f'  {"missing " if st else "differs "} {path}')
+            if not same: keep.append(path)
+        log(f'{len(keep)} of {len(paths)} files differ (checked in {time.time() - t0:.1f} s)')
+        paths = keep
+    if dry or not paths:
+        return
+    files = [(q, open(os.path.join(tree, q), 'rb').read()) for q in paths]
     ask(ABORT)                                                    # clean start: staging cleared
     t0 = time.time(); total = sum(len(d) for _, d in files); done = 0
     for path, data in files:
@@ -189,6 +226,8 @@ def selftest():
     assert len(build(DATA, 5, b'\0' * (4 + MAX_DATA))) <= MAX_MSG
     assert not path_ok('te-boot.ldr') and not path_ok('content/TE-Boot.op1') and not path_ok('../x')
     assert path_ok('OP1_vdk.ldr') and path_ok('content/display/a.svg') and not path_ok('/content/x')
+    assert ldr_ident(b'x' + b'\n' * 17 + b' ' * 20 + b'op1r 31 2026-10-14 20:28\0\0') == 'op1r 31 2026-10-14 20:28'
+    assert ldr_ident(b'\n' * 17 + b' ' * 33 + b'R. 00246') is None
 
 
 def main():
@@ -196,7 +235,9 @@ def main():
     ap.add_argument('tree', nargs='?')
     ap.add_argument('--dump', help='write the session (length-prefixed messages) to this file')
     ap.add_argument('--port', help='raw MIDI device of the OP-1 (/dev/snd/midiC3D0) or usbip:HOST:PORT (emulator)')
-    ap.add_argument('--files', nargs='*', help='these files (paths in the tree) instead of the delta')
+    ap.add_argument('--files', nargs='*', help='send these files (paths in the tree) without asking the device')
+    ap.add_argument('--dry-run', action='store_true', help='only list what differs on the device')
+    ap.add_argument('--force', action='store_true', help='send every file of the tree without checking the device')
     ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
     selftest()
@@ -204,15 +245,14 @@ def main():
         print('ok'); return
     if not a.tree or not (a.dump or a.port):
         sys.exit('tree and --port (or --dump) needed')
-    if a.files is None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import op1delta, json
-        state = a.tree.rstrip('/') + '.delta-state.json'
-        old = json.load(open(state)) if os.path.exists(state) else {}
-        a.files = [p for p, h in op1delta.scan(a.tree).items() if old.get(p) != h and path_ok(p)]
-    files = [(p, open(os.path.join(a.tree, p), 'rb').read()) for p in sorted(a.files)]
+    select = a.files is None and not a.force
+    if a.files is None:                                           # every file of the tree the device accepts
+        a.files = [os.path.relpath(os.path.join(r, f), a.tree).replace(os.sep, '/')
+                   for r, _, fs in os.walk(a.tree) for f in fs if not f.startswith('.')]
+        a.files = [p for p in a.files if path_ok(p)]
     if a.port:
-        return push(a.port, files)
+        return push(a.port, a.tree, sorted(a.files), select, a.dry_run)
+    files = [(p, open(os.path.join(a.tree, p), 'rb').read()) for p in sorted(a.files)]
     msgs = session(files)
     with open(a.dump, 'wb') as f:
         for m in msgs:

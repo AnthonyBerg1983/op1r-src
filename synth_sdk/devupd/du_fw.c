@@ -13,6 +13,7 @@
 #define Y_READ    ((int (*)(int, void *, unsigned))0x01A99C90)
 #define Y_WRITE   ((int (*)(int, const void *, unsigned))0x01A99F84)
 #define Y_UNLINK  ((int (*)(const char *))0x01A9A3FC)
+#define Y_LSEEK   ((int (*)(int, int, int))0x01A9A0E4)        /* yaffs_lseek(fd, off, whence); 2 = SEEK_END -> size */
 #define Y_ACCESS  ((int (*)(const char *, int))0x01A9A6B0)        /* 0 = exists */
 #define Y_MKDIR   ((int (*)(const char *, int))0x01A9A888)
 #define O_READ    0
@@ -111,15 +112,16 @@ static void cleanup(void)
     Y_UNLINK(DU_MANIFEST);
 }
 
+static du_session sess;
 volatile int du_fw_result = -1;                                   /* last apply: 0 ok, else step (emulator tests) */
 
 static int apply(void)
 {
-    static char text[DU_MAX_FILES * (DU_MAX_PATH + 32) + 64];
-    static du_file f[DU_MAX_FILES];
+    char *text = du_text;                                          /* boot: no session yet, its buffers are free */
+    du_file *f = sess.f;
     int fd = Y_OPEN(DU_MANIFEST, O_READ, 0x100);
     if (fd < 0) return 1;
-    int n = Y_READ(fd, text, sizeof text - 1);
+    int n = Y_READ(fd, text, DU_TEXT_CAP - 1);
     Y_CLOSE(fd);
     if (n <= 0) return 2;
     text[n] = 0;
@@ -242,10 +244,9 @@ static int f_close(void *c) { (void)c; int r = Y_CLOSE(fd_w); fd_w = -1; return 
 static int f_remove(void *c, const char *p) { (void)c; return Y_UNLINK(p); }
 /* ---- prompt: COMMIT -> "UPDATE READY", T1 restart / T2 cancel ---- */
 void *du_prompt_obj;                                              /* screen object (dispatcher.c, boot) */
-extern int dp_files, dp_kb, dp_restarting;
+extern int dp_files, dp_kb, dp_restarting, dp_fw;
 static volatile int prompt, confirmed, cancel_req, restart_req;
 static void *saved_scr; static int saved_id = -1;
-static du_session sess;
 
 static void prompt_show(int on)                                   /* over the current screen, follows screen changes */
 {
@@ -259,6 +260,7 @@ static void prompt_show(int on)                                   /* over the cu
     }
 }
 
+int du_prompt_active(void) { return prompt; }                    /* midi_cc_hook: no MIDI key events while shown */
 int du_prompt_key(int code, int pressed)                          /* key hook (dispatcher.c): 1 = swallowed */
 {
     if (!prompt || (code != 0x06 && code != 0x07)) return 0;
@@ -271,14 +273,37 @@ static int f_key(void *c)                                         /* COMMIT asks
     (void)c;
     if (!prompt) {
         uint32_t b = 0;
-        for (int i = 0; i < sess.n; i++) b += sess.f[i].size;
+        dp_fw = 0;
+        for (int i = 0; i < sess.n; i++) { b += sess.f[i].size; if (sess.f[i].path[0] == 'O') dp_fw = 1; }   /* OP1_vdk.ldr */
         dp_files = sess.n; dp_kb = (int)((b + 1023) / 1024); dp_restarting = 0;
         confirmed = cancel_req = 0; prompt = 1;
     }
     return confirmed;
 }
 static void f_reboot(void *c) { (void)c; du_fw_staged = 1; restart_req = 1; }   /* after the OK reply */
-static const du_fs fw_fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0 };
+static int f_stat(void *c, const char *rel, uint32_t *size)      /* /yaffs2/<rel>: size (no data read) */
+{
+    (void)c;
+    char p[DU_MAX_PATH + 16];
+    cat(p, "/yaffs2/", rel);
+    int fd = Y_OPEN(p, O_READ, 0x100);
+    if (fd < 0) return 1;
+    int n = Y_LSEEK(fd, 0, 2);
+    Y_CLOSE(fd);
+    if (n < 0) return 1;
+    *size = (uint32_t)n;
+    return 0;
+}
+#define BOOT_TEXT ((const char *)0x018F7358)                      /* make_firmware.py BOOT_TEXT_ADDR, 58 bytes */
+static int f_ident(void *c, char *out, int cap)                   /* "op1r <n> [YYYY-MM-DD HH:MM]" (stock: "R. 00246") */
+{
+    (void)c;
+    int i = 0, k = 0;
+    while (i < 58 && (BOOT_TEXT[i] == '\n' || BOOT_TEXT[i] == ' ')) i++;
+    while (i < 58 && BOOT_TEXT[i] && k < cap) out[k++] = BOOT_TEXT[i++];
+    return k;
+}
+static const du_fs fw_fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident };
 
 static void send_sysex(const uint8_t *m, int n)
 {

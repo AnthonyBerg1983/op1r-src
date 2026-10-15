@@ -9,7 +9,7 @@
 #include <string.h>
 
 /* ---- in-memory file system ---- */
-#define NF 80
+#define NF 200
 static struct { char name[128]; uint8_t *data; uint32_t size; int used; } fsf[NF];
 static int cur = -1, key_ok, reboots;
 static int find(const char *n) { for (int i = 0; i < NF; i++) if (fsf[i].used && !strcmp(fsf[i].name, n)) return i; return -1; }
@@ -32,7 +32,15 @@ static int f_close(void *c) { (void)c; cur = -1; return 0; }
 static int f_remove(void *c, const char *n) { (void)c; int i = find(n); if (i >= 0) { free(fsf[i].data); fsf[i].data = 0; fsf[i].used = 0; } return 0; }
 static int f_key(void *c) { (void)c; return key_ok; }
 static void f_reboot(void *c) { (void)c; reboots++; }
-static const du_fs fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0 };
+static int f_stat(void *c, const char *rel, uint32_t *size)
+{
+    (void)c; char n[128]; snprintf(n, sizeof n, "/yaffs2/%s", rel);
+    int i = find(n); if (i < 0) return 1;
+    *size = fsf[i].size; return 0;
+}
+static int f_ident(void *c, char *o, int cap) { (void)c; const char *v = "op1r 31 2026-10-14 20:28"; int k = 0; while (v[k] && k < cap) { o[k] = v[k]; k++; } return k; }
+static const du_fs fs = { f_open, f_write, f_close, f_remove, f_key, f_reboot, 0, f_stat, f_ident };
+static uint8_t last[DU_MAX_REPLY]; static int lastn;          /* payload of the last reply (after the status) */
 static int nfiles(void) { int n = 0; for (int i = 0; i < NF; i++) n += fsf[i].used; return n; }
 
 static uint8_t rep[DU_MAX_MSG];
@@ -43,7 +51,7 @@ static int send(du_session *s, int cmd, int seq, const uint8_t *pl, int n, int w
     assert(len > 0);
     int r = du_handle(s, m, len, rep);
     assert(r > 0 && rep[5] == (cmd | DU_REPLY) && (rep[6] | rep[7] << 7) == seq);
-    uint8_t st[16]; du_unpack7(rep + 8, r - 9, st);
+    uint8_t st[DU_MAX_MSG]; lastn = du_unpack7(rep + 8, r - 9, st) - 1; memcpy(last, st + 1, lastn > 0 ? (size_t)lastn : 0);
     if (st[0] != want) { printf("cmd %d: status %d, want %d\n", cmd, st[0], want); exit(1); }
     return st[0];
 }
@@ -117,7 +125,18 @@ int main(int argc, char **argv)
     /* session */
     du_session s; du_init(&s, &fs);
     uint8_t data[5000]; for (int i = 0; i < 5000; i++) data[i] = (uint8_t)(i * 7);
-    send(&s, DU_HELLO, 0, 0, 0, DU_OK);
+    send(&s, DU_HELLO, 0, 0, 0, DU_OK); assert(lastn == 4 && last[0] == DU_PROTOCOL);
+    send(&s, DU_IDENT, 0, 0, 0, DU_OK); assert(lastn == 24 && !memcmp(last, "op1r 31 2026-10-14 20:28", 24));
+    {   /* STAT: present (size), missing, refused path */
+        f_open(0, "/yaffs2/content/display/s.svg"); f_write(0, data, 3000); f_close(0);
+        uint32_t v;
+        send(&s, DU_STAT, 0, (const uint8_t *)"content/display/s.svg", 22, DU_OK);
+        memcpy(&v, last, 4); assert(lastn == 4 && v == 3000);
+        send(&s, DU_STAT, 0, (const uint8_t *)"content/display/x.svg", 22, DU_E_NOFILE);
+        send(&s, DU_STAT, 0, (const uint8_t *)"te-boot.ldr", 12, DU_E_PATH);
+        send(&s, DU_STAT, 0, (const uint8_t *)"content/x", 9, DU_E_FORMAT);   /* not 0-terminated */
+        f_remove(0, "/yaffs2/content/display/s.svg");
+    }
     begin(&s, "te-boot.ldr", data, 10, DU_E_PATH);
     begin(&s, "content/te-boot.op1", data, 10, DU_E_PATH);
     begin(&s, "OP1_vdk.ldr", data, 128u * DU_BLOCK, DU_E_SIZE);
@@ -151,7 +170,7 @@ int main(int argc, char **argv)
         while (fread(&len, 2, 1, f) == 1) {
             uint8_t m[DU_MAX_MSG]; assert(len <= DU_MAX_MSG && fread(m, 1, len, f) == len);
             int r = du_handle(&s, m, len, rep); assert(r > 0);
-            uint8_t st[16]; du_unpack7(rep + 8, r - 9, st); assert(st[0] == DU_OK);
+            uint8_t st[DU_MAX_MSG]; du_unpack7(rep + 8, r - 9, st); assert(st[0] == DU_OK);
             msgs++;
         }
         fclose(f);
