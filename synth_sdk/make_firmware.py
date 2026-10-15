@@ -298,6 +298,31 @@ def apply_l1(d, pokes):
         assert bytes(d[off:off + len(old) // 2]).hex() == old, f'L1 bytes at {off:#x} differ from the original'
         d[off:off + len(new) // 2] = bytes.fromhex(new)
 
+KNOB_BYTE = (0x018B62A4, b'\x00', b'\xff')    # boot: volume knob byte starts at 0, not full volume (docs/29)
+
+def patch_ranges():
+    """(start, end, label) of every byte the build patches in the firmware image"""
+    r = []
+    for tbl, name in ((HOOKS, 'HOOKS'), (DEV_HOOKS, 'DEV_HOOKS'), (OPZ_HOOKS, 'OPZ_HOOKS'), (L1_CALLS, 'L1_CALLS'),
+                      (L1_PCCALLS, 'L1_PCCALLS')):
+        r += [(a, a + len(orig), f'{name} {sym}') for a, (sym, orig) in tbl.items()]
+    r += [(a, a + 4, f'DATA_PATCHES {sym}') for a, (sym, _) in DATA_PATCHES.items()]
+    for tbl, name in ((IMM_PATCHES, 'IMM_PATCHES'), (L1_IMM_PATCHES, 'L1_IMM_PATCHES')):
+        r += [(a + 2, a + 4, f'{name} {sym} lo') for a, (sym, _) in tbl.items()]
+        r += [(a + 6, a + 8, f'{name} {sym} hi') for a, (sym, _) in tbl.items()]
+    r += [(vt + 8 * slot + 4, vt + 8 * slot + 8, f'SLOTS {n}') for n, (vt, slot, _) in SLOTS.items()]
+    r += [(BOOT_TEXT_ADDR, BOOT_TEXT_ADDR + len(BOOT_TEXT_ORIG), 'boot text'),
+          (KNOB_BYTE[0], KNOB_BYTE[0] + len(KNOB_BYTE[1]), 'volume knob byte'),
+          (L1_TRAMP, L1_TRAMP + L1_TRAMP_MAX, 'L1 trampolines')]
+    return r
+
+def check_collisions():
+    """two patches touching the same firmware bytes = build error (the later one would silently win)"""
+    r = sorted(patch_ranges())
+    bad = [(a, b) for a, b in zip(r, r[1:]) if b[0] < a[1]]
+    assert not bad, 'patch collision: ' + '; '.join(f'{x[2]} [{x[0]:#x}..{x[1]:#x}) overlaps {y[2]} [{y[0]:#x}..{y[1]:#x})'
+                                                   for x, y in bad)
+
 def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     d = bytearray(open(src, 'rb').read())
     if opz:
@@ -313,7 +338,7 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     ldr_poke(d, BOOT_TEXT_ADDR, boot_text(release), BOOT_TEXT_ORIG)   # boot screen: op1r <version> [build time]
     # boot audio burst (stock): volume knob byte starts at 0xFF = full volume until the first TWI knob read
     # (callback 0xFFA0521C); start at 0 so the output ramp (0x01A10DE4) rises from silence to the real knob level
-    ldr_poke(d, 0x018B62A4, b'\x00', b'\xff')
+    ldr_poke(d, *KNOB_BYTE)
     for addr, (sym, orig) in DATA_PATCHES.items():
         ldr_poke(d, addr, struct.pack('<I', syms[sym]), struct.pack('<I', orig))
     for addr, (sym, orig) in IMM_PATCHES.items():              # keep the opcodes, swap the 16-bit halves
@@ -414,6 +439,7 @@ def patch_db(dbp, engs, fxs):
     c.close()
 
 def main(opz=False, release=False, plugin_files='all', builtin=''):
+    check_collisions()
     engs, fxs = plugins.load()
     # plugin files (docs/37, default: all) are built into the tree's plugins/ instead of being compiled in;
     # --builtin compiles the named ones (or all) into the firmware
