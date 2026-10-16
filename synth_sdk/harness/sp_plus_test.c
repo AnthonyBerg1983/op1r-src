@@ -48,14 +48,15 @@ int main(void)
     sp_plus_prepare(&x, &c);
     int32_t st = 7; int blocks = 0, peak = 0;
     sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 100);
-    for (; blocks < 2000 && s.stage != 3; blocks++) { assert(!sp_plus_env(&s, &x, &c, &st, env, 32767)); if (env[127] > peak) peak = env[127]; }
+    for (; blocks < 2000 && s.stage != 3; blocks++) { assert(!sp_plus_env(&s, &x, &c, &st, env, 32767, 0)); if (env[127] > peak) peak = env[127]; }
     assert(s.stage == 3 && peak > 32000 && abs(env[127] - 64 * 32767 / 127) < 200);
     st = 4; int d = 0;
-    for (blocks = 0; blocks < 5000 && !d; blocks++) d = sp_plus_env(&s, &x, &c, &st, env, 32767);
+    for (blocks = 0; blocks < 5000 && !d; blocks++) d = sp_plus_env(&s, &x, &c, &st, env, 32767, 0);
     assert(d && st == 0 && blocks * SP_BLOCK >= (int)c.t_rel / 2 - 2 * SP_BLOCK /* linear, from sustain 0.5 */);
-    st = 7; sp_plus_env(&s, &x, &c, &st, env, 32767); st = 6;
-    assert(!sp_plus_env(&s, &x, &c, &st, env, 32767) && st == 7);                 /* retrigger fade -> start again */
-    st = 8; assert(sp_plus_env(&s, &x, &c, &st, env, 32767) || sp_plus_env(&s, &x, &c, &st, env, 32767));
+    st = 7; sp_plus_env(&s, &x, &c, &st, env, 32767, 0); st = 6;
+    assert(!sp_plus_env(&s, &x, &c, &st, env, 32767, 0) && st == 7);                 /* retrigger fade -> start again */
+    st = 1; s.stage = 5; assert(!sp_plus_env(&s, &x, &c, &st, env, 32767, 1) && s.stage != 5);   /* fresh note in state 1 */
+    st = 8; assert(sp_plus_env(&s, &x, &c, &st, env, 32767, 0) || sp_plus_env(&s, &x, &c, &st, env, 32767, 0));
 
     /* 3. ping-pong: stays inside the loop, turns at both ends (3 octaves up: faster) */
     for (int n = 0; n < SP_BLOCK; n++) inc[n] = SP_INC_C4 * 8;

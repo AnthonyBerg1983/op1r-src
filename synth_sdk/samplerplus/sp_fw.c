@@ -66,7 +66,7 @@ static int spx_adsr(void *adsr, int16_t *env, const int16_t *words, const int16_
     if (s < 0 || v < 0) return sp_adsr_stock(adsr, env, words, vel);
     int32_t *o = (int32_t *)adsr;
     int32_t level = sp_plus_level(&sp_x[s], *vel, (int16_t)o[5]);
-    int done = sp_plus_env(&sp_xs[v], &sp_x[s], &sp_c[s], &o[0], env, level);
+    int done = sp_plus_env(&sp_xs[v], &sp_x[s], &sp_c[s], &o[0], env, level, o[1] == 0);   /* counter 0: a new note */
     o[1]++;                                                   /* block counter, as the stock */
     return done;
 }

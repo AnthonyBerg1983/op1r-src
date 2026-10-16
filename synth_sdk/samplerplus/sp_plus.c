@@ -158,9 +158,9 @@ void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extr
     }
 }
 
-int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level)
+int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level, int fresh)
 {
-    if (*state == 7) { s->stage = 0; s->stage_n = 0; s->env = 0; *state = 1; }
+    if (*state == 7 || (fresh && *state == 1)) { s->stage = 0; s->stage_n = 0; s->env = 0; *state = 1; }
     else if ((*state == 4 || *state == 5) && s->stage < 4) { s->stage = 4; s->stage_n = 0; }   /* note-off (seen: 5) */
     else if ((*state == 6 || *state == 8) && s->stage != 6) { s->stage = 6; s->fade_step = (s->env >> 7) + 1; }
     else if (*state == 0) { for (int n = 0; n < SP_BLOCK; n++) env[n] = 0; return 1; }

@@ -63,8 +63,9 @@ void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_
 /* level (Q15) of the note for sp_plus_env: velocity << 8 and the voice gain as the stock ADSR, scaled by vel_amt */
 int32_t sp_plus_level(const sp_extra *x, int32_t vel_w, int32_t voice_gain);
 /* the Adsr_render replacement: state = the voice's ADSR object state (7 start, 4 / 5 release, 6 retrigger fade,
- * 8 steal fade); env[128] Q15 out (x level Q15); returns 1 when the voice is done */
-int  sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level);
+ * 8 steal fade); a note on a free voice starts in state 1 with the block counter 0 (VoiceCtl 0x0191211a): fresh =
+ * counter == 0. env[128] Q15 out (x level Q15); returns 1 when the voice is done */
+int  sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level, int fresh);
 void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *knobs, const sp_extra *x, const sp_pre *c,
                     const int32_t *inc, int32_t rate, const int16_t *data, const int16_t *fir);
 #define SP_INC_C4 3691513                             /* phase-increment bus at C4, octave 0 (emulator dump) */
