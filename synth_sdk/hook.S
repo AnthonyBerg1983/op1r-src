@@ -399,6 +399,12 @@ __hook_ciservice:
 	.global __hook_taperase
 __hook_taperase:
 	call _fast_tape_erase;
+	.section .hook_lander1,"ax"
+	call _lander_stub;
+	.section .hook_lander2,"ax"
+	call _lander_stub;
+	.section .hook_lander3,"ax"
+	call _lander_stub;
 	.section .hook_pparse1,"ax"
 	call _patch_parse_safe;
 	.section .hook_pparse2,"ax"

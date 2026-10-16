@@ -803,8 +803,38 @@ static void se_swap(void)                                           /* the open 
 }
 void dpu_sync_auto(void) { se_swap(); }
 
+/* ---- Lander easter egg (docs/24) not built (docs/45): at boot the stock screen list creates the Lander screen
+ * (instance 0x019C4ECC: id 0x3F, lander.svg 171 KB) and its init builds the whole Box2D world from that SVG. All three
+ * calls of the instance (screen list 0x01A3BDB0, LanderController key_down 0x019C35F0 / key_up 0x019C369C) get this
+ * stub instead: an empty screen object in slot 0x3F (the GUI walks all 68 slots, so it must exist), no SVG nodes,
+ * never visible outside the Lander mode, which cannot be entered any more (the 4-key combo is swallowed below). The
+ * Lander world 0x01DD5304 is used only by the Lander code; Tombola has its own (0x01DFB85C). */
+static uint32_t lander_obj[64], lander_vt[10];
+static void lander_nop_init(void *scr) { (void)scr; }
+static void lander_nop_update(void *scr, int dt) { (void)scr; (void)dt; }
+void *lander_stub(void)
+{
+    if (!lander_obj[3]) {
+        void *saved = SCREEN_TABLE[0x3F];
+        SCREEN_CTOR(lander_obj, 0x3F, "usbout.svg");                       /* empty svg, registers in slot 0x3F */
+        if (saved) SCREEN_TABLE[0x3F] = lander_obj;
+        for (int i = 0; i < 10; i++) lander_vt[i] = ITER_SCREEN_VT[i];      /* is_visible: id == 0x3F */
+        lander_vt[3 * 2 + 1] = (uint32_t)lander_nop_update;
+        lander_vt[4 * 2 + 1] = (uint32_t)lander_nop_init;
+        lander_obj[3] = (uint32_t)lander_vt;
+    }
+    return lander_obj;
+}
+static uint8_t mode_keys;                                               /* synth drum tape mixer held (bits) */
+
 void key_event_hook(int code, int pressed)
 {
+    if (code >= 0x02 && code <= 0x05) {                          /* the Lander combo: all four held -> swallowed */
+        uint8_t bit = (uint8_t)(1u << (code - 2));
+        if (!pressed) mode_keys &= (uint8_t)~bit;
+        else if ((mode_keys | bit) == 0x0F && !(mode_keys & bit)) { mode_keys |= bit; return; }
+        else mode_keys |= bit;
+    }
     if (code == 0x3F) { extern void mx_apply(void); mx_apply(); return; }   /* midi/mx.c MX_KEY */
     if (du_prompt_key(code, pressed)) return;                    /* dev update prompt: T1 restart / T2 cancel */
     extern int ms_key(int code, int pressed, int on_tape);

@@ -105,6 +105,9 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x0199F210: ('hook_pparse2', bytes.fromhex('03e3cc22')),       # preset import (drum): parse -> repair first
          0x0199FA4E: ('hook_pparse3', bytes.fromhex('03e3ad1e')),       # preset import (synth): parse -> repair first
          0x01A051F8: ('hook_pparse4', bytes.fromhex('ffe3d8f2')),       # load_synth_patch: parse -> repair first
+         0x01A3BDB0: ('hook_lander1', bytes.fromhex('fce38e48')),       # screen list: LanderScreen::instance -> empty stub (docs/45)
+         0x019C35F0: ('hook_lander2', bytes.fromhex('00e36e0c')),       # LanderController key_down: instance -> stub
+         0x019C369C: ('hook_lander3', bytes.fromhex('00e3180c')),       # LanderController key_up: instance -> stub
          0x01A04BC0: ('hook_dpload', bytes.fromhex('ffe3f4f5')),         # load_drum_patch: parse, then read drum+ pads
          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer

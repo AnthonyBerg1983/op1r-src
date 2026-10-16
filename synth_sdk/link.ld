@@ -65,6 +65,9 @@ SECTIONS {
   .hook_sqlcache 0x0196F942 : { KEEP(*(.hook_sqlcache)) }
   .hook_taperase 0x0191B9F0 : { KEEP(*(.hook_taperase)) }
   .hook_tapesave 0x01A54842 : { KEEP(*(.hook_tapesave)) }
+  .hook_lander1 0x01A3BDB0 : { KEEP(*(.hook_lander1)) }
+  .hook_lander2 0x019C35F0 : { KEEP(*(.hook_lander2)) }
+  .hook_lander3 0x019C369C : { KEEP(*(.hook_lander3)) }
   .hook_pparse1 0x01995680 : { KEEP(*(.hook_pparse1)) }
   .hook_pparse2 0x0199F210 : { KEEP(*(.hook_pparse2)) }
   .hook_pparse3 0x0199FA4E : { KEEP(*(.hook_pparse3)) }
