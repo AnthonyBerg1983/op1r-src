@@ -70,6 +70,9 @@ static int32_t prof_pct[7];
 extern volatile uint32_t dp_prof[2] __attribute__((weak));   /* drum+ voice render cycles (drumplus/dp_fw.c) */
 static uint32_t dp_last[2];
 static int32_t dp_pct[2], dp_pk[2];
+extern volatile uint32_t sp_prof[2] __attribute__((weak));   /* sampler voice render / envelope cycles (samplerplus/sp_core.c) */
+static uint32_t sp_last[2];
+static int32_t sp_pk[2];
 
 /* ---------------- state ---------------- */
 #define PEAK_DECAY 2                                        /* peak falls by 2 % per sample (~4 samples/s) */
@@ -101,6 +104,8 @@ static void sample_fast(void)                                /* CPU, AUDIO, MIDI
         for (int i = 0; i < 7; i++) { uint32_t c = ps_prof[i]; prof_pct[i] = pct(c - prof_last[i], wall); prof_last[i] = c; }
     if (dp_prof)
         for (int i = 0; i < 2; i++) { uint32_t c = dp_prof[i]; dp_pct[i] = pct(c - dp_last[i], wall); dp_last[i] = c; peak(&dp_pk[i], dp_pct[i]); }
+    if (sp_prof)
+        for (int i = 0; i < 2; i++) { uint32_t c = sp_prof[i]; peak(&sp_pk[i], pct(c - sp_last[i], wall)); sp_last[i] = c; }
     uint32_t busy = aud_busy, mx = aud_max, mp = aud_max_period;
     aud_busy = 0; aud_max = 0;
     v_pct[SM_DSP] = pct(busy, wall);
@@ -270,7 +275,13 @@ static void sm_update(void *scr, int dt)
         q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]); *q = 0;
         bottom_text(r, t);
     }
-    if (!dp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
+    int sp_line = !dp_line && !ps_prof && sp_prof && (sp_pk[0] || sp_pk[1]);
+    if (sp_line) {                                           /* "sampler 40 env 3" (% of the audio time, peaks) */
+        char t[32], *q = put_s(t, "sampler "); q = put_u(q, (uint32_t)sp_pk[0]);
+        q = put_s(q, " env "); q = put_u(q, (uint32_t)sp_pk[1]); *q = 0;
+        bottom_text(r, t);
+    }
+    if (!dp_line && !sp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
         char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;
         bottom_text(r, t);
     }
