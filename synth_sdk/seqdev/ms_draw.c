@@ -125,6 +125,10 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         if (ON(xi)) { sq_line(r, xi, LANE_Y(0), xi, LANE_Y(4), 0x700, c_green); ring(r, xi, BAND_Y, OP1_Q10(3), 0x500, c_green); }
         if (ON(xo)) { sq_line(r, xo, LANE_Y(0), xo, LANE_Y(4), 0x700, c_green); sq_line(r, xo - OP1_Q10(3), BAND_Y, xo + OP1_Q10(3), BAND_Y, OP1_Q10(6), c_green); }
     }
+    else if (v->loop_in >= 0) {                          /* loop off: the start marker stays (as the tape's ring) */
+        int32_t xi = MS_X(v->loop_in);
+        if (ON(xi)) ring(r, xi, BAND_Y, OP1_Q10(3), 0x500, c_green);
+    }
 
     /* tape markers (as tape/markers.c: caret v, white within 3 px of the playhead, red while punch mode is on; grey
      * line through the tracks) */

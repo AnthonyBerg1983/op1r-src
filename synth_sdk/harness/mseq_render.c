@@ -69,5 +69,6 @@ int main(void)
     v.sel_a = v.sel_b = -1; v.sel_track = 1; frame("track 2 (I -> M2), output selected", &v);
     v.io = 1; frame("track 2, input selected (white press)", &v); v.io = 0; v.sel_track = 2;
     v.zoom_q10 = 12 << 10; v.sel_a = v.sel_b = -1; v.sel_track = 0; frame("zoomed out", &v);
+    v.zoom_q10 = 40 << 10; v.loop_on = 0; frame("loop off: start marker only", &v);
     return 0;
 }
