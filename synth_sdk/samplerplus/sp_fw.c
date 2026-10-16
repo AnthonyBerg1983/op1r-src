@@ -50,48 +50,98 @@ static int32_t stock_at(void *self, int16_t *out, const int16_t *k, int32_t pos,
     STOCK_RENDER(vo, out, kk);
     return (int32_t)vo[2];
 }
-static void pingpong(void *self, int16_t *out, const int16_t *k, const sp_extra *x, sp_xvoice *xs)
+/* ping-pong. The block is rendered on in the current direction (loop off); at a loop point the turn sample is found
+ * by summing the steps, the rest of the block is rendered reversed from the mirror of the overshoot (inc tail beyond
+ * the block zeroed: the stock render then ends exactly where the turned part ends) and crossfaded (xfade samples,
+ * equal power, may run on into the next blocks) with the audio that went on past the loop point. */
+static void pp_mix(int16_t *out, const int16_t *fwd, int count, sp_xvoice *xs)   /* fwd fades out */
+{
+    int32_t inv = (1 << 20) / xs->pp_len;                         /* one division per block */
+    for (int i = 0; i < count; i++) {
+        int32_t gi, go, w = ((xs->pp_done + i) * inv) >> 10;
+        sp_xfade_gains(w, &gi, &go);
+        out[i] = (int16_t)(((out[i] * gi) >> 15) + ((fwd[i] * go) >> 15));
+    }
+    xs->pp_done += count; xs->pp_left -= count;
+}
+static void pingpong(void *self, int16_t *out, const int16_t *k, const sp_extra *x, sp_xvoice *xs, int32_t rate)
 {
     sp_voice *v = model(self);
     if (v->first) { if (xs->dir > 0 && v->pos < sp_bound(k[0], 0)) v->pos = sp_bound(k[0], 0); v->first = 0; }
     int32_t ls = sp_bound(k[1], k[5]), le = sp_bound(k[2], k[6]);
     int loop = k[0] < k[2] && le > ls && (!v->released || x->loop_rel);
     int32_t p0 = v->pos, p1 = stock_at(self, out, k, p0, xs->dir < 0, 0);
+    int16_t fwd[SP_BLOCK];
+    if (xs->pp_left > 0) {                                        /* a turn fade still running */
+        xs->pp_fpos = stock_at(self, fwd, k, xs->pp_fpos, xs->pp_fdir < 0, 0);
+        pp_mix(out, fwd, xs->pp_left < SP_BLOCK ? xs->pp_left : SP_BLOCK, xs);
+    }
     int32_t edge = xs->dir > 0 ? le : ls;
-    if (loop && (xs->dir > 0 ? p1 >= le && p0 < le : p1 < ls && p0 >= ls) && p1 != p0) {
-        int32_t n = (int32_t)(((int64_t)(edge - p0) * SP_BLOCK) / (p1 - p0));   /* turn sample (once per turn) */
-        if (n < 0) n = 0; else if (n > SP_BLOCK - 1) n = SP_BLOCK - 1;
-        for (int i = 0; i + n < SP_BLOCK; i++) BUF_INC[i] = BUF_INC[i + n];   /* the rest of the block's steps */
+    if (loop && (xs->dir > 0 ? p1 >= le && p0 < le : p1 < ls && p0 >= ls)) {
+        int32_t acc = p0, n = 0;                                  /* turn sample: the steps summed (turn blocks only) */
+        for (; n < SP_BLOCK; n++) {
+            if (xs->dir > 0 ? acc >= edge : acc < edge) break;
+            int32_t st = sp_step32((uint32_t)BUF_INC[n], (uint32_t)rate);
+            acc += xs->dir > 0 ? st : -st;
+        }
+        if (n >= SP_BLOCK) n = SP_BLOCK - 1;
+        int m = SP_BLOCK - n;
+        for (int i = 0; i < SP_BLOCK; i++) BUF_INC[i] = i < m ? BUF_INC[i + n] : 0;   /* exact end position */
+        for (int i = 0; i < m; i++) fwd[i] = out[n + i];          /* the audio past the loop point */
         int16_t tmp[SP_BLOCK];
-        int32_t q1 = stock_at(self, tmp, k, edge, xs->dir > 0, 0);
-        for (int i = 0; i + n < SP_BLOCK; i++) out[i + n] = tmp[i];
+        int32_t q1 = stock_at(self, tmp, k, 2 * edge - acc, xs->dir > 0, 0);
+        for (int i = 0; i < m; i++) out[n + i] = tmp[i];
+        int32_t len = (int32_t)x->xfade * 32;
+        if (len >= 16) {
+            xs->pp_len = len; xs->pp_done = 0; xs->pp_left = len;
+            xs->pp_fdir = xs->dir; xs->pp_fpos = p1;              /* p1: where the forward-going render stopped */
+            pp_mix(out + n, fwd, len < m ? len : m, xs);
+        }
         xs->dir = (int8_t)-xs->dir;
-        p1 = edge + (int32_t)(((int64_t)(q1 - edge) * (SP_BLOCK - n)) >> 7);   /* where the turned part ends */
+        p1 = q1;
     }
     v->pos = p1;
 }
-static void xfade(void *self, int16_t *out, const int16_t *k, const sp_extra *x)
+/* crossfade, forward loop. Mode A (enough audio before the loop start): towards the loop end the audio one loop
+ * earlier (pos - span) fades in, so at the wrap it continues seamlessly from ls. Mode B (loop starts at / near the
+ * buffer start, the stock default): after a wrap, the audio past the loop end (pos + span, the continuation of the
+ * pre-wrap sound; silence past the recording) fades out over the start of the loop. */
+#define SP_CAP_POS ((264600 - 16) << 12)                          /* buffer end (pos units), minus the FIR taps */
+static void xfade(void *self, int16_t *out, const int16_t *k, const sp_extra *x, sp_xvoice *xs)
 {
     sp_voice *v = model(self);
     int32_t ls = sp_bound(k[1], k[5]), le = sp_bound(k[2], k[6]), span = le - ls;
     int loop = k[0] < k[2] && span > 0 && !v->released, rev = k[4] >= 0x4000;
     int32_t p0 = v->pos;
     STOCK_RENDER(self, out, k);                                   /* the voice itself, stock loop (wraps at le) */
-    int32_t xf = (int32_t)x->xfade * 32 << 12;
-    if (xf > span) xf = span;
-    if (xf > ls) xf = ls;
-    if (!loop || rev || xf < (256 << 12)) return;
-    int32_t p1 = v->pos, pe = p1 < p0 ? p1 + span : p1, z0 = le - xf;   /* pe: unwrapped end */
-    if (pe <= z0 || p0 >= le) return;                             /* block does not touch the fade zone */
+    if (!loop || rev) return;
+    int32_t p1 = v->pos, wrap = p1 < p0, pe = wrap ? p1 + span : p1;   /* pe: unwrapped end */
+    int32_t want = (int32_t)x->xfade * 32 << 12, room_a = ls - (16 << 12), room_b = SP_CAP_POS - le;
+    if (want > span) want = span;
+    int mode_b = room_a < want && room_b > room_a;
+    int32_t xf = want < (mode_b ? room_b : room_a) ? want : (mode_b ? room_b : room_a);
+    int was = xs->wrapped;
+    if (wrap) xs->wrapped = 1;
+    if (xf < (64 << 12)) return;                                  /* under 64 samples: nothing to fade */
+    int32_t z0 = mode_b ? ls : le - xf, z1 = mode_b ? ls + xf : le, d = pe - p0;
     int16_t tmp[SP_BLOCK];
-    stock_at(self, tmp, k, p0 - span, 0, 0);                      /* the audio before the loop start */
-    int32_t inv = (1 << 23) / (xf >> 8), d = pe - p0;             /* one division per fade block */
+    if (!mode_b) {
+        if (pe <= z0 || p0 >= le) return;                         /* block does not touch the fade zone */
+        stock_at(self, tmp, k, p0 - span, 0, 0);                  /* the audio one loop earlier */
+    } else {
+        if (!was && !wrap) return;                                /* first pass: nothing to continue yet */
+        int32_t a0 = p0, a1 = wrap ? p1 : pe;                     /* actual positions after the wrap */
+        if (!wrap && (a0 >= z1 || a1 <= z0)) return;
+        stock_at(self, tmp, k, wrap ? p0 : p0 + span, 0, 0);      /* the continuation past the loop end */
+    }
+    int32_t inv = (1 << 23) / (xf >> 8);                          /* one division per fade block */
     for (int n = 0; n < SP_BLOCK; n++) {
-        int32_t p = p0 + (int32_t)(((int64_t)d * n) >> 7);
-        if (p < z0 || p >= le) continue;
+        int32_t p = p0 + ((d >> 7) * n), a = p >= le ? p - span : p;   /* d >> 7: per-sample advance */
+        if (!mode_b ? (p >= le || p < z0) : (a < z0 || a >= z1 || (wrap && p < le))) continue;
         int32_t gi, go;
-        sp_xfade_gains((((p - z0) >> 8) * (inv >> 4)) >> 9, &gi, &go);
-        out[n] = (int16_t)(((out[n] * go) >> 15) + ((tmp[n] * gi) >> 15));
+        sp_xfade_gains((((a - z0) >> 8) * (inv >> 4)) >> 9, &gi, &go);
+        out[n] = (int16_t)(mode_b ? ((out[n] * gi) >> 15) + ((tmp[n] * go) >> 15)     /* loop start fades in */
+                                  : ((out[n] * go) >> 15) + ((tmp[n] * gi) >> 15));   /* pos - span fades in */
     }
 }
 
@@ -111,8 +161,8 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
     }
     (void)data;
     sp_plus_fast_pre(&sp_xs[v], &sp_c[s], BUF_INC);              /* pitch envelope / sync: the voice's inc bus */
-    if (sp_x[s].loop_mode) pingpong(self, out, k, &sp_x[s], &sp_xs[v]);
-    else if (sp_x[s].xfade) xfade(self, out, k, &sp_x[s]);
+    if (sp_x[s].loop_mode) pingpong(self, out, k, &sp_x[s], &sp_xs[v], (int32_t)obj[1]);
+    else if (sp_x[s].xfade) xfade(self, out, k, &sp_x[s], &sp_xs[v]);
     else STOCK_RENDER(self, out, k);                              /* the stock (assembler) render */
     sp_plus_fast_post(&sp_xs[v], &sp_x[s], &sp_c[s], out);
 }

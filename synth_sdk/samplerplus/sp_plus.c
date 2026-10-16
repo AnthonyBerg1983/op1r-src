@@ -66,12 +66,6 @@ static int32_t sp_pitch_q12(int32_t u)                     /* u: 1/96 octave << 
     return oct >= 2 ? m << (oct - 2) : m >> (2 - oct);
 }
 
-/* sp_step without 64-bit products (inc, rate >= 0): within 2 units of the exact one; own path only */
-static inline int32_t sp_step32(uint32_t inc, uint32_t rate)
-{
-    uint32_t ih = inc >> 16, il = inc & 0xFFFF, rh = rate >> 16, rl = rate & 0xFFFF;
-    return (int32_t)(((ih * rh) >> 6) + ((ih * rl) >> 22) + ((il * rh) >> 22));
-}
 #ifdef __bfin__                     /* fractional 32 x 32 (3 MAC instructions; the low x low product is dropped) */
 static inline int32_t mul15(int32_t s, int32_t c) { return __builtin_bfin_mult_fr1x32x32(s, c << 16); }   /* c < 2^15 */
 static inline int32_t mul14(int32_t s, int32_t c) { return __builtin_bfin_mult_fr1x32x32(s, c << 16) << 1; }
@@ -146,6 +140,8 @@ void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extra
     s->pitch_u = c->p_start;
     s->ic1 = s->ic2 = 0;
     s->cut_vel = 0;
+    s->wrapped = 0;
+    s->pp_left = 0;
 }
 static inline int32_t sat16(int32_t x) { return x > 32767 ? 32767 : x < -32768 ? -32768 : x; }
 int32_t sp_plus_level(const sp_extra *x, int32_t vel_w, int32_t g)

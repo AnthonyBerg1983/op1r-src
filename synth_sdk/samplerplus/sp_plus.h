@@ -51,6 +51,9 @@ typedef struct {
     int32_t fade_step;
     int32_t pitch_u;
     int8_t  dir;                                      /* +1 / -1 (reverse, ping-pong) */
+    uint8_t wrapped;                                  /* the loop has wrapped once (crossfade at the loop start) */
+    int8_t  pp_fdir;                                  /* ping-pong turn fade: direction of the fading audio */
+    int32_t pp_left, pp_len, pp_done, pp_fpos;        /* samples left / total / done, position of the fading audio */
     int16_t cut_vel;                                  /* velocity cutoff offset of this note (steps) */
     int32_t ic1, ic2;                                 /* filter state */
 } sp_xvoice;
@@ -76,5 +79,11 @@ static inline int sp_plus_fast_ok(const sp_extra *x) { return !x->loop_mode && !
 void sp_plus_fast_pre(sp_xvoice *s, const sp_pre *c, int32_t *inc);
 void sp_plus_fast_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int16_t *out);
 void sp_xfade_gains(int32_t w, int32_t *gin, int32_t *gout);   /* equal power, w 0..1024 (Q10) */
+/* sp_step without 64-bit products (inc, rate >= 0): within 2 units of the exact one */
+static inline int32_t sp_step32(uint32_t inc, uint32_t rate)
+{
+    uint32_t ih = inc >> 16, il = inc & 0xFFFF, rh = rate >> 16, rl = rate & 0xFFFF;
+    return (int32_t)(((ih * rh) >> 6) + ((ih * rl) >> 22) + ((il * rh) >> 22));
+}
 #define SP_INC_C4 3691513                             /* phase-increment bus at C4, octave 0 (emulator dump) */
 #endif
