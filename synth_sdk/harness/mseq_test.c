@@ -88,6 +88,19 @@ int main(void)
     int resident = 0; for (int b = 0; b < MS_RAM; b++) resident += B.ram_slot[b] != MS_NONE;
     printf("streaming: 360 notes over 120 pages, %d slot reads, %d resident at the end, 0 underruns ok\n", reads, resident);
     tplay = 0; ms_block(&B);
+    {   /* loop over pages 40..44 with a full cache (after the streaming pass): the loop start stays resident */
+        lon = 1; lin = 40 * 65536 + 1000; lout = 44 * 65536 + 30000; B.underruns = 0;
+        tpos = lin; tplay = 0; ms_block(&B);
+        for (int k = 0; k < 20; k++) ms_service(&B, 1000);           /* settle at the loop start */
+        ncalls = 0; tplay = 1; ms_block(&B);
+        for (int blk = 0; blk < 3 * ((lout - lin) / 64) + 50; blk++) {
+            tpos += 64; if (tpos > lout) tpos = lin + (tpos - lout);
+            ms_block(&B); if (blk % 16 == 0) ms_service(&B, 4);
+        }
+        assert(B.underruns == 0 && notes_on(0, 2) >= 3 * 3 * 4);
+        tplay = 0; lon = 0; ms_block(&B);
+        printf("loop over pages 40..44: start pages kept, 0 underruns ok\n");
+    }
 
     /* cut / copy / paste on track 2: cut pages 10..19, paste at page 200 */
     B.sel = 2;

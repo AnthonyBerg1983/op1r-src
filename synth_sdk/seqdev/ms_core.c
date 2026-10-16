@@ -288,9 +288,9 @@ static int write_buf(ms_t *s, int b)
     if (s->env->write_slot(tmp.slot, &tmp)) { s->ram_dirty[b] = 1; return -1; }
     return 0;
 }
-static int in_window(ms_t *s, const ms_slot *x, int page)
+static int in_window(ms_t *s, const ms_slot *x, int page, int lp)
 {
-    return x->page + 1 >= page && x->page <= page + 3;
+    return (x->page + 1 >= page && x->page <= page + 3) || (lp >= 0 && x->page >= lp && x->page <= lp + 1);
 }
 int ms_load_range(ms_t *s, int track, int pa, int pb)   /* make pages [pa, pb] of a track resident; 0 all */
 {
@@ -306,6 +306,8 @@ void ms_service(ms_t *s, int budget)
 {
     int32_t pos = s->env->tape_pos();
     int page = pos < 0 ? 0 : (int)(pos >> MS_PAGE_BITS);
+    int32_t lin, lout;                                       /* loop on: its start pages stay resident (the wrap) */
+    int lp = s->env->loop(&lin, &lout) && lout > lin && lin >= 0 ? (int)(lin >> MS_PAGE_BITS) : -1;
     for (int b = 0; b < MS_RAM && budget > 0; b++)          /* write back dirty buffers */
         if (s->ram_slot[b] != MS_NONE && s->ram_dirty[b]) { write_buf(s, b); budget--; }
     int dirty_left = 0;
@@ -323,15 +325,17 @@ void ms_service(ms_t *s, int budget)
     int nfree = 0;                                           /* evict clean buffers outside the window */
     for (int b = 0; b < MS_RAM; b++) nfree += s->ram_slot[b] == MS_NONE;
     for (int b = 0; b < MS_RAM && nfree < MS_RESERVE + 16; b++) {
-        if (s->ram_slot[b] == MS_NONE || s->ram_dirty[b] || in_window(s, &s->ram[b], page)) continue;
+        if (s->ram_slot[b] == MS_NONE || s->ram_dirty[b] || in_window(s, &s->ram[b], page, lp)) continue;
         if (s->ram_use[b]) { s->ram_use[b] = 0; continue; }  /* second chance */
         uint32_t m = s->env->irq_off();
         s->where[s->ram_slot[b]] = 0xFF; s->ram_slot[b] = MS_NONE;
         s->env->irq_on(m);
         nfree++;
     }
-    for (int t = 0; t < MS_TRACKS; t++)                       /* prefetch: one page behind, three ahead */
+    for (int t = 0; t < MS_TRACKS; t++) {                     /* prefetch: one page behind, three ahead */
         ms_load_range(s, t, page - 1, page + 3);
+        if (lp >= 0) ms_load_range(s, t, lp, lp + 1);        /* + the loop start */
+    }
 }
 
 /* ---- editing (main loop) ---- */
