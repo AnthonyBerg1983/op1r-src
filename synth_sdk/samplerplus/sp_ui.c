@@ -182,7 +182,7 @@ int spu_key(int code, int pressed)
 }
 
 /* ---- text ---- */
-enum { TX_TITLE, TX_TAG, TX_SHIFT, TX_SYNC, TX_LAB, TX_VAL = TX_LAB + 4, TX_PRS = TX_VAL + 4, TX_ROW = TX_PRS + 4,
+enum { TX_TITLE, TX_SHIFT, TX_LAB, TX_VAL = TX_LAB + 4, TX_PRS = TX_VAL + 4, TX_ROW = TX_PRS + 4,
        TX_N = TX_ROW + 5 };
 static uint32_t tx[TX_N][OP1_TEXT_SIZE / 4];
 static char shown[TX_N][14];
@@ -192,9 +192,7 @@ static void tx_init(void)
 {
     if (tx_made) return;
     op1_text_ctor(tx[TX_TITLE], Q(8), 4, TS, c_white);
-    op1_text_ctor(tx[TX_TAG], Q(252), 4, TS, c_pale);
     op1_text_ctor(tx[TX_SHIFT], Q(120), 4, TS, c_grey);
-    op1_text_ctor(tx[TX_SYNC], Q(200), 4, TS, c_white);
     for (int k = 0; k < 4; k++) {
         op1_text_ctor(tx[TX_LAB + k], Q(8 + 78 * k), 114, TS, col4[k]);
         op1_text_ctor(tx[TX_VAL + k], Q(8 + 78 * k), 127, TS, c_white);
@@ -376,12 +374,10 @@ static void update(void *s, int dt)
     void *r = op1_raster();
     int pg = s == (void *)scr[1] ? T2 : T1, slot = SLOT_CUR, shift = SHIFT_HELD;
     for (int k = 0; k < 4; k++) ln(r, Q(8 + 78 * k), Q(110), Q(78 + 78 * k), Q(110), 0x800, col4[k]);
-    txt(r, TX_TAG, "sampler+");
     if (pg == T1 && br_open) { txt(r, TX_TITLE, "samples"); draw_browser(r); return; }
     const char *name = jv_str((const uint8_t *)PATCH_OBJ(slot) + 4, "name");
     txt(r, TX_TITLE, name && name[0] ? name : "sampler");
     if (shift) txt(r, TX_SHIFT, "shift");
-    if (sp_x[slot].sync) txt(r, TX_SYNC, sync_names[sp_x[slot].sync]);
     if (pg == T1) draw_t1(r, slot); else draw_t2(r, slot);
     char a[16], b[16], c[16];
     for (int k = 0; k < 4; k++) {

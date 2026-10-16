@@ -11,7 +11,7 @@
 #define VOICE_VEL  ((const volatile int16_t *)0xFF801064)     /* velocity << 8 of voice v */
 #define SLOT_TYPE  ((const volatile int32_t *)0xFF8016E4)     /* synth slot types (6 = sampler) */
 #define FIR        ((const int16_t *)0xFF8021D2)
-#define BUF_INC    ((const int32_t *)0xFF801950)
+#define BUF_INC    ((int32_t *)0xFF801950)                    /* refilled for every voice before its render */
 #define BEAT_LEN   (*(const volatile int32_t *)0x01AADAD8)    /* metronome beat length, 0x4000 per sample */
 #define SYNTH_PATCHES 0x01DDD7E8                              /* 8 synth patch objects x 0x38 (JSON at +4) */
 #define STOCK_RENDER   ((void (*)(void *, int16_t *, const int16_t *))0x01A51A7C)
@@ -49,7 +49,12 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
             sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200);
         }
     }
-    sp_plus_render(model(self), &sp_xs[v], out, k, &sp_x[s], &sp_c[s], BUF_INC, (int32_t)obj[1], data, FIR);
+    if (sp_plus_fast_ok(&sp_x[s])) {                              /* the stock (assembler) render + pre / post */
+        sp_plus_fast_pre(&sp_xs[v], &sp_c[s], BUF_INC);
+        STOCK_RENDER(self, out, k);
+        sp_plus_fast_post(&sp_xs[v], &sp_x[s], &sp_c[s], out);
+    } else
+        sp_plus_render(model(self), &sp_xs[v], out, k, &sp_x[s], &sp_c[s], BUF_INC, (int32_t)obj[1], data, FIR);
 }
 static void spx_note_on(void *self, const int16_t *k)
 {
@@ -58,7 +63,12 @@ static void spx_note_on(void *self, const int16_t *k)
     sp_plus_note_on(model(self), &sp_xs[v], k, &sp_x[s], &sp_c[s]);
     sp_vpend[v] = 1;
 }
-static void spx_note_off(void *self) { STOCK_NOTE_OFF(self); }   /* released flag; the envelope follows the ADSR state */
+static void spx_note_off(void *self)                          /* released flag (stops the loop); the envelope */
+{                                                              /* follows the ADSR state */
+    int s = cur_slot();
+    if (s >= 0 && sp_x[s].loop_rel && voice_of(self) >= 0) return;   /* loop in release: keep looping */
+    STOCK_NOTE_OFF(self);
+}
 static int spx_adsr(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel)
 {
     uint32_t d = (uint32_t)adsr - ADSR0;

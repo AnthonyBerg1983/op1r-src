@@ -127,6 +127,23 @@ int main(void)
     sp_extra_default(&x); x.vel_start = 127; sp_plus_prepare(&x, &c);
     sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 0);
     assert(v.pos == sp_bound(k[0], 0) + ((127 * 64) << 12));
+    /* 9. fast path: pitch env scales the bus (+12: x2), low pass in post */
+    {
+        sp_extra_default(&x); x.pitch_env = 12; x.pitch_time = 100; x.filter = 1; x.cutoff = 30; sp_plus_prepare(&x, &c);
+        assert(sp_plus_fast_ok(&x));
+        sp_xvoice s3; sp_voice v3; sp_plus_note_on(&v3, &s3, k, &x, &c);
+        int32_t bus[SP_BLOCK]; for (int n = 0; n < SP_BLOCK; n++) bus[n] = SP_INC_C4;
+        sp_plus_fast_pre(&s3, &c, bus);
+        assert(abs(bus[0] - 2 * SP_INC_C4) < SP_INC_C4 / 100);
+        fill_noise(); int16_t o[SP_BLOCK]; double e0 = 0, e1 = 0; int p0 = 0, p1 = 0;
+        for (int blk = 0; blk < 50; blk++) {
+            for (int n = 0; n < SP_BLOCK; n++) o[n] = data[blk * SP_BLOCK + n];
+            for (int n = 0; n < SP_BLOCK; n++) { e0 += (double)(o[n] - p0) * (o[n] - p0); p0 = o[n]; }
+            sp_plus_fast_post(&s3, &x, &c, o);
+            for (int n = 0; n < SP_BLOCK; n++) { e1 += (double)(o[n] - p1) * (o[n] - p1); p1 = o[n]; }
+        }
+        assert(e1 < e0 * 0.05);
+    }
     puts("OK: sampler+ voice (stock path, envelope, ping-pong, crossfade, filter, sync, pitch env, start)");
     return 0;
 }

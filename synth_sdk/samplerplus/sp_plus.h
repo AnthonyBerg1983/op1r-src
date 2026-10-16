@@ -68,5 +68,11 @@ int32_t sp_plus_level(const sp_extra *x, int32_t vel_w, int32_t voice_gain);
 int  sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level, int fresh);
 void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *knobs, const sp_extra *x, const sp_pre *c,
                     const int32_t *inc, int32_t rate, const int16_t *data, const int16_t *fir);
+/* fast path (firmware): everything but ping-pong / crossfade runs on the stock render (assembler, the slot's
+ * loop / reverse logic): pre scales the voice's phase-increment bus by pitch envelope and sync, post runs filter and
+ * drive on its output. Loop in release: keep the stock voice's released flag clear (note_off not passed on). */
+static inline int sp_plus_fast_ok(const sp_extra *x) { return !x->loop_mode && !x->xfade; }
+void sp_plus_fast_pre(sp_xvoice *s, const sp_pre *c, int32_t *inc);
+void sp_plus_fast_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int16_t *out);
 #define SP_INC_C4 3691513                             /* phase-increment bus at C4, octave 0 (emulator dump) */
 #endif

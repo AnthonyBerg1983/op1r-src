@@ -214,6 +214,36 @@ static inline int32_t sp_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, 
     return y;
 }
 
+/* per block: pitch multiplier (envelope + sync, Q12), then the envelope glides on */
+static int32_t sp_block_mult(sp_xvoice *s, const sp_pre *c)
+{
+    int32_t pu = s->pitch_u >> 8;
+    int32_t mult = mul12(pu ? sp_pitch_q12(pu) : 4096, c->sync_q12);
+    if (mult > 32768) mult = 32768;                                    /* 8x: inc * mult stays in 32 bits */
+    if (s->pitch_u) {
+        int32_t nc = s->pitch_u - c->p_step * SP_BLOCK;
+        s->pitch_u = (c->p_start > 0 ? nc > 0 : nc < 0) ? nc : 0;
+    }
+    return mult;
+}
+static const int32_t *sp_block_fa(const sp_xvoice *s, const sp_extra *x, const sp_pre *c)
+{
+    int ci = x->cutoff + s->cut_vel + ((x->fenv * (s->env >> 22)) >> 8);   /* env Q30 -> Q8 */
+    return c->fa[ci < 0 ? 0 : ci > 127 ? 127 : ci];
+}
+void sp_plus_fast_pre(sp_xvoice *s, const sp_pre *c, int32_t *inc)
+{
+    int32_t mult = sp_block_mult(s, c);
+    if (mult != 4096)
+        for (int n = 0; n < SP_BLOCK; n++) inc[n] = mul12(inc[n], mult);    /* inc < 2^27, mult <= 2^16 */
+}
+void sp_plus_fast_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int16_t *out)
+{
+    if (!x->filter && !c->drive_q12) return;
+    const int32_t *fa = sp_block_fa(s, x, c);
+    for (int n = 0; n < SP_BLOCK; n++) out[n] = (int16_t)sp_post(s, x, c, fa, out[n]);
+}
+
 /* equal-power crossfade gains: sin / cos quarter wave, 33 points, Q15 */
 static const int16_t sp_qsin[33] = {
     0, 1608, 3212, 4808, 6393, 7962, 9512, 11039, 12539, 14010, 15446, 16846, 18204, 19519, 20787, 22005,
@@ -230,15 +260,8 @@ void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *k, c
     int loop = k[0] < k[2] && le > ls && (!v->released || x->loop_rel);
     int rev = k[4] >> 14;
     /* per block: pitch (envelope + sync), cutoff (base + envelope + velocity), crossfade length */
-    int32_t pu = s->pitch_u >> 8;
-    int32_t mult = pu ? sp_pitch_q12(pu) : 4096;
-    mult = mul12(mult, c->sync_q12);
-    if (s->pitch_u) {
-        int32_t nc = s->pitch_u - c->p_step * SP_BLOCK;
-        s->pitch_u = (c->p_start > 0 ? nc > 0 : nc < 0) ? nc : 0;
-    }
-    int ci = x->cutoff + s->cut_vel + ((x->fenv * (s->env >> 22)) >> 8);   /* env Q30 -> Q8 */
-    const int32_t *fa = c->fa[ci < 0 ? 0 : ci > 127 ? 127 : ci];
+    int32_t mult = sp_block_mult(s, c);
+    const int32_t *fa = sp_block_fa(s, x, c);
     int32_t xf = (int32_t)x->xfade * 32 << 12, span = le - ls, inv = 0;   /* inv: 1024 / (xf >> 8), Q13 */
     if (xf > span) xf = span;
     if (xf > ls) xf = ls;
