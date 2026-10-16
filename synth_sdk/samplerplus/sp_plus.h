@@ -24,7 +24,7 @@ typedef struct {
     uint8_t rand_start;                              /* 0..127: random start offset up to rand_start * 64 samples */
     uint8_t drive;                                   /* 0..127: gain 1..4 into a soft clip */
     uint8_t sync;                                    /* 0 off, 1..6: the region lasts 1/4, 1/2, 1, 2, 4, 8 bars at the
-                                                        sample's original pitch (other keys transpose) */
+                                                        F key at keyboard octave 0 (other keys transpose) */
 } sp_extra;
 #define SP_NFIELDS 21
 int  sp_extra_set(sp_extra *x, int i, int32_t v);     /* field i (struct order) clamped; returns the stored value */
@@ -61,7 +61,8 @@ typedef struct {
 
 void sp_plus_prepare(const sp_extra *x, sp_pre *c);   /* when the extras change (GUI thread) */
 /* tempo sync factor: knobs (region), rate (sampler object +4), samples per bar (4 beats) at the current tempo */
-void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *knobs, int32_t rate, uint32_t samples_per_bar);
+/* ref_inc: the phase increment of the reference key (F at keyboard octave 0 = MIDI 53, firmware pitch table) */
+void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *knobs, int32_t rate, uint32_t samples_per_bar, int32_t ref_inc);
 void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_extra *x, const sp_pre *c);
 /* velocity 0..127 of the note (the firmware writes it around note_on: applied at the first render) */
 void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_extra *x, int velocity);

@@ -109,16 +109,16 @@ void sp_plus_prepare(const sp_extra *x, sp_pre *c)
                                                        x->loop_rel || x->xfade || x->sync);
 }
 
-void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *k, int32_t rate, uint32_t samples_per_bar)
+void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *k, int32_t rate, uint32_t samples_per_bar, int32_t ref_inc)
 {
     static const uint8_t q4[7] = { 0, 1, 2, 4, 8, 16, 32 };              /* quarter bars: 1/4 .. 8 bars */
     int32_t f = 4096;
     if (x->sync && x->sync <= 6 && samples_per_bar) {
         int64_t len = (int64_t)sp_bound(k[3], 0) - sp_bound(k[0], 0);   /* region, pos units (Q12 samples) */
         int64_t want = (int64_t)samples_per_bar * q4[x->sync] / 4;     /* samples */
-        (void)rate;                                                     /* original pitch = 1 sample per sample */
-        if (len > 0 && want > 0) {
-            int64_t q = len / want;                                     /* speed at the original pitch, Q12 */
+        int64_t step = sp_step(ref_inc, rate);                          /* pos units per sample at the reference key */
+        if (len > 0 && want > 0 && step > 0) {
+            int64_t q = (len << 12) / (want * step);                    /* speed factor, Q12 */
             f = q < 256 ? 256 : q > 65536 ? 65536 : (int32_t)q;         /* 1/16 .. 16 x */
         }
     }

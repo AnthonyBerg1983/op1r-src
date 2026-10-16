@@ -105,12 +105,12 @@ int main(void)
     for (int n = 0; n < SP_BLOCK; n++) inc[n] = SP_INC_C4;
     /* 6. tempo sync: 1 bar at 120 BPM (88200 samples): speed factor = region / bar, so at the original pitch
      * (1 sample per sample) the region lasts the bar */
-    sp_extra_default(&x); x.sync = 3; sp_plus_prepare(&x, &c); sp_plus_sync(&x, &c, k, RATE, 88200);
-    {
-        int32_t len = sp_bound(k[3], 0) - sp_bound(k[0], 0);
-        double secs = (double)len / c.sync_q12;                  /* samples at speed sync_q12 / 4096 */
-        printf("sync 1 bar: factor %d/4096, region at the original pitch %.0f samples (want 88200)\n", c.sync_q12, secs);
-        assert(fabs(secs - 88200) < 100);
+    sp_extra_default(&x); x.sync = 3; sp_plus_prepare(&x, &c); sp_plus_sync(&x, &c, k, RATE, 88200, SP_INC_C4);
+    {                                                                      /* at the reference key's speed */
+        int32_t len = sp_bound(k[3], 0) - sp_bound(k[0], 0), step = sp_step(SP_INC_C4, RATE);
+        double secs = (double)len * 4096 / ((double)c.sync_q12 * step);
+        printf("sync 1 bar: factor %d/4096, region at the reference key %.0f samples (want 88200)\n", c.sync_q12, secs);
+        assert(fabs(secs - 88200) < 200);
     }
     int16_t k2[8]; memcpy(k2, k, sizeof k2); k2[2] = 0;                    /* no loop */
     /* 7. pitch envelope +12: the first block moves twice as far */

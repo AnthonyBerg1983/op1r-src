@@ -25,7 +25,17 @@ sp_pre   sp_c[SP_SLOTS];
 uint8_t  sp_isplus[SP_SLOTS], sp_keep_next[SP_SLOTS];          /* keep: the browser's preset load stays sampler+ */
 static sp_xvoice sp_xs[SP_VOICES];
 static uint8_t  sp_vpend[SP_VOICES];                         /* velocity not applied yet (first render) */
-static int32_t  sp_sync_key[SP_SLOTS][4];                    /* bar length, start, end, sync setting of the factor */
+static int32_t  sp_sync_key[SP_SLOTS][5];                    /* bar length, start, end, sync setting, reference inc */
+/* sync reference: F at keyboard octave 0 = MIDI note 53, the phase increment VoiceCtl gives it (note_on_synth
+ * 0x01A84604: pitch table 0x01DFE530[note] x tuning 0x027FC720[0x018C2184], fractional, << 1) */
+#define PITCH_TABLE ((const int32_t *)0x01DFE530)
+#define TUNE_TABLE  ((const int32_t *)0x027FC720)
+#define TUNE_INDEX  (*(const volatile int32_t *)0x018C2184)
+static int32_t sync_ref_inc(void)
+{
+    int64_t r = ((int64_t)PITCH_TABLE[53] * TUNE_TABLE[TUNE_INDEX]) >> 30;   /* (a * b * 2) >> 31, then << 1 */
+    return r > 0x7FFFFFFF ? 0x7FFFFFFF : (int32_t)r;
+}
 
 static int cur_slot(void)
 {
@@ -153,11 +163,11 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
     const int16_t *data = *(const int16_t *const *)obj[0];
     if (sp_vpend[v]) { sp_vpend[v] = 0; sp_plus_velocity(model(self), &sp_xs[v], k, &sp_x[s], VOICE_VEL[v] >> 8); }
     if (sp_x[s].sync) {
-        int32_t bar = (BEAT_LEN >> 14) * 4;
+        int32_t bar = (BEAT_LEN >> 14) * 4, ref = sync_ref_inc();
         if (bar != sp_sync_key[s][0] || k[0] != sp_sync_key[s][1] || k[3] != sp_sync_key[s][2] ||
-            sp_x[s].sync != sp_sync_key[s][3]) {                   /* rare: one division */
-            sp_sync_key[s][0] = bar; sp_sync_key[s][1] = k[0]; sp_sync_key[s][2] = k[3]; sp_sync_key[s][3] = sp_x[s].sync;
-            sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200);
+            sp_x[s].sync != sp_sync_key[s][3] || ref != sp_sync_key[s][4]) {   /* rare: one division */
+            sp_sync_key[s][0] = bar; sp_sync_key[s][1] = k[0]; sp_sync_key[s][2] = k[3]; sp_sync_key[s][3] = sp_x[s].sync; sp_sync_key[s][4] = ref;
+            sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200, ref);
         }
     }
     (void)data;
