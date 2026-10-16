@@ -137,9 +137,9 @@ static inline int32_t buf_read(const clouds_t *c, int quality, int32_t i, uint32
     if (quality == Q_LOW) return s[0];
     if (quality == Q_MEDIUM) return s[0] + (((s[1] - s[0]) * (int32_t)(frac >> 1)) >> 15);
     /* Hermite (Laurent de Soras), t Q16 */
-    int64_t xm1 = s[0], x0 = s[1], x1 = s[2], x2 = s[3], t = frac;
-    int64_t cc = (x1 - xm1) >> 1, v = x0 - x1, w = cc + v, a = w + v + ((x2 - x0) >> 1), b = w + a;
-    return (int32_t)((((((a * t) >> 16) - b) * t >> 16) + cc) * t >> 16) + (int32_t)x0;
+    int32_t xm1 = s[0], x0 = s[1], x1 = s[2], x2 = s[3], t = (int32_t)frac;   /* frac 0..65535 */
+    int32_t cc = (x1 - xm1) >> 1, v = x0 - x1, w = cc + v, a = w + v + ((x2 - x0) >> 1), b = w + a;   /* |.| < 2^21 */
+    return mulf16(mulf16(mulf16(a, t) - b, t) + cc, t) + x0;               /* exact 32-bit (d * t) >> 16 */
 }
 
 /* ---------------- Grain ---------------- */
