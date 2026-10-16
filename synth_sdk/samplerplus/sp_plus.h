@@ -36,6 +36,7 @@ typedef struct {
     uint32_t t_att, t_hold, t_dec, t_rel;
     int32_t a_step, d_step, r_step, sus;              /* Q30 */
     int32_t kd, kr;                                   /* exponential factors, Q15 */
+    int32_t kd16, kr16;                               /* the same over 16 samples (kd^16), Q15 */
     int32_t p_start, p_step;                          /* pitch envelope, 1/96 octave << 16 */
     int32_t f_k;                                      /* filter damping Q14 */
     int32_t fa[128][3];                               /* filter coefficients per cutoff step (Q15) */

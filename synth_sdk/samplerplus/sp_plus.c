@@ -72,8 +72,13 @@ static inline int32_t sp_step32(uint32_t inc, uint32_t rate)
     uint32_t ih = inc >> 16, il = inc & 0xFFFF, rh = rate >> 16, rl = rate & 0xFFFF;
     return (int32_t)(((ih * rh) >> 6) + ((ih * rl) >> 22) + ((il * rh) >> 22));
 }
+#ifdef __bfin__                     /* fractional 32 x 32 (3 MAC instructions; the low x low product is dropped) */
+static inline int32_t mul15(int32_t s, int32_t c) { return __builtin_bfin_mult_fr1x32x32(s, c << 16); }   /* c < 2^15 */
+static inline int32_t mul14(int32_t s, int32_t c) { return __builtin_bfin_mult_fr1x32x32(s, c << 16) << 1; }
+#else
 static inline int32_t mul15(int32_t s, int32_t c) { return (s >> 15) * c + (((s & 0x7FFF) * c) >> 15); }
 static inline int32_t mul14(int32_t s, int32_t c) { return (s >> 14) * c + (((s & 0x3FFF) * c) >> 14); }
+#endif
 static inline int32_t mul12(int32_t s, int32_t c) { return (s >> 12) * c + (((s & 0xFFF) * c) >> 12); }
 
 void sp_plus_prepare(const sp_extra *x, sp_pre *c)
@@ -90,16 +95,19 @@ void sp_plus_prepare(const sp_extra *x, sp_pre *c)
     c->kr = c->t_rel ? 32768 - (int32_t)(226100 / (c->t_rel + 1)) : 0;
     c->kd = c->kd > 32767 ? 32767 : c->kd < 0 ? 0 : c->kd;
     c->kr = c->kr > 32767 ? 32767 : c->kr < 0 ? 0 : c->kr;
+    c->kd16 = c->kd; c->kr16 = c->kr;
+    for (int i = 0; i < 4; i++) { c->kd16 = (c->kd16 * c->kd16) >> 15; c->kr16 = (c->kr16 * c->kr16) >> 15; }
     uint32_t tp = sp_time_samples(x->pitch_time);
     c->p_start = (int32_t)x->pitch_env * 524288;
     c->p_step = tp ? c->p_start / (int32_t)tp : c->p_start;
     int32_t k = 131072 - (int32_t)x->resonance * 127100 / 127;          /* 1 / Q, Q16: 2 .. 0.06 */
-    c->f_k = k >> 2;
+    c->f_k = k >> 2 > 32767 ? 32767 : k >> 2;
     for (int i = 0; i < 128; i++) {                                    /* ZDF SVF coefficients per cutoff step */
         int64_t g = dp_filter_g[i], kk = k;
         int64_t den = 65536 + ((g * (g + kk)) >> 16);
         int64_t a1 = ((int64_t)1 << 32) / den, a2 = (g * a1) >> 16, a3 = (g * a2) >> 16;
         c->fa[i][0] = (int32_t)(a1 >> 1); c->fa[i][1] = (int32_t)(a2 >> 1); c->fa[i][2] = (int32_t)(a3 >> 1);
+        for (int j = 0; j < 3; j++) if (c->fa[i][j] > 32767) c->fa[i][j] = 32767;   /* Q15 below 1.0 (fractional mult) */
     }
     c->drive_q12 = x->drive ? 4096 + (int32_t)x->drive * 12288 / 127 : 0;
     if (!x->sync) c->sync_q12 = 4096;
@@ -158,6 +166,31 @@ void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extr
     }
 }
 
+/* the envelope advances in steps of 16 samples (stage logic 8 times per block), the output is interpolated linearly
+ * between them: stage times are rounded to 16 samples (0.36 ms), the exponential curves become 16-sample chords */
+#define SP_ESUB 16
+static void sp_env_step(sp_xvoice *s, const sp_extra *x, const sp_pre *c)
+{
+    switch (s->stage) {
+    case 0: s->env += c->a_step * SP_ESUB; if (s->env >= Q30 || s->stage_n >= c->t_att) { s->env = Q30; s->stage = c->t_hold ? 1 : 2; s->stage_n = 0; } break;
+    case 1: if (s->stage_n >= c->t_hold) { s->stage = 2; s->stage_n = 0; } break;
+    case 2:
+        if (!c->t_dec) s->env = c->sus;
+        else if (x->curve_exp) s->env = c->sus + ((s->env - c->sus) >> 15) * c->kd16;
+        else s->env -= c->d_step * SP_ESUB;
+        if (s->env <= c->sus + (x->curve_exp ? (Q30 >> 10) : 0)) { s->env = c->sus; s->stage = 3; }
+        break;
+    case 3: if (!c->sus) s->stage = 5; break;
+    case 4:
+        if (!c->t_rel) s->env = 0;
+        else if (x->curve_exp) s->env = (s->env >> 15) * c->kr16; else s->env -= c->r_step * SP_ESUB;
+        if (s->env <= (x->curve_exp ? (Q30 >> 10) : 0)) { s->env = 0; s->stage = 5; }
+        break;
+    case 6: s->env -= s->fade_step * SP_ESUB; if (s->env <= 0) { s->env = 0; s->stage = 5; } break;
+    default: s->env = 0; break;
+    }
+    s->stage_n += SP_ESUB;
+}
 int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level, int fresh)
 {
     if (*state == 7 || (fresh && *state == 1)) { s->stage = 0; s->stage_n = 0; s->env = 0; *state = 1; }
@@ -165,34 +198,18 @@ int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state
     else if ((*state == 6 || *state == 8) && s->stage != 6) { s->stage = 6; s->fade_step = (s->env >> 7) + 1; }
     else if (*state == 0) { for (int n = 0; n < SP_BLOCK; n++) env[n] = 0; return 1; }
     if (s->stage == 0 && !c->t_att) { s->env = Q30; s->stage = c->t_hold ? 1 : 2; }
-    int done = 0;
-    for (int n = 0; n < SP_BLOCK; n++) {
-        switch (s->stage) {
-        case 0: s->env += c->a_step; if (s->env >= Q30 || s->stage_n >= c->t_att) { s->env = Q30; s->stage = c->t_hold ? 1 : 2; s->stage_n = 0; } break;
-        case 1: if (s->stage_n >= c->t_hold) { s->stage = 2; s->stage_n = 0; } break;
-        case 2:
-            if (!c->t_dec) s->env = c->sus;
-            else if (x->curve_exp) s->env = c->sus + ((s->env - c->sus) >> 15) * c->kd;
-            else s->env -= c->d_step;
-            if (s->env <= c->sus + (x->curve_exp ? (Q30 >> 10) : 0)) { s->env = c->sus; s->stage = 3; }
-            break;
-        case 3: if (!c->sus) s->stage = 5; break;
-        case 4:
-            if (!c->t_rel) s->env = 0;
-            else if (x->curve_exp) s->env = (s->env >> 15) * c->kr; else s->env -= c->r_step;
-            if (s->env <= (x->curve_exp ? (Q30 >> 10) : 0)) { s->env = 0; s->stage = 5; }
-            break;
-        case 6: s->env -= s->fade_step; if (s->env <= 0) { s->env = 0; s->stage = 5; } break;
-        default: s->env = 0; break;
-        }
-        s->stage_n++;
-        env[n] = (int16_t)(((s->env >> 15) * level) >> 15);
+    int32_t e0 = ((s->env >> 15) * level) >> 15;
+    for (int k = 0; k < SP_BLOCK; k += SP_ESUB) {
+        sp_env_step(s, x, c);
+        int32_t e1 = ((s->env >> 15) * level) >> 15, d = e1 - e0, v = e0 << 4;
+        for (int n = 0; n < SP_ESUB; n++) { v += d; env[k + n] = (int16_t)(v >> 4); }   /* ends exactly on e1 */
+        e0 = e1;
     }
     if (s->stage == 5) {
         if (*state == 6) { *state = 7; return 0; }                       /* retrigger: the next block starts again */
-        *state = 0; done = 1;
+        *state = 0; return 1;
     }
-    return done;
+    return 0;
 }
 
 static inline int32_t sp_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, const int32_t *fa, int32_t y)
