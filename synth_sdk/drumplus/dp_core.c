@@ -12,6 +12,8 @@ const op1_drum_t *op1_drum;                                   /* set by the plug
 
 #define DP_SLOTS      8
 #define DRUM_PATCHES  0x01DDD9A8                              /* 8 drum patch objects x 0x38 (JSON at +4) */
+#define SYNTH_PATCHES 0x01DDD7E8                              /* 8 synth patch objects x 0x38 (JSON at +4) */
+void sp_slot_loaded(int slot, void *op1r);                    /* samplerplus/sp_core.c */
 #define STOCK_RENDER   ((void (*)(void *, int16_t *, const void *))0x019789EC)
 #define STOCK_NOTE_ON  ((void (*)(void *, const void *))0x01978926)
 #define STOCK_NOTE_OFF ((void (*)(void *, const void *))0x01978898)
@@ -49,6 +51,8 @@ void *dp_keep_op1r(void *patch, void *fresh)
     int keep = jv_type(old) == JV_OBJECT;
     if (keep) JV_ASSIGN(JV_KEY(fresh, "op1r"), old);
     if (dp_loading_slot >= 0 && op1_drum) op1_drum->slot_loaded(dp_loading_slot, keep ? JV_KEY(fresh, "op1r") : 0);
+    uint32_t off = (uint32_t)patch - (SYNTH_PATCHES + 4);              /* a synth slot's patch (sampler+, docs/46) */
+    if (off < 8 * 0x38 && off % 0x38 == 0) sp_slot_loaded((int)(off / 0x38), keep ? JV_KEY(fresh, "op1r") : 0);
     return JV_ASSIGN(patch, fresh);
 }
 

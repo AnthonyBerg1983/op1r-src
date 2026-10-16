@@ -130,14 +130,24 @@ static uint32_t sp_rand(void)
     return r >> 8;
 }
 
-void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extra *x, const sp_pre *c, int velocity)
+void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extra *x, const sp_pre *c)
 {
+    (void)x;
     sp_stock_note_on(v, k);
-    int vel = velocity < 0 ? 0 : velocity > 127 ? 127 : velocity;
     s->dir = k[4] >> 14 ? -1 : 1;
     s->pitch_u = c->p_start;
     s->ic1 = s->ic2 = 0;
-    s->vel15 = 32767 - x->vel_amt * (127 - vel) * 2;                   /* 127: velocity 0 -> ~0 */
+    s->cut_vel = 0;
+}
+static inline int32_t sat16(int32_t x) { return x > 32767 ? 32767 : x < -32768 ? -32768 : x; }
+int32_t sp_plus_level(const sp_extra *x, int32_t vel_w, int32_t g)
+{
+    int32_t full = sat16((vel_w * g * 2 + 0x8000) >> 16), none = sat16((32512 * g * 2 + 0x8000) >> 16);
+    return none + (((full - none) * x->vel_amt * 258) >> 15);
+}
+void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extra *x, int velocity)
+{
+    int vel = velocity < 0 ? 0 : velocity > 127 ? 127 : velocity;
     s->cut_vel = (int16_t)(x->vel_cutoff * (vel - 64) / 63);
     int32_t off = x->vel_start * 64 * (127 - vel) / 127;
     if (x->rand_start) off += (int32_t)(sp_rand() % (uint32_t)(x->rand_start * 64 + 1));
@@ -148,10 +158,10 @@ void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *k, const sp_extra
     }
 }
 
-int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env)
+int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level)
 {
     if (*state == 7) { s->stage = 0; s->stage_n = 0; s->env = 0; *state = 1; }
-    else if (*state == 4 && s->stage < 4) { s->stage = 4; s->stage_n = 0; }
+    else if ((*state == 4 || *state == 5) && s->stage < 4) { s->stage = 4; s->stage_n = 0; }   /* note-off (seen: 5) */
     else if ((*state == 6 || *state == 8) && s->stage != 6) { s->stage = 6; s->fade_step = (s->env >> 7) + 1; }
     else if (*state == 0) { for (int n = 0; n < SP_BLOCK; n++) env[n] = 0; return 1; }
     if (s->stage == 0 && !c->t_att) { s->env = Q30; s->stage = c->t_hold ? 1 : 2; }
@@ -176,7 +186,7 @@ int sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state
         default: s->env = 0; break;
         }
         s->stage_n++;
-        env[n] = (int16_t)(((s->env >> 15) * s->vel15) >> 15);
+        env[n] = (int16_t)(((s->env >> 15) * level) >> 15);
     }
     if (s->stage == 5) {
         if (*state == 6) { *state = 7; return 0; }                       /* retrigger: the next block starts again */

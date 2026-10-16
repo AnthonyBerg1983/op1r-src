@@ -30,6 +30,9 @@ const char         *op1_seq_names[OP1_SEQ_MAX];
 const op1_screen_t *op1_seq_screens[OP1_SEQ_MAX];
 const char         *op1_seq_svgs[OP1_SEQ_MAX];
 int                 op1_seq_count;
+extern const op1_sampler_t *op1_sampler;                       /* samplerplus/sp_core.c (docs/46) */
+int sp_adsr_stock(void *, int16_t *, const int16_t *, const int16_t *);   /* hook.S: the original Adsr_render */
+void sp_replay(void);
 extern const op1_drum_t *op1_drum;                             /* drumplus/dp_core.c: the drum engine plugin (docs/43) */
 extern const op1_engine_t *const op1_builtin_engines[];
 extern const int                 op1_builtin_engine_count;
@@ -106,6 +109,8 @@ static const struct { const char *name; void *addr; } exports[] = {
     { "eu_fw_note_off", (void *)eu_fw_note_off }, { "eu_rec_play", (void *)&eu_rec_play },
     /* drum engine (docs/43) */
     { "dpu_sync_auto", (void *)dpu_sync_auto },
+    /* sampler engine (docs/46) */
+    { "sp_adsr_stock", (void *)sp_adsr_stock },
 };
 
 /* boot report (resource monitor later): loaded count, refused count, last error, skipped by the crash marker */
@@ -206,7 +211,7 @@ static void row_delete(void *db, char kind, const char *name)
 {
     char sql[96];
     char *o = scat(scat(sql, kind == 'f' ? "DELETE FROM fx_types" : kind == 'q' ? "DELETE FROM seq_types"
-                             : kind == 'd' ? "DELETE FROM drum_types" : "DELETE FROM synth_types"), " WHERE type='");
+                             : kind == 'd' ? "DELETE FROM drum_types" : "DELETE FROM synth_types"), " WHERE type='");   /* 'p': sampler+ row */
     scat(scat(o, name), "'");
     op1_db_write(db, sql);
 }
@@ -326,6 +331,21 @@ static int load_one(void *db, const char *file)
     if (!r && total + v.mem_size > TOTAL_CAP) r = OP1P_E_SIZE;
     int kind = r ? 0 : (int)v.hdr->kind;
     const char *name = r ? 0 : sdup(v.hdr->name);
+    if (!r && kind == OP1P_SAMPLER) {                               /* sampler engine (sampler+): one, row id 100 */
+        uint8_t *mem = op1_sampler ? 0 : MALLOC(v.mem_size);
+        if (!mem) r = op1_sampler ? OP1P_E_HEADER : OP1P_E_SIZE;
+        if (!r) {
+            op1p_relocate(&v, mem, (uint32_t)mem, imp);
+            cache_sync(mem, v.mem_size);
+            total += v.mem_size;
+            op1_sampler = (const op1_sampler_t *)(mem + v.hdr->entry_off);
+            op1_db_write(DB_FACTORY(), "INSERT OR IGNORE INTO synth_types VALUES (100,'sampler+','[0, 0, 0, 0, 0, 0, 0, 0]')");
+            kind_map('p', "sampler+");
+            sp_replay();                                            /* patches were loaded before the plugins */
+        }
+        if (buf) FREE(buf);
+        return r;
+    }
     if (!r && kind == OP1P_DRUM) {                                  /* drum engine (drum+): one, row id 2 */
         uint8_t *mem = op1_drum ? 0 : MALLOC(v.mem_size);
         if (!mem) r = op1_drum ? OP1P_E_HEADER : OP1P_E_SIZE;
@@ -459,6 +479,7 @@ void plug_boot(void)
         int here = map[i].kind == 's' ? map[i].n < op1_engine_count && op1_engines[map[i].n]
                  : map[i].kind == 'f' ? map[i].n < op1_fx_count && op1_fxs[map[i].n]
                  : map[i].kind == 'd' ? op1_drum != 0
+                 : map[i].kind == 'p' ? op1_sampler != 0
                  : seq_taken(map[i].name);
         if (!here) { row_delete(DB_FACTORY(), map[i].kind, map[i].name); map[i].present = 0; map_dirty = 1; }
     }

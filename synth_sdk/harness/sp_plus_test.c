@@ -37,7 +37,7 @@ int main(void)
     fill_sine(100.3);
     sp_extra_default(&x); sp_plus_prepare(&x, &c);
     assert(!c.render_active);
-    sp_stock_note_on(&w, k); sp_plus_note_on(&v, &s, k, &x, &c, 127);
+    sp_stock_note_on(&w, k); sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127);
     for (int blk = 0; blk < 200; blk++) {
         sp_stock_render(&w, a, k, inc, RATE, data, fir); sp_plus_render(&v, &s, b, k, &x, &c, inc, RATE, data, fir);
         assert(!memcmp(a, b, sizeof a) && v.pos == w.pos);
@@ -47,20 +47,20 @@ int main(void)
     sp_extra_default(&x); x.attack = 40; x.decay = 40; x.sustain = 64; x.release = 40; x.vel_amt = 0;
     sp_plus_prepare(&x, &c);
     int32_t st = 7; int blocks = 0, peak = 0;
-    sp_plus_note_on(&v, &s, k, &x, &c, 100);
-    for (; blocks < 2000 && s.stage != 3; blocks++) { assert(!sp_plus_env(&s, &x, &c, &st, env)); if (env[127] > peak) peak = env[127]; }
+    sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 100);
+    for (; blocks < 2000 && s.stage != 3; blocks++) { assert(!sp_plus_env(&s, &x, &c, &st, env, 32767)); if (env[127] > peak) peak = env[127]; }
     assert(s.stage == 3 && peak > 32000 && abs(env[127] - 64 * 32767 / 127) < 200);
     st = 4; int d = 0;
-    for (blocks = 0; blocks < 5000 && !d; blocks++) d = sp_plus_env(&s, &x, &c, &st, env);
+    for (blocks = 0; blocks < 5000 && !d; blocks++) d = sp_plus_env(&s, &x, &c, &st, env, 32767);
     assert(d && st == 0 && blocks * SP_BLOCK >= (int)c.t_rel / 2 - 2 * SP_BLOCK /* linear, from sustain 0.5 */);
-    st = 7; sp_plus_env(&s, &x, &c, &st, env); st = 6;
-    assert(!sp_plus_env(&s, &x, &c, &st, env) && st == 7);                 /* retrigger fade -> start again */
-    st = 8; assert(sp_plus_env(&s, &x, &c, &st, env) || sp_plus_env(&s, &x, &c, &st, env));
+    st = 7; sp_plus_env(&s, &x, &c, &st, env, 32767); st = 6;
+    assert(!sp_plus_env(&s, &x, &c, &st, env, 32767) && st == 7);                 /* retrigger fade -> start again */
+    st = 8; assert(sp_plus_env(&s, &x, &c, &st, env, 32767) || sp_plus_env(&s, &x, &c, &st, env, 32767));
 
     /* 3. ping-pong: stays inside the loop, turns at both ends (3 octaves up: faster) */
     for (int n = 0; n < SP_BLOCK; n++) inc[n] = SP_INC_C4 * 8;
     sp_extra_default(&x); x.loop_mode = 1; sp_plus_prepare(&x, &c);
-    sp_plus_note_on(&v, &s, k, &x, &c, 127);
+    sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127);
     int32_t ls = sp_bound(k[1], k[5]), le = sp_bound(k[2], k[6]); int turns = 0, dir = 1, inloop = 0;
     for (int blk = 0; blk < 400; blk++) {
         sp_plus_render(&v, &s, a, k, &x, &c, inc, RATE, data, fir);
@@ -74,7 +74,7 @@ int main(void)
     int jump[2];
     for (int xf = 0; xf < 2; xf++) {
         sp_extra_default(&x); x.loop_rel = 1; x.xfade = xf ? 40 : 0; sp_plus_prepare(&x, &c);
-        sp_plus_note_on(&v, &s, k, &x, &c, 127);
+        sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127);
         int prev = 0, mx = 0;
         for (int blk = 0; blk < 400; blk++) {
             sp_plus_render(&v, &s, a, k, &x, &c, inc, RATE, data, fir);
@@ -90,7 +90,7 @@ int main(void)
     double e[2];
     for (int f = 0; f < 2; f++) {
         sp_extra_default(&x); x.loop_rel = 1; x.filter = f; x.cutoff = 40; sp_plus_prepare(&x, &c);
-        sp_plus_note_on(&v, &s, k, &x, &c, 127); s.env = 0;
+        sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127); s.env = 0;
         double acc = 0; int prev = 0;
         for (int blk = 0; blk < 100; blk++) {
             sp_plus_render(&v, &s, a, k, &x, &c, inc, RATE, data, fir);
@@ -105,7 +105,7 @@ int main(void)
     /* 6. tempo sync: 1 bar at 120 BPM (88200 samples) plays the region in about that time */
     fill_sine(100.3);
     sp_extra_default(&x); x.sync = 3; sp_plus_prepare(&x, &c); sp_plus_sync(&x, &c, k, RATE, 88200);
-    sp_plus_note_on(&v, &s, k, &x, &c, 127);
+    sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127);
     int32_t end = sp_bound(k[3], 0); int smp = 0;
     int16_t k2[8]; memcpy(k2, k, sizeof k2); k2[2] = 0;                    /* no loop */
     while (v.pos < end && smp < 400000) { sp_plus_render(&v, &s, a, k2, &x, &c, inc, RATE, data, fir); smp += SP_BLOCK; }
@@ -113,9 +113,9 @@ int main(void)
     assert(abs(smp - 88200) < 1500);
 
     /* 7. pitch envelope +12: the first block moves twice as far */
-    sp_extra_default(&x); sp_plus_prepare(&x, &c); sp_plus_note_on(&w, &s, k, &x, &c, 127);
+    sp_extra_default(&x); sp_plus_prepare(&x, &c); sp_plus_note_on(&w, &s, k, &x, &c); sp_plus_velocity(&w, &s, k, &x, 127);
     sp_extra_default(&x); x.pitch_env = 12; x.pitch_time = 100; x.loop_rel = 0; sp_plus_prepare(&x, &c);
-    sp_xvoice s2; sp_plus_note_on(&v, &s2, k2, &x, &c, 127);
+    sp_xvoice s2; sp_plus_note_on(&v, &s2, k2, &x, &c); sp_plus_velocity(&v, &s2, k2, &x, 127);
     int32_t p0 = w.pos, q0 = v.pos;
     sp_stock_render(&w, a, k2, inc, RATE, data, fir); sp_plus_render(&v, &s2, b, k2, &x, &c, inc, RATE, data, fir);
     double ratio = (double)(v.pos - q0) / (w.pos - p0);
@@ -124,7 +124,7 @@ int main(void)
 
     /* 8. velocity start: a soft note starts later */
     sp_extra_default(&x); x.vel_start = 127; sp_plus_prepare(&x, &c);
-    sp_plus_note_on(&v, &s, k, &x, &c, 0);
+    sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 0);
     assert(v.pos == sp_bound(k[0], 0) + ((127 * 64) << 12));
     puts("OK: sampler+ voice (stock path, envelope, ping-pong, crossfade, filter, sync, pitch env, start)");
     return 0;

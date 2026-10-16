@@ -230,6 +230,21 @@ typedef struct {
     int  (*knob)(int knob, int delta);                /* 1 = consumed */
     int  (*key)(int code, int pressed);
 } op1_drum_t;
+
+/* ---- sampler engine plugin (plugin.json "kind": "sampler", docs/46): sampler+ ----
+ * One at a time. The core keeps the SynthSampler vtable slots (render / note_on / note_off), the Adsr_render entry
+ * hook, the "op1r" key of synth patches, the synth type job and the synth_types row 'sampler+' (id 100); the plugin
+ * decides per slot (its own flag + slot type 6) and calls the stock code otherwise. knobs = the slot's 8 words. */
+typedef struct {
+    void (*render)(void *self, int16_t *out, const int16_t *knobs);   /* SynthSampler voice (audio interrupt) */
+    void (*note_on)(void *self, const int16_t *knobs);
+    void (*note_off)(void *self);
+    int  (*adsr)(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel);   /* 1 = voice done */
+    void (*slot_loaded)(int slot, void *op1r);       /* synth patch loaded: its "op1r" object (Json::Value) or 0 */
+    int  (*is_plus)(int slot);
+    void (*type_job)(void *job);                      /* synth type browser job (stock job for other rows) */
+} op1_sampler_t;
+#define OP1_SAMPLER_ROW 100                           /* synth_types id of the 'sampler+' row */
 #ifndef OP1_HOST
 #define op1_find_node(scr, id) (((void *(*)(void *, const char *))0x01A3B580)((scr), (id)))
 #define op1_node_set_transform(node, m9) (((void (*)(void *, const int32_t *))0x019EAD58)((node), (m9)))

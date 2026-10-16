@@ -35,9 +35,9 @@ def load():
         e['source'], e['extra_sources'] = rel(p['sources'][0]), [rel(s) for s in p['sources'][1:]]
         if p.get('screen'):
             e['screen'] = dict(p['screen'], svg=rel(p['screen']['svg']))
-        assert p['kind'] in ('synth', 'fx', 'seq', 'drum'), pj
+        assert p['kind'] in ('synth', 'fx', 'seq', 'drum', 'sampler'), pj
         e['dir'] = d
-        if p['kind'] in ('seq', 'drum'):
+        if p['kind'] in ('seq', 'drum', 'sampler'):
             continue
         (engs if p['kind'] == 'synth' else fxs).append(e)
     for lst in (engs, fxs):

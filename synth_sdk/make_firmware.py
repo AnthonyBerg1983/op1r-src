@@ -34,13 +34,17 @@ BUILTIN = {'fm','digital','drwave','string','cluster','pulse','sampler','phase',
            'ls','dna','dsynth','voltage','iter'}
 VT_ITER, VT_FILTER, VT_FILTER_ST = 0x019103CC, 0x01910C94, 0x01910CB4   # _ST: master (stereo) filter
 VT_DRUM = 0x0190FAC4                                                      # DrumSampler voice (docs/31)
+VT_SAMPLER = 0x019119F4                                                   # SynthSampler voice (docs/46)
 SLOTS = {'synth_render': (VT_ITER, 2, 0x019B99D4), 'synth_note_on': (VT_ITER, 3, 0x019B9B8A),
          'synth_query': (VT_ITER, 4, 0x019B9980), 'synth_note_off': (VT_ITER, 5, 0x019B996C),
          'fx_render': (VT_FILTER, 2, 0x019E7934), 'fx_init': (VT_FILTER, 3, 0x019E780A),
          'fx_render_stereo': (VT_FILTER_ST, 2, 0x019E7EE4), 'fx_init_stereo': (VT_FILTER_ST, 3, 0x019E78D0),
          'dp_fw_render': (VT_DRUM, 2, 0x019789EC), 'dp_fw_note_on': (VT_DRUM, 3, 0x01978926),
          'dp_fw_note_off': (VT_DRUM, 5, 0x01978898),
-         'dp_type_job': (0x0190F34C, 2, 0x0193F86C)}                       # drum type browser job (docs/31)
+         'dp_type_job': (0x0190F34C, 2, 0x0193F86C),                        # drum type browser job (docs/31)
+         'sp_fw_render': (VT_SAMPLER, 2, 0x01A51A7C), 'sp_fw_note_on': (VT_SAMPLER, 3, 0x01A518F4),
+         'sp_fw_note_off': (VT_SAMPLER, 5, 0x01A51964),
+         'sp_type_job': (0x0190F3FC, 2, 0x0193FFAC)}                        # synth type browser job (docs/46)
 FX_BUILTIN = {'delay','grid','punch','phone','spring','filter','nitro','cwo'}
 FILTER_ROW = (2, 'filter', '[7548, 0, 8272, 19572, 8000, 8000, 8000, 8000]')   # as op1repacker
 # Raw knob ranges of fx type 5 (filter), which every custom FX runs in: range table 0x01DE5C50 + 5*0x30,
@@ -109,6 +113,7 @@ HOOKS = {0x019B975C: ('hook_namecmp', bytes.fromhex('18300b32')),      # instr_t
          0x019C35F0: ('hook_lander2', bytes.fromhex('00e36e0c')),       # LanderController key_down: instance -> stub
          0x019C369C: ('hook_lander3', bytes.fromhex('00e3180c')),       # LanderController key_up: instance -> stub
          0x01A04BC0: ('hook_dpload', bytes.fromhex('ffe3f4f5')),         # load_drum_patch: parse, then read drum+ pads
+         0x01912128: ('hook_spadsr', bytes.fromhex('e3052a32')),         # Adsr_render entry -> sp_adsr (sampler+ envelope, docs/46)
          0x01A69730: ('hook_usbbuf1', bytes.fromhex('22e11401')),        # EP 0x86 transfer buffer 0x114 -> 828
          0x01A69740: ('hook_usbbuf2', bytes.fromhex('22e11401'))}        # .. second buffer
 # data words: address -> (symbol, expected original value)
@@ -205,7 +210,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/seq_core.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'seqdev/ms_draw.c', 'midi/mx.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'tape/safewrite.c', 'patch_repair.c', 'drumplus/dp_core.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/seq_core.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'seqdev/ms_draw.c', 'midi/mx.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'tape/safewrite.c', 'patch_repair.c', 'drumplus/dp_core.c', 'samplerplus/sp_core.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -428,7 +433,7 @@ def patch_db(dbp, engs, fxs):
 def main(opz=False, release=False, plugin_files='all', builtin=''):
     check_collisions()
     engs, fxs = plugins.load()
-    seqs = plugins.load_seqs() + plugins.load_seqs('drum')   # sequencers / drum+ (docs/44, 43): always plugin files
+    seqs = plugins.load_seqs() + plugins.load_seqs('drum') + plugins.load_seqs('sampler')   # sequencers / drum+ / sampler+: plugin files
     # plugin files (docs/37, default: all) are built into the tree's plugins/ instead of being compiled in;
     # --builtin compiles the named ones (or all) into the firmware
     names = {e['name'] for e in engs + fxs + seqs}

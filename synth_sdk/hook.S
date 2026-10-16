@@ -417,6 +417,18 @@ __hook_taperase:
 	.global __hook_tapesave
 __hook_tapesave:
 	call _tape_safe_write;
+/* sampler+ (docs/46): JUMP.L at the Adsr_render entry -> sp_adsr (same arguments, 4th on the stack); the stock
+ * function = the two replaced instructions, then on at 0x0191212C */
+	.section .hook_spadsr,"ax"
+	jump.l _sp_adsr;
+	.text
+	.global _sp_adsr_stock
+	.align 2
+_sp_adsr_stock:
+	[--SP] = (R7:4, P5:3);
+	P5 = R2;
+	jump.l _sp_adsr_cont;                        /* link.ld: 0x0191212C */
+
 	.section .hook_dpkeep,"ax"
 	.global __hook_dpkeep
 __hook_dpkeep:

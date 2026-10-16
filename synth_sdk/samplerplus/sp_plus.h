@@ -48,7 +48,6 @@ typedef struct {
     uint8_t stage;                                    /* 0 A, 1 H, 2 D, 3 S, 4 R, 5 done, 6 fast fade */
     uint32_t stage_n;
     int32_t fade_step;
-    int32_t vel15;                                    /* velocity gain of this note, Q15 */
     int32_t pitch_u;
     int8_t  dir;                                      /* +1 / -1 (reverse, ping-pong) */
     int16_t cut_vel;                                  /* velocity cutoff offset of this note (steps) */
@@ -58,10 +57,14 @@ typedef struct {
 void sp_plus_prepare(const sp_extra *x, sp_pre *c);   /* when the extras change (GUI thread) */
 /* tempo sync factor: knobs (region), rate (sampler object +4), samples per bar (4 beats) at the current tempo */
 void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *knobs, int32_t rate, uint32_t samples_per_bar);
-void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_extra *x, const sp_pre *c, int velocity);
-/* the Adsr_render replacement: state = the voice's ADSR object state (7 start, 4 release, 6 retrigger fade,
- * 8 steal fade); env[128] Q15 out; returns 1 when the voice is done */
-int  sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env);
+void sp_plus_note_on(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_extra *x, const sp_pre *c);
+/* velocity 0..127 of the note (the firmware writes it around note_on: applied at the first render) */
+void sp_plus_velocity(sp_voice *v, sp_xvoice *s, const int16_t *knobs, const sp_extra *x, int velocity);
+/* level (Q15) of the note for sp_plus_env: velocity << 8 and the voice gain as the stock ADSR, scaled by vel_amt */
+int32_t sp_plus_level(const sp_extra *x, int32_t vel_w, int32_t voice_gain);
+/* the Adsr_render replacement: state = the voice's ADSR object state (7 start, 4 / 5 release, 6 retrigger fade,
+ * 8 steal fade); env[128] Q15 out (x level Q15); returns 1 when the voice is done */
+int  sp_plus_env(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int32_t *state, int16_t *env, int32_t level);
 void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *knobs, const sp_extra *x, const sp_pre *c,
                     const int32_t *inc, int32_t rate, const int16_t *data, const int16_t *fir);
 #define SP_INC_C4 3691513                             /* phase-increment bus at C4, octave 0 (emulator dump) */

@@ -26,6 +26,7 @@ SECTIONS {
   .hook_vcup 0x01A85840 : { KEEP(*(.hook_vcup)) }
   _vc_down_body = 0x01A85754;      /* VoiceCtl key_down after its LINK 0x10 (sequencer hook) */
   _vc_up_body = 0x01A85844;        /* VoiceCtl key_up after its LINK 0x20 */
+  _sp_adsr_cont = 0x0191212C;      /* Adsr_render after the two instructions the sampler+ hook replaces */
   .hook_screenload 0x019F07D2 : { KEEP(*(.hook_screenload)) }
   .hook_rfp019427b8 0x019427B8 : { KEEP(*(.hook_rfp019427b8)) }
   .hook_rfp01984f60 0x01984F60 : { KEEP(*(.hook_rfp01984f60)) }
@@ -73,6 +74,7 @@ SECTIONS {
   .hook_pparse3 0x0199FA4E : { KEEP(*(.hook_pparse3)) }
   .hook_pparse4 0x01A051F8 : { KEEP(*(.hook_pparse4)) }
   .hook_dpkeep 0x01A044A8 : { KEEP(*(.hook_dpkeep)) }
+  .hook_spadsr 0x01912128 : { KEEP(*(.hook_spadsr)) }
   .hook_dpload 0x01A04BC0 : { KEEP(*(.hook_dpload)) }
   .hook_dpbrowse 0x01977900 : { KEEP(*(.hook_dpbrowse)) }
   .hook_usbbuf1 0x01A69730 : { KEEP(*(.hook_usbbuf1)) }
