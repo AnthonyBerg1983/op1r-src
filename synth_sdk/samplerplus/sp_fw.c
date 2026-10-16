@@ -20,9 +20,9 @@
 #define STOCK_TYPE_JOB ((void (*)(void *))0x0193FFAC)
 int sp_adsr_stock(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel);   /* core export */
 
-static sp_extra sp_x[SP_SLOTS];
-static sp_pre   sp_c[SP_SLOTS];
-static uint8_t  sp_isplus[SP_SLOTS];
+sp_extra sp_x[SP_SLOTS];                                     /* shared with the pages (sp_ui.c) */
+sp_pre   sp_c[SP_SLOTS];
+uint8_t  sp_isplus[SP_SLOTS], sp_keep_next[SP_SLOTS];          /* keep: the browser's preset load stays sampler+ */
 static sp_xvoice sp_xs[SP_VOICES];
 static uint8_t  sp_vpend[SP_VOICES];                         /* velocity not applied yet (first render) */
 static int32_t  sp_sync_key[SP_SLOTS][3];                    /* bar length, start, end the sync factor was made for */
@@ -140,6 +140,12 @@ static void spx_type_job(void *job)
     if ((uint32_t)slot >= SP_SLOTS) { STOCK_TYPE_JOB(job); return; }
     void *json = (uint8_t *)(SYNTH_PATCHES + slot * 0x38) + 4;
     uint32_t tmp[4];
+    if (sp_keep_next[slot] && sel <= 0) {                         /* sample browser: the preset's audio and settings,
+                                                                     * "op1r" stays (the job copies the patch JSON) */
+        sp_keep_next[slot] = 0;
+        STOCK_TYPE_JOB(job);
+        return;
+    }
     if (sel != OP1_SAMPLER_ROW) {
         JV_REMOVE(json, tmp, "op1r"); JV_DTOR(tmp, 2);
         sp_isplus[slot] = 0;
@@ -167,5 +173,9 @@ static void spx_type_job(void *job)
 }
 
 static int spx_is_plus(int slot) { return (unsigned)slot < SP_SLOTS && sp_isplus[slot]; }
+void spu_ui_build(void), spu_ui_load(void), spu_sync(int editor_open_on_6);   /* sp_ui.c */
+void *spu_screen_for(int id);
+int spu_knob(int knob, int delta), spu_key(int code, int pressed);
 const op1_sampler_t SAMPLERPLUS = { spx_render, spx_note_on, spx_note_off, spx_adsr, spx_slot_loaded, spx_is_plus,
-                                    spx_type_job };
+                                    spx_type_job, spu_ui_build, spu_ui_load, spu_screen_for, spu_sync, spu_knob,
+                                    spu_key };

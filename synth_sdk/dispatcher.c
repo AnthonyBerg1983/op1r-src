@@ -339,6 +339,9 @@ void dpu_ui_build(void), dpu_ui_load(void);                       /* drumplus/dp
 void *dpu_screen_for(int id);
 void dpu_sync(int editor_open_on_10);
 int dpu_knob(int knob, int delta), dpu_key(int code, int pressed);
+void spc_ui_build(void), spc_ui_load(void), spc_sync(int editor_open_on_6);   /* samplerplus/sp_core.c -> plugin */
+void *spc_screen_for(int id);
+int spc_knob(int knob, int delta), spc_key(int code, int pressed);
 extern int se_is_open(void), se_open_close(int drum), se_screen_id(void);
 extern void se_key(int code), se_knob(int knob, int delta);
 static uint32_t se_scr[32], se_vt[10], sd_scr[32];                /* sampler (id 6), drum (id 0x10) editor screens */
@@ -624,6 +627,7 @@ void *screens_ctor_hook(void)
         sd_scr[3] = (uint32_t)se_vt;
     }
     dpu_ui_build();                                              /* drum+ plugin: its page objects (0x10, 0x17) */
+    spc_ui_build();                                              /* sampler+ plugin: its page objects (6, 0x16) */
     for (int k = 0; k < op1_seq_count; k++) {                    /* sequencer plugin screens (slot 0x2D) */
         if (!op1_seq_screens[k] || !op1_seq_svgs[k]) continue;
         void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
@@ -680,6 +684,7 @@ void screens_load_hook(void *table)
         if (se_ready && sd_scr[0] && drum_screen) sd_ready = 1;  /* (texts shared, made once) */
     }
     dpu_ui_load();                                               /* drum+ plugin: load its pages, take the stock ones */
+    spc_ui_load();                                               /* sampler+ plugin: the same for 6 / 0x16 */
     finger_screen = SCREEN_TABLE[EUCLID_SCREEN_ID];              /* sequencer plugin screens (swapped into 0x2D) */
     for (int k = 0; k < op1_seq_count; k++) {
         if (!seq_scr[k][2]) continue;
@@ -776,7 +781,9 @@ static int tape_page(void)
 
 static void se_swap(void)                                           /* the open editor's screen into its slot, or stock */
 {
-    if (se_ready) SCREEN_TABLE[6] = se_is_open() && se_screen_id() == 6 ? (void *)se_scr : sampler_screen;
+    int ed6 = se_ready && se_is_open() && se_screen_id() == 6;
+    if (se_ready) SCREEN_TABLE[6] = ed6 ? (void *)se_scr : spc_screen_for(6) ? spc_screen_for(6) : sampler_screen;
+    spc_sync(ed6);                                               /* sampler+ T1 / T2 or stock */
     int ed10 = sd_ready && se_is_open() && se_screen_id() == 0x10;
     if (ed10) SCREEN_TABLE[0x10] = (void *)sd_scr;
     else if (sd_ready) SCREEN_TABLE[0x10] = dpu_screen_for(0x10) ? dpu_screen_for(0x10) : drum_screen;
@@ -822,6 +829,7 @@ void key_event_hook(int code, int pressed)
     if (ms_key(code, pressed, tape_page())) return;              /* MIDI sequencer device: SEQ + TAPE (docs/39) */
     se_swap();                                                   /* drum+ / stock pages follow the drum slot */
     if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
+    if (spc_key(code, pressed)) return;                          /* sampler+: encoder presses, browser */
     /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,
      * the synth key is swallowed, other mode keys close it (and act as usual) */
     if (code == 0x02) synth_held = (uint8_t)pressed;
@@ -1041,6 +1049,7 @@ void knob_event_hook(int knob, int16_t *delta)
 {
     if (knob >= 0 && knob < 4 && se_is_open()) { se_knob(knob, *delta); return; }   /* sample editor */
     if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
+    if (spc_knob(knob, *delta)) return;                          /* sampler+ pages */
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
     if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_seq_turn(*delta); return; }   /* sequencer on / off: green */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }

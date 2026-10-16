@@ -38,4 +38,10 @@ void sp_replay(void)
         sp_slot_loaded(slot, c && ((const uint8_t *)c)[8] == 7 ? JV_KEY(json, "op1r") : 0);
     }
 }
+void spc_ui_build(void) { if (op1_sampler) op1_sampler->ui_build(); }
+void spc_ui_load(void) { if (op1_sampler) op1_sampler->ui_load(); }
+void *spc_screen_for(int id) { return op1_sampler ? op1_sampler->screen_for(id) : 0; }
+void spc_sync(int editor_open_on_6) { if (op1_sampler) op1_sampler->sync(editor_open_on_6); }
+int spc_knob(int knob, int delta) { return op1_sampler ? op1_sampler->knob(knob, delta) : 0; }
+int spc_key(int code, int pressed) { return op1_sampler ? op1_sampler->key(code, pressed) : 0; }
 void sp_type_job(void *job) { if (op1_sampler) op1_sampler->type_job(job); else STOCK_TYPE_JOB(job); }

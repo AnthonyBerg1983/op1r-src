@@ -5,6 +5,7 @@
   "symbol": "SAMPLERPLUS",
   "sources": [
     "../../samplerplus/sp_fw.c",
+    "../../samplerplus/sp_ui.c",
     "../../samplerplus/sp_plus.c",
     "../../samplerplus/sp_voice.c"
   ]

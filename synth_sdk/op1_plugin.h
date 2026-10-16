@@ -243,6 +243,12 @@ typedef struct {
     void (*slot_loaded)(int slot, void *op1r);       /* synth patch loaded: its "op1r" object (Json::Value) or 0 */
     int  (*is_plus)(int slot);
     void (*type_job)(void *job);                      /* synth type browser job (stock job for other rows) */
+    void (*ui_build)(void);                           /* boot: its page objects for screens 6 / 0x16 */
+    void (*ui_load)(void);
+    void *(*screen_for)(int id);                      /* object for 6 / 0x16 (stock when the slot is not sampler+) */
+    void (*sync)(int editor_open_on_6);
+    int  (*knob)(int knob, int delta);                /* 1 = consumed */
+    int  (*key)(int code, int pressed);
 } op1_sampler_t;
 #define OP1_SAMPLER_ROW 100                           /* synth_types id of the 'sampler+' row */
 #ifndef OP1_HOST
