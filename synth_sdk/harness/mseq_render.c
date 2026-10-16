@@ -16,6 +16,7 @@ void *host_text_ctor(void *o, int32_t x, int32_t y, int32_t sz, const uint8_t *c
 { txt_t *t = o; (void)sz; t->x = x; t->y = y; memcpy(t->c, c, 4); t->s[0] = 0; t->align = 0; return o; }
 void host_text_align(void *o, int a) { ((txt_t *)o)->align = a; }
 void host_text_set(void *o, const char *s) { snprintf(((txt_t *)o)->s, 32, "%s", s); }
+int32_t host_text_width(const void *o) { return (int32_t)strlen(((const txt_t *)o)->s) * 7 * 1024; }
 void host_text_draw(void *o, void *r, const int32_t *m) { (void)r; (void)m; if (nt < 64) drawn[nt++] = o; }
 static int32_t pos; static int playing;
 static int32_t e_pos(void) { return pos; }

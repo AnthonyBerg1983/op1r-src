@@ -18,6 +18,21 @@ void host_text_align(void *t, int align);
 #endif
 typedef struct { uint32_t mem[OP1_TEXT_SIZE / 4]; char last[12]; uint8_t made; } ms_txt;
 static const int32_t ident[9] = { 1024, 0, 0, 0, 1024, 0, 0, 0, 1024 };
+/* drawn width of the text (q10) from the bounds set_text computed (docs/45: +0x90 x_min, +0x94 x_max); drawing
+ * scales them once more by the display factor set_text uses (0x500 / 0x4B3 / [0x01DFB654]; emulator: 1.25) */
+#ifdef OP1_HOST
+int32_t host_text_width(const void *t);
+static int32_t txt_w(const ms_txt *t) { return host_text_width(t->mem); }
+#else
+static int32_t txt_w(const ms_txt *t)
+{
+    int32_t f = *(volatile int32_t *)0x01DFB654;
+    if (*(volatile uint8_t *)0xFF906A54 == 1 && !*(volatile uint8_t *)0xFF906A56)
+        f = !*(volatile uint8_t *)0xFF906A55 && !*(volatile uint8_t *)0x018BE698 ? 0x500 : 0x4B3;
+    const int32_t *m = (const int32_t *)t->mem;
+    return (int32_t)(((int64_t)(m[0x94 / 4] - m[0x90 / 4]) * f) >> 10);
+}
+#endif
 static void txt(void *r, ms_txt *t, int32_t x, int32_t y, const uint8_t *c, int align, const char *str)
 {
     if (!t->made) { TXT_CTOR(t->mem, x, y, c, align); t->made = 1; t->last[0] = 1; t->last[1] = 0; }
@@ -39,7 +54,7 @@ static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0
 #define LANE_Y(t) OP1_Q10(34 + (t) * 26)     /* top of lane t, 26 px each, separators below */
 #define BAND_Y  OP1_Q10(28)                  /* loop bar / marker carets */
 #define TXT_Y   4                            /* status bar text, px */
-#define QUANT_X 92                           /* quantize grid, px (left of the time) */
+#define QUANT_X 80                           /* quantize grid: at least here, else after the position text */
 #define TIME_X  160                          /* time: second digit's cell centre, px */
 #define ARROW_X 280                          /* input -> output arrow, px */
 
@@ -81,7 +96,13 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         o = sq_num(o, (uint32_t)b + 1, 0); *o++ = '.'; o = sq_num(o, (uint32_t)q + 1, 0); *o++ = '.'; sq_num(o, (uint32_t)x + 1, 0);
         txt(r, &tx[T_POS], OP1_Q10(30), TXT_Y, c_white, 0, t);
         static const char *const qn[MS_Q_N] = { "", "q4", "q8", "q16", "q32", "q8t", "q16t" };   /* (stock font: caps) */
-        if (v->quant > 0 && v->quant < MS_Q_N) txt(r, &tx[T_Q], OP1_Q10(QUANT_X), TXT_Y, c_grey, 0, qn[v->quant]);
+        if (v->quant > 0 && v->quant < MS_Q_N) {                 /* after the position text (measured), gap 10 px */
+            ms_txt *q = &tx[T_Q];
+            int32_t qx = OP1_Q10(30) + txt_w(&tx[T_POS]) + OP1_Q10(10);
+            if (qx < OP1_Q10(QUANT_X)) qx = OP1_Q10(QUANT_X);     /* (no jumping while the position is short) */
+            if (q->made && ((int32_t *)q->mem)[0x58 / 4] != qx) { ((int32_t *)q->mem)[0x58 / 4] = qx; q->last[0] = 1; q->last[1] = 0; op1_text_set(q->mem, ""); }
+            txt(r, q, qx, TXT_Y, c_grey, 0, qn[v->quant]);
+        }
         uint32_t cs = (uint32_t)((int64_t)p * 100 / 44100);
         /* time: one text per digit in fixed cells (the stock font is proportional, a single string jumps) */
         sq_num(t, cs / 6000, 0);
