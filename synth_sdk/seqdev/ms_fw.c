@@ -119,7 +119,8 @@ static void e_play(int t, int dest, int ch, int kind, int d1, int d2, int on)
         TX_ENQ(0, &p, 1);
         return;
     }
-    if (kind == MS_CC) {                                          /* as a received MIDI CC (stock: CC table, MIDI LFO) */
+    if (kind == MS_CC) {                                          /* output I only: automation, else as a received CC */
+        if (dest != MS_DEST_INSTR) return;                        /* (output S: the stock sequencers take no CCs) */
         extern int mx_cc(int cc, int v);
         if (mx_cc(d1, d2)) return;                                /* synth automation CC (midi/mx.c) */
         static uint8_t msg[3];
