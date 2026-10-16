@@ -25,7 +25,7 @@ sp_pre   sp_c[SP_SLOTS];
 uint8_t  sp_isplus[SP_SLOTS], sp_keep_next[SP_SLOTS];          /* keep: the browser's preset load stays sampler+ */
 static sp_xvoice sp_xs[SP_VOICES];
 static uint8_t  sp_vpend[SP_VOICES];                         /* velocity not applied yet (first render) */
-static int32_t  sp_sync_key[SP_SLOTS][3];                    /* bar length, start, end the sync factor was made for */
+static int32_t  sp_sync_key[SP_SLOTS][4];                    /* bar length, start, end, sync setting of the factor */
 
 static int cur_slot(void)
 {
@@ -154,8 +154,9 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
     if (sp_vpend[v]) { sp_vpend[v] = 0; sp_plus_velocity(model(self), &sp_xs[v], k, &sp_x[s], VOICE_VEL[v] >> 8); }
     if (sp_x[s].sync) {
         int32_t bar = (BEAT_LEN >> 14) * 4;
-        if (bar != sp_sync_key[s][0] || k[0] != sp_sync_key[s][1] || k[3] != sp_sync_key[s][2]) {   /* rare: division */
-            sp_sync_key[s][0] = bar; sp_sync_key[s][1] = k[0]; sp_sync_key[s][2] = k[3];
+        if (bar != sp_sync_key[s][0] || k[0] != sp_sync_key[s][1] || k[3] != sp_sync_key[s][2] ||
+            sp_x[s].sync != sp_sync_key[s][3]) {                   /* rare: one division */
+            sp_sync_key[s][0] = bar; sp_sync_key[s][1] = k[0]; sp_sync_key[s][2] = k[3]; sp_sync_key[s][3] = sp_x[s].sync;
             sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200);
         }
     }

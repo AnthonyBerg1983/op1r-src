@@ -23,7 +23,8 @@ typedef struct {
     uint8_t vel_start;                               /* 0..127: softer notes start later (up to vel_start * 64 samples) */
     uint8_t rand_start;                              /* 0..127: random start offset up to rand_start * 64 samples */
     uint8_t drive;                                   /* 0..127: gain 1..4 into a soft clip */
-    uint8_t sync;                                    /* 0 off, 1..6: the region lasts 1/4, 1/2, 1, 2, 4, 8 bars at C4 */
+    uint8_t sync;                                    /* 0 off, 1..6: the region lasts 1/4, 1/2, 1, 2, 4, 8 bars at the
+                                                        sample's original pitch (other keys transpose) */
 } sp_extra;
 #define SP_NFIELDS 21
 int  sp_extra_set(sp_extra *x, int i, int32_t v);     /* field i (struct order) clamped; returns the stored value */

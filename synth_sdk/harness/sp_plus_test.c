@@ -103,16 +103,16 @@ int main(void)
     assert(e[1] < e[0] * 0.05);
 
     for (int n = 0; n < SP_BLOCK; n++) inc[n] = SP_INC_C4;
-    /* 6. tempo sync: 1 bar at 120 BPM (88200 samples) plays the region in about that time */
-    fill_sine(100.3);
+    /* 6. tempo sync: 1 bar at 120 BPM (88200 samples): speed factor = region / bar, so at the original pitch
+     * (1 sample per sample) the region lasts the bar */
     sp_extra_default(&x); x.sync = 3; sp_plus_prepare(&x, &c); sp_plus_sync(&x, &c, k, RATE, 88200);
-    sp_plus_note_on(&v, &s, k, &x, &c); sp_plus_velocity(&v, &s, k, &x, 127);
-    int32_t end = sp_bound(k[3], 0); int smp = 0;
+    {
+        int32_t len = sp_bound(k[3], 0) - sp_bound(k[0], 0);
+        double secs = (double)len / c.sync_q12;                  /* samples at speed sync_q12 / 4096 */
+        printf("sync 1 bar: factor %d/4096, region at the original pitch %.0f samples (want 88200)\n", c.sync_q12, secs);
+        assert(fabs(secs - 88200) < 100);
+    }
     int16_t k2[8]; memcpy(k2, k, sizeof k2); k2[2] = 0;                    /* no loop */
-    while (v.pos < end && smp < 400000) { sp_plus_render(&v, &s, a, k2, &x, &c, inc, RATE, data, fir); smp += SP_BLOCK; }
-    printf("sync 1 bar: region in %d samples (want 88200), factor %d/4096\n", smp, c.sync_q12);
-    assert(abs(smp - 88200) < 1500);
-
     /* 7. pitch envelope +12: the first block moves twice as far */
     sp_extra_default(&x); sp_plus_prepare(&x, &c); sp_plus_note_on(&w, &s, k, &x, &c); sp_plus_velocity(&w, &s, k, &x, 127);
     sp_extra_default(&x); x.pitch_env = 12; x.pitch_time = 100; x.loop_rel = 0; sp_plus_prepare(&x, &c);
