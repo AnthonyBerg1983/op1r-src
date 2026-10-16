@@ -4,8 +4,8 @@
  *  - the "op1r" key of drum patches is kept through load / save also without the plugin (a kit's drum+ data comes
  *    back with the plugin), playmode repair (error 12) and the JSON repair (errors 22 / 25) before the stock check;
  *  - drum type browser start row and job (the plugin's for its drum_types row id 2, else stock);
- *  - the two drum+ page objects for screens 0x10 / 0x17 (dispatcher.c builds them at boot) and the key / knob / sync
- *    calls of dispatcher.c, forwarded to the plugin if one is loaded. */
+ *  - the boot calls that let the plugin build its page screens (0x10 / 0x17) and the key / knob / sync calls of
+ *    dispatcher.c, forwarded to the plugin if one is loaded. */
 #include "../op1_synth.h"
 
 const op1_drum_t *op1_drum;                                   /* set by the plugin loader (plugload.c) */
@@ -112,14 +112,9 @@ int dp_browser_id(int slot, uint8_t *found)
 }
 void dp_type_job(void *job) { if (op1_drum) op1_drum->type_job(job); else TYPE_JOB(job); }
 
-/* ---- the drum+ pages: objects (built by dispatcher.c at boot) and the forwarded calls ---- */
-static uint32_t dpu_scr[2][32], dpu_vt[10];
-static void pg_init(void *scr) { if (op1_drum && op1_drum->screen) op1_drum->screen->init(scr); }
-static void pg_update(void *scr, int dt) { if (op1_drum && op1_drum->screen) op1_drum->screen->update(scr, dt); else op1_screen_draw(scr, dt); }
-const op1_screen_t SCREEN_drumplus = { pg_init, pg_update };
-uint32_t *dpu_objects(int i) { return dpu_scr[i & 1]; }
-uint32_t *dpu_vtable(void) { return dpu_vt; }
-void dpu_set_stock(void *t1, void *t2) { if (op1_drum) op1_drum->ui_attach(dpu_scr[0], dpu_scr[1], t1, t2); }
+/* ---- the drum+ pages: the plugin's screens (built at boot from dispatcher.c), the forwarded calls ---- */
+void dpu_ui_build(void) { if (op1_drum) op1_drum->ui_build(); }
+void dpu_ui_load(void) { if (op1_drum) op1_drum->ui_load(); }
 void *dpu_screen_for(int id) { return op1_drum ? op1_drum->screen_for(id) : 0; }
 void dpu_sync(int editor_open_on_10) { if (op1_drum) op1_drum->sync(editor_open_on_10); }
 int dpu_knob(int knob, int delta) { return op1_drum ? op1_drum->knob(knob, delta) : 0; }

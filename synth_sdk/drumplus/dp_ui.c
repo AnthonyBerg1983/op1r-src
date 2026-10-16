@@ -406,9 +406,33 @@ static void dpu_update(void *scr, int dt)
 const op1_screen_t SCREEN_drumplus = { dpu_init, dpu_update };
 
 /* boot: the core builds the two page objects (dispatcher.c) and hands them over once the stock ones exist */
-void dpu_ui_attach(uint32_t *t1, uint32_t *t2, void *stock_t1, void *stock_t2)
+/* boot, called by the core at the points where the firmware builds / loads its screens (dispatcher.c): two screen
+ * objects of the iter screen class (empty SVG, drawn in code) for ids 0x10 / 0x17, kept out of the table until a
+ * drum+ slot is shown (dpu_sync) */
+#define SCREEN_CTOR     ((void *(*)(void *, int, const char *))0x01A3BAB0)
+#define SVG_LOAD        ((void *(*)(void *))0x01A503D8)
+#define ITER_SCREEN_VT  ((const uint32_t *)0x019103FC)
+static uint32_t dpu_obj[2][32], dpu_vt[10];
+void dpu_ui_build(void)
 {
-    dpu_scr[0] = t1; dpu_scr[1] = t2;
-    dpu_stock[0] = stock_t1; dpu_stock[1] = stock_t2; dpu_ready = t1 && t2 && stock_t1 && stock_t2; dpu_w.key0 = dpu_w.key1 = -1;
+    for (int i = 0; i < 10; i++) dpu_vt[i] = ITER_SCREEN_VT[i];       /* is_visible: id == current */
+    dpu_vt[3 * 2 + 1] = (uint32_t)SCREEN_drumplus.update;
+    dpu_vt[4 * 2 + 1] = (uint32_t)SCREEN_drumplus.init;
+    for (int i = 0; i < 2; i++) {
+        int id = i ? 0x17 : 0x10;
+        void *saved = SCREEN_TABLE[id];
+        SCREEN_CTOR(dpu_obj[i], id, "usbout.svg");
+        SCREEN_TABLE[id] = saved;
+        dpu_obj[i][3] = (uint32_t)dpu_vt;
+        dpu_scr[i] = dpu_obj[i];
+    }
+}
+void dpu_ui_load(void)
+{
+    for (int i = 0; i < 2; i++) dpu_obj[i][0] = (uint32_t)SVG_LOAD((void *)dpu_obj[i][2]);
+    if (!dpu_obj[0][0] || !dpu_obj[1][0]) return;
+    SCREEN_drumplus.init(dpu_obj[0]);
+    dpu_stock[0] = SCREEN_TABLE[0x10]; dpu_stock[1] = SCREEN_TABLE[0x17];
+    dpu_ready = dpu_stock[0] && dpu_stock[1]; dpu_w.key0 = dpu_w.key1 = -1;
 }
 #endif

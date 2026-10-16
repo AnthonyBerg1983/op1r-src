@@ -198,12 +198,11 @@ static void dpx_type_job(void *job)
 
 /* ---- plugin interface (op1_plugin.h op1_drum_t) ---- */
 static int dpx_is_plus(int slot) { return (unsigned)slot < DP_SLOTS && dp_isplus[slot]; }
-void dpu_ui_attach(uint32_t *t1, uint32_t *t2, void *stock_t1, void *stock_t2);   /* dp_ui.c */
+void dpu_ui_build(void), dpu_ui_load(void);                       /* dp_ui.c */
 void *dpu_screen_for(int id);
 void dpu_sync(int editor_open_on_10);
 int dpu_knob(int knob, int delta), dpu_key(int code, int pressed);
-extern const op1_screen_t SCREEN_drumplus;
 const op1_drum_t DRUMPLUS = {
     (void (*)(void *, int16_t *, const void *))dpx_render, (void (*)(void *, const void *))dpx_note_on,
     (void (*)(void *, const void *))dpx_note_off, dpx_slot_loaded, dpx_is_plus, dpx_type_job,
-    dpu_ui_attach, dpu_screen_for, dpu_sync, dpu_knob, dpu_key, &SCREEN_drumplus };
+    dpu_ui_build, dpu_ui_load, dpu_screen_for, dpu_sync, dpu_knob, dpu_key };

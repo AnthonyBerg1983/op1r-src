@@ -335,10 +335,7 @@ static int du_always(void *self, int id) { (void)self; (void)id; return 1; }
 /* sample editor (screens/sampedit.c, docs/27): synth key + scissors on the sampler page */
 extern const op1_screen_t SCREEN_sampedit;
 /* drum+ pages (drumplus/dp_ui.c): objects for slots 0x10 (T1) / 0x17 (T2), used while the drum slot is drum+ */
-extern const op1_screen_t SCREEN_drumplus;
-uint32_t *dpu_objects(int i);
-uint32_t *dpu_vtable(void);
-void dpu_set_stock(void *t1, void *t2);
+void dpu_ui_build(void), dpu_ui_load(void);                       /* drumplus/dp_core.c -> plugin */
 void *dpu_screen_for(int id);
 void dpu_sync(int editor_open_on_10);
 int dpu_knob(int knob, int delta), dpu_key(int code, int pressed);
@@ -626,19 +623,7 @@ void *screens_ctor_hook(void)
         SCREEN_TABLE[0x10] = saved;
         sd_scr[3] = (uint32_t)se_vt;
     }
-    {                                                            /* drum+ page objects (ids 0x10, 0x17) */
-        uint32_t *vt = dpu_vtable();
-        for (int i = 0; i < 10; i++) vt[i] = ITER_SCREEN_VT[i];
-        vt[3 * 2 + 1] = (uint32_t)SCREEN_drumplus.update;
-        vt[4 * 2 + 1] = (uint32_t)SCREEN_drumplus.init;
-        for (int i = 0; i < 2; i++) {
-            int id = i ? 0x17 : 0x10;
-            void *saved = SCREEN_TABLE[id];
-            SCREEN_CTOR(dpu_objects(i), id, "usbout.svg");       /* empty svg: drawn in code */
-            SCREEN_TABLE[id] = saved;
-            dpu_objects(i)[3] = (uint32_t)vt;
-        }
-    }
+    dpu_ui_build();                                              /* drum+ plugin: its page objects (0x10, 0x17) */
     for (int k = 0; k < op1_seq_count; k++) {                    /* sequencer plugin screens (slot 0x2D) */
         if (!op1_seq_screens[k] || !op1_seq_svgs[k]) continue;
         void *saved = SCREEN_TABLE[EUCLID_SCREEN_ID];
@@ -694,11 +679,7 @@ void screens_load_hook(void *table)
         drum_screen = SCREEN_TABLE[0x10];
         if (se_ready && sd_scr[0] && drum_screen) sd_ready = 1;  /* (texts shared, made once) */
     }
-    {                                                            /* drum+ pages: stock objects of 0x10 / 0x17 */
-        uint32_t *a = dpu_objects(0), *b = dpu_objects(1);
-        a[0] = (uint32_t)SVG_LOAD((void *)a[2]); b[0] = (uint32_t)SVG_LOAD((void *)b[2]);
-        if (a[0] && b[0]) { SCREEN_drumplus.init(a); dpu_set_stock(SCREEN_TABLE[0x10], SCREEN_TABLE[0x17]); }
-    }
+    dpu_ui_load();                                               /* drum+ plugin: load its pages, take the stock ones */
     finger_screen = SCREEN_TABLE[EUCLID_SCREEN_ID];              /* sequencer plugin screens (swapped into 0x2D) */
     for (int k = 0; k < op1_seq_count; k++) {
         if (!seq_scr[k][2]) continue;
