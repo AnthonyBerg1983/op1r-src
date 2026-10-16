@@ -147,6 +147,7 @@ static void dp_repair_playmode(void *json);
 int dp_load_parse(void *json, int mode)
 {
     dp_repair_playmode(json);                          /* before the stock range check (error 12) */
+    extern void patch_repair(void *json); patch_repair(json);   /* unknown FX / LFO (error 22 / 25) */
     uint32_t off = (uint32_t)json - 4 - DRUM_PATCHES;
     dp_loading_slot = off % 0x38 == 0 && off / 0x38 < DP_SLOTS ? (int)(off / 0x38) : -1;
     int r = PARSE_PATCH(json, mode);
