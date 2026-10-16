@@ -1,0 +1,126 @@
+/* drum+ core part (docs/43): what stays in the firmware when drum+ is a plugin file (plugins/drumplus, kind "drum").
+ *  - DrumSampler vtable slots render / note_on / note_off (SLOTS in make_firmware.py): the plugin's, else the stock
+ *    functions (a stock drum kit, bit-exact);
+ *  - the "op1r" key of drum patches is kept through load / save also without the plugin (a kit's drum+ data comes
+ *    back with the plugin), playmode repair (error 12) and the JSON repair (errors 22 / 25) before the stock check;
+ *  - drum type browser start row and job (the plugin's for its drum_types row id 2, else stock);
+ *  - the two drum+ page objects for screens 0x10 / 0x17 (dispatcher.c builds them at boot) and the key / knob / sync
+ *    calls of dispatcher.c, forwarded to the plugin if one is loaded. */
+#include "../op1_synth.h"
+
+const op1_drum_t *op1_drum;                                   /* set by the plugin loader (plugload.c) */
+
+#define DP_SLOTS      8
+#define DRUM_PATCHES  0x01DDD9A8                              /* 8 drum patch objects x 0x38 (JSON at +4) */
+#define STOCK_RENDER   ((void (*)(void *, int16_t *, const void *))0x019789EC)
+#define STOCK_NOTE_ON  ((void (*)(void *, const void *))0x01978926)
+#define STOCK_NOTE_OFF ((void (*)(void *, const void *))0x01978898)
+
+/* ---- voice slots (audio interrupt) ---- */
+volatile uint32_t dp_prof[2];                                 /* render cycles: plugin / stock (resource monitor) */
+static inline uint32_t cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
+void dp_fw_render(void *self, int16_t *out, const void *pad)
+{
+    const op1_drum_t *d = op1_drum;
+    uint32_t t0 = cycles();
+    if (d) d->render(self, out, pad); else STOCK_RENDER(self, out, pad);
+    dp_prof[d ? 0 : 1] += cycles() - t0;
+}
+void dp_fw_note_on(void *self, const void *pad) { if (op1_drum) op1_drum->note_on(self, pad); else STOCK_NOTE_ON(self, pad); }
+void dp_fw_note_off(void *self, const void *pad) { if (op1_drum) op1_drum->note_off(self, pad); else STOCK_NOTE_OFF(self, pad); }
+
+/* ---- patch JSON: keep "op1r" (parse_patch_json rebuilds the patch from its known keys and assigns the result over
+ * the patch at 0x01A044A8: operator=(patch, fresh)); load_drum_patch's parser call (0x01A04BC0) tells the slot ---- */
+#define JV_KEY    ((void *(*)(void *, const char *))0x019BFEB4)
+#define JV_IDX    ((void *(*)(void *, unsigned))0x019BFAF8)
+#define JV_ASSIGN ((void *(*)(void *, const void *))0x019BDDC0)
+#define JV_SIZE   ((unsigned (*)(const void *))0x019BE8D8)
+#define JV_CGET   ((const void *(*)(const void *, const char *))0x019BEB70)
+#define JV_FROM_INT ((void *(*)(void *, int))0x019BD890)
+#define JV_DTOR   ((void (*)(void *, int))0x019BDD18)
+#define PARSE_PATCH ((int (*)(void *, int))0x01A037A8)
+enum { JV_INT = 1, JV_UINT = 2, JV_ARRAY = 6, JV_OBJECT = 7 };
+static uint8_t jv_type(const void *v) { return ((const uint8_t *)v)[8]; }
+static int dp_loading_slot = -1;
+
+void *dp_keep_op1r(void *patch, void *fresh)
+{
+    void *old = JV_KEY(patch, "op1r");                 /* (adds a null member if absent: patch is overwritten next) */
+    int keep = jv_type(old) == JV_OBJECT;
+    if (keep) JV_ASSIGN(JV_KEY(fresh, "op1r"), old);
+    if (dp_loading_slot >= 0 && op1_drum) op1_drum->slot_loaded(dp_loading_slot, keep ? JV_KEY(fresh, "op1r") : 0);
+    return JV_ASSIGN(patch, fresh);
+}
+
+/* kits saved by drum+ 2.6 .. 2.7.1 hold gate as playmode 0; the stock check (load_drum_patch, Ranges group 8
+ * index 3: 4096..20480) rejects it: "Invalid drum patch ... error 12" at boot. Words below 4096 become 4096 = gate
+ * (>> 13 == 0), only where "playmode" is an array (const lookup first: no member is added to other patches). */
+#define DP_GATE 4096
+static void dp_repair_playmode(void *json)
+{
+    const void *c = JV_CGET(json, "playmode");
+    if (!c || jv_type(c) != JV_ARRAY) return;
+    void *pm = JV_KEY(json, "playmode");
+    unsigned n = JV_SIZE(pm);
+    uint32_t tmp[4];
+    for (unsigned i = 0; i < n && i < 64; i++) {
+        void *v = JV_IDX(pm, i);
+        if ((jv_type(v) == JV_INT || jv_type(v) == JV_UINT) && *(const int32_t *)v < DP_GATE) {
+            JV_FROM_INT(tmp, DP_GATE);
+            JV_ASSIGN(v, tmp);
+            JV_DTOR(tmp, 2);
+        }
+    }
+}
+int dp_load_parse(void *json, int mode)
+{
+    dp_repair_playmode(json);                          /* before the stock range check (error 12) */
+    extern void patch_repair(void *json); patch_repair(json);   /* unknown FX / LFO (error 22 / 25) */
+    uint32_t off = (uint32_t)json - 4 - DRUM_PATCHES;
+    dp_loading_slot = off % 0x38 == 0 && off / 0x38 < DP_SLOTS ? (int)(off / 0x38) : -1;
+    int r = PARSE_PATCH(json, mode);
+    dp_loading_slot = -1;
+    return r;
+}
+
+/* ---- drum type browser (Shift + T1) ----
+ * Start row (CALL patch_01a01ffe at 0x01977900 in DrumController): the stock id comes from drum_type_id_by_name
+ * 0x01A01EF4: drum_types row id, or for "type": "drum" minus the index of the kit with the same name in the kit table
+ * 0x01DE20FC, which holds factory AND user kits. The browser list (patch_01A025E8) has only factory kits: a user kit's
+ * id is not found and the browser would start on row 0 (DBOX) and load a factory kit on the next turn. So: drum+ slot
+ * -> the DRUM+ row (id 2, plugin); an id the list does not have -> 0 (DRUM, nothing loaded until a turn). */
+#define DP_TYPE_ID   2
+#define DP_DRUM_ID   ((int (*)(int, uint8_t *))0x01A01FFE)
+#define DP_TYPE_LIST ((uint8_t *(*)(void))0x01A025E8)
+#define TYPE_JOB     ((void (*)(void *))0x0193F86C)
+static int dp_list_has(int id)
+{
+    uint8_t *l = DP_TYPE_LIST();                              /* rows 0x30 (+0x1c id, +0x24/+0x28 items 0x20) */
+    for (uint8_t *r = *(uint8_t **)(l + 4); r < *(uint8_t **)(l + 8); r += 0x30) {
+        if (*(int *)(r + 0x1c) == id) return 1;
+        for (uint8_t *it = *(uint8_t **)(r + 0x24); it < *(uint8_t **)(r + 0x28); it += 0x20)
+            if (*(int *)(it + 0x1c) == id) return 1;
+    }
+    return 0;
+}
+int dp_browser_id(int slot, uint8_t *found)
+{
+    int id = DP_DRUM_ID(slot, found);
+    if (op1_drum && op1_drum->is_plus(slot & 7)) return DP_TYPE_ID;
+    if (!dp_list_has(id)) { id = 0; *found = 0; }
+    return id;
+}
+void dp_type_job(void *job) { if (op1_drum) op1_drum->type_job(job); else TYPE_JOB(job); }
+
+/* ---- the drum+ pages: objects (built by dispatcher.c at boot) and the forwarded calls ---- */
+static uint32_t dpu_scr[2][32], dpu_vt[10];
+static void pg_init(void *scr) { if (op1_drum && op1_drum->screen) op1_drum->screen->init(scr); }
+static void pg_update(void *scr, int dt) { if (op1_drum && op1_drum->screen) op1_drum->screen->update(scr, dt); else op1_screen_draw(scr, dt); }
+const op1_screen_t SCREEN_drumplus = { pg_init, pg_update };
+uint32_t *dpu_objects(int i) { return dpu_scr[i & 1]; }
+uint32_t *dpu_vtable(void) { return dpu_vt; }
+void dpu_set_stock(void *t1, void *t2) { if (op1_drum) op1_drum->ui_attach(dpu_scr[0], dpu_scr[1], t1, t2); }
+void *dpu_screen_for(int id) { return op1_drum ? op1_drum->screen_for(id) : 0; }
+void dpu_sync(int editor_open_on_10) { if (op1_drum) op1_drum->sync(editor_open_on_10); }
+int dpu_knob(int knob, int delta) { return op1_drum ? op1_drum->knob(knob, delta) : 0; }
+int dpu_key(int code, int pressed) { return op1_drum ? op1_drum->key(code, pressed) : 0; }

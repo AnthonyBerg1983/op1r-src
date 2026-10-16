@@ -319,7 +319,7 @@ extern dp_pre dp_c[8][24];
 extern uint8_t dp_isplus[8];
 void dp_fw_store_pad(int slot, int pad);                          /* dp_fw.c: op1r.pads[pad] into the patch JSON */
 
-static uint32_t dpu_scr[2][32], dpu_vt[10];
+static uint32_t *dpu_scr[2];                                      /* page objects (core, dp_core.c) */
 static void *dpu_stock[2];
 static uint8_t dpu_ready;
 static dpu_wave dpu_w;
@@ -405,8 +405,10 @@ static void dpu_update(void *scr, int dt)
 }
 const op1_screen_t SCREEN_drumplus = { dpu_init, dpu_update };
 
-/* boot (screen ctor list / load all, dispatcher.c): two screen objects on the stock vtable with our update */
-uint32_t *dpu_objects(int i) { return dpu_scr[i]; }
-uint32_t *dpu_vtable(void) { return dpu_vt; }
-void dpu_set_stock(void *t1, void *t2) { dpu_stock[0] = t1; dpu_stock[1] = t2; dpu_ready = t1 && t2; dpu_w.key0 = dpu_w.key1 = -1; }
+/* boot: the core builds the two page objects (dispatcher.c) and hands them over once the stock ones exist */
+void dpu_ui_attach(uint32_t *t1, uint32_t *t2, void *stock_t1, void *stock_t2)
+{
+    dpu_scr[0] = t1; dpu_scr[1] = t2;
+    dpu_stock[0] = stock_t1; dpu_stock[1] = stock_t2; dpu_ready = t1 && t2 && stock_t1 && stock_t2; dpu_w.key0 = dpu_w.key1 = -1;
+}
 #endif

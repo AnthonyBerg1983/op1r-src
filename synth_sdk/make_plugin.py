@@ -19,7 +19,7 @@ CHECK_BASE = 0x0041A3C0
 IMP_FAKE = 0x0E000000                       # import addresses for the test links only (never loaded)
 OP1P_API = 1                                # = OP1_PLUGIN_API (op1_plugin.h)
 OP1P_ABS32, OP1P_HI16, OP1P_LO16, OP1P_IMPORT = 1, 2, 3, 0x80000000
-KINDS = {'synth': 0, 'fx': 1, 'seq': 2}                  # op1p.h OP1P_SYNTH / OP1P_FX / OP1P_SEQ
+KINDS = {'synth': 0, 'fx': 1, 'seq': 2, 'drum': 3}       # op1p.h OP1P_SYNTH / OP1P_FX / OP1P_SEQ / OP1P_DRUM
 R_LUIMM16, R_HUIMM16, R_BYTE4 = 6, 7, 0x12                 # binutils include/elf/bfin.h
 R_PCREL = {1, 3, 4, 8, 9, 0xA, 0xD, 0xE, 0x13}           # pc-relative: fine inside the image only
 LINK = """SECTIONS {{ . = {base:#x};
@@ -49,7 +49,7 @@ def find(name):
             e['screen'] = dict(p['screen'], svg=os.path.normpath(os.path.join(d, p['screen']['svg'])))
         return KINDS[p['kind']], e
     engs, fxs = plugins.load()
-    for kind, lst in ((0, engs), (1, fxs), (2, plugins.load_seqs())):
+    for kind, lst in ((0, engs), (1, fxs), (2, plugins.load_seqs()), (3, plugins.load_seqs('drum'))):
         for e in lst:
             if name in (e['name'], e['dir']):
                 return kind, e
@@ -177,7 +177,7 @@ def build(name, out_dir=OUT):
         head += b'\0' * (4 - len(head) % 4 if len(head) % 4 else 4)
     data = head + body + struct.pack('<4I', 0x5431504F, len(head), len(body), zlib.crc32(body))
     os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, f'{e["name"].replace(" ", "_")}.op1p')
+    out = os.path.join(out_dir, f'{e["name"].replace(" ", "_").replace("+", "plus")}.op1p')
     open(out, 'wb').write(data)
     if out_dir == OUT:                                             # host test: image at CHECK_BASE
         open(out[:-5] + '.ref', 'wb').write(bytes(imgb) + bytes(bss))
@@ -189,7 +189,7 @@ def build(name, out_dir=OUT):
 if __name__ == '__main__':
     args = sys.argv[1:]
     if args == ['--all']:
-        args = [e['dir'] for e in sum(plugins.load(), []) + plugins.load_seqs()]
+        args = [e['dir'] for e in sum(plugins.load(), []) + plugins.load_seqs() + plugins.load_seqs('drum')]
     if not args:
         raise SystemExit(__doc__)
     for a in args:

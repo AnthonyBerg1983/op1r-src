@@ -30,6 +30,7 @@ const char         *op1_seq_names[OP1_SEQ_MAX];
 const op1_screen_t *op1_seq_screens[OP1_SEQ_MAX];
 const char         *op1_seq_svgs[OP1_SEQ_MAX];
 int                 op1_seq_count;
+extern const op1_drum_t *op1_drum;                             /* drumplus/dp_core.c: the drum engine plugin (docs/43) */
 extern const op1_engine_t *const op1_builtin_engines[];
 extern const int                 op1_builtin_engine_count;
 extern const char *const         op1_builtin_engine_names[], *const op1_builtin_sample_engine_names[];
@@ -65,6 +66,7 @@ void *read_fx_param_safe(int slot, int pos);
 int  eu_fw_note_on(int pos, int note, int key, int vel);           /* seq/seq_core.c */
 void eu_fw_note_off(int midi);
 extern volatile uint8_t eu_rec_play;
+void dpu_sync_auto(void);                                          /* dispatcher.c */
 
 #define Y_OPEN     ((int (*)(const char *, int, int))0x01A997F4)
 #define Y_CLOSE    ((int (*)(int))0x01A99908)
@@ -102,6 +104,8 @@ static const struct { const char *name; void *addr; } exports[] = {
     { "sq_store_load", (void *)sq_store_load }, { "sq_store_dirty", (void *)sq_store_dirty },
     { "op1_db_last_err", (void *)&op1_db_last_err }, { "eu_fw_note_on", (void *)eu_fw_note_on },
     { "eu_fw_note_off", (void *)eu_fw_note_off }, { "eu_rec_play", (void *)&eu_rec_play },
+    /* drum engine (docs/43) */
+    { "dpu_sync_auto", (void *)dpu_sync_auto },
 };
 
 /* boot report (resource monitor later): loaded count, refused count, last error, skipped by the crash marker */
@@ -130,7 +134,7 @@ static void map_load(void *db)
     while (p < e && map_n < MAP_MAX) {
         int present = 1;
         if (*p == '-') { present = 0; p++; }
-        if (e - p < 4 || (p[0] != 's' && p[0] != 'f' && p[0] != 'q') || p[1] != ':') break;
+        if (e - p < 4 || (p[0] != 's' && p[0] != 'f' && p[0] != 'q' && p[0] != 'd') || p[1] != ':') break;
         char k = p[0]; p += 2;
         int i = 0;
         while (p < e && *p != '=' && i < 15) map[map_n].name[i++] = *p++;
@@ -202,7 +206,7 @@ static void row_delete(void *db, char kind, const char *name)
 {
     char sql[96];
     char *o = scat(scat(sql, kind == 'f' ? "DELETE FROM fx_types" : kind == 'q' ? "DELETE FROM seq_types"
-                                                                               : "DELETE FROM synth_types"), " WHERE type='");
+                             : kind == 'd' ? "DELETE FROM drum_types" : "DELETE FROM synth_types"), " WHERE type='");
     scat(scat(o, name), "'");
     op1_db_write(db, sql);
 }
@@ -287,14 +291,15 @@ static void seq_row(void *db, const char *name)
     scat(o, "')");
     op1_db_write(db, sql);
 }
-static void seq_map(const char *name)
+static void kind_map(char k, const char *name)
 {
     for (int i = 0; i < map_n; i++)
-        if (map[i].kind == 'q' && seq(map[i].name, name)) { if (!map[i].present) { map[i].present = 1; map_dirty = 1; } return; }
+        if (map[i].kind == k && seq(map[i].name, name)) { if (!map[i].present) { map[i].present = 1; map_dirty = 1; } return; }
     if (map_n >= MAP_MAX) return;
-    map[map_n].kind = 'q'; map[map_n].present = 1; map[map_n].n = 1;
+    map[map_n].kind = k; map[map_n].present = 1; map[map_n].n = 1;
     scat(map[map_n].name, name); map_n++; map_dirty = 1;
 }
+#define seq_map(name) kind_map('q', (name))
 
 static uint32_t total;
 static int load_one(void *db, const char *file)
@@ -321,6 +326,20 @@ static int load_one(void *db, const char *file)
     if (!r && total + v.mem_size > TOTAL_CAP) r = OP1P_E_SIZE;
     int kind = r ? 0 : (int)v.hdr->kind;
     const char *name = r ? 0 : sdup(v.hdr->name);
+    if (!r && kind == OP1P_DRUM) {                                  /* drum engine (drum+): one, row id 2 */
+        uint8_t *mem = op1_drum ? 0 : MALLOC(v.mem_size);
+        if (!mem) r = op1_drum ? OP1P_E_HEADER : OP1P_E_SIZE;
+        if (!r) {
+            op1p_relocate(&v, mem, (uint32_t)mem, imp);
+            cache_sync(mem, v.mem_size);
+            total += v.mem_size;
+            op1_drum = (const op1_drum_t *)(mem + v.hdr->entry_off);
+            op1_db_write(DB_FACTORY(), "INSERT OR IGNORE INTO drum_types VALUES (2,'drum+','[0, 0, 0, 0, 0, 0, 0, 0]')");
+            kind_map('d', "drum+");
+        }
+        if (buf) FREE(buf);
+        return r;
+    }
     if (!r && kind == OP1P_SEQ) {                                   /* sequencer: no number, own table */
         if (!name || seq_taken(name) || op1_seq_count >= OP1_SEQ_MAX) r = OP1P_E_HEADER;
         uint8_t *mem = r ? 0 : MALLOC(v.mem_size);
@@ -439,6 +458,7 @@ void plug_boot(void)
         if (!map[i].present) continue;
         int here = map[i].kind == 's' ? map[i].n < op1_engine_count && op1_engines[map[i].n]
                  : map[i].kind == 'f' ? map[i].n < op1_fx_count && op1_fxs[map[i].n]
+                 : map[i].kind == 'd' ? op1_drum != 0
                  : seq_taken(map[i].name);
         if (!here) { row_delete(DB_FACTORY(), map[i].kind, map[i].name); map[i].present = 0; map_dirty = 1; }
     }

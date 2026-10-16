@@ -2,7 +2,8 @@
 
 plugin.json fields (paths relative to the plugin folder):
   name           type name shown on the OP-1: lowercase, <= 15 chars, no clash with built-in types
-  kind           "synth", "fx" or "seq" (sequencer, docs/44: op1_seq_t; always a plugin file)
+  kind           "synth", "fx", "seq" (sequencer, docs/44: op1_seq_t) or "drum" (drum engine, docs/43: op1_drum_t);
+                 seq / drum are always plugin files
   author         (optional) who made it: shown in the web patcher (stored in the plugin file)
   order          (optional) the number of a plugin that was compiled into earlier releases (knobs[4] = 0x5300 + order,
                  1..31): kept so its old sounds work, never change it. Needed only to compile a plugin in (--builtin).
@@ -34,9 +35,9 @@ def load():
         e['source'], e['extra_sources'] = rel(p['sources'][0]), [rel(s) for s in p['sources'][1:]]
         if p.get('screen'):
             e['screen'] = dict(p['screen'], svg=rel(p['screen']['svg']))
-        assert p['kind'] in ('synth', 'fx', 'seq'), pj
+        assert p['kind'] in ('synth', 'fx', 'seq', 'drum'), pj
         e['dir'] = d
-        if p['kind'] == 'seq':
+        if p['kind'] in ('seq', 'drum'):
             continue
         (engs if p['kind'] == 'synth' else fxs).append(e)
     for lst in (engs, fxs):
@@ -46,15 +47,15 @@ def load():
     return engs, fxs
 
 
-def load_seqs():
-    """-> sequencer plugins (kind "seq"), sorted by name; always built as plugin files"""
+def load_seqs(kind='seq'):
+    """-> plugins of kind "seq" (or "drum"), sorted by folder; always built as plugin files"""
     out = []
     for d in sorted(os.listdir(DIR)):
         pj = os.path.join(DIR, d, 'plugin.json')
         if not os.path.isfile(pj):
             continue
         p = json.load(open(pj))
-        if p['kind'] != 'seq':
+        if p['kind'] != kind:
             continue
         rel = lambda f: os.path.normpath(os.path.join('plugins', d, f))
         e = {k: v for k, v in p.items() if k not in ('kind', 'sources')}

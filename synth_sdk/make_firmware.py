@@ -205,7 +205,7 @@ def gen_table(engs, fxs):
 def build(engs, fxs):
     os.makedirs(os.path.join(HERE, 'build'), exist_ok=True)
     gen_table(engs, fxs)
-    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/seq_core.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'seqdev/ms_draw.c', 'midi/mx.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'tape/safewrite.c', 'patch_repair.c', 'drumplus/dp_voice.c', 'drumplus/dp_plus.c', 'drumplus/dp_fw.c', 'drumplus/dp_ui.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
+    srcs = ['dispatcher.c', 'build/engines_table.c', 'lfo/quadlfo.c', 'seq/seq_core.c', 'screens/iterlab.c', 'screens/sysmon.c', 'screens/usbtrack.c', 'screens/usbout.c', 'tape/markers.c', 'screens/oblique.c', 'build/oblique_data.c', 'tape/countin.c', 'seqdev/ms_core.c', 'seqdev/ms_fw.c', 'seqdev/ms_draw.c', 'midi/mx.c', 'plugload/plugload.c', 'plugload/op1p_load.c', 'screens/settings.c', 'tape/punch.c', 'screens/sampedit.c', 'tape/erase.c', 'tape/safewrite.c', 'patch_repair.c', 'drumplus/dp_core.c', 'devupd/du.c', 'devupd/du_fw.c', 'screens/duprompt.c'] + [s for e in engs for s in [e['source']] + e.get('extra_sources', [])] + [s for f in fxs for s in [f['source']] + f.get('extra_sources', [])]
     objs = []
     cmds = []
     for s in srcs:
@@ -419,11 +419,7 @@ def patch_db(dbp, engs, fxs):
         lid = c.execute('SELECT MAX(id) FROM lfo_types').fetchone()[0] + 1
         c.execute('INSERT INTO lfo_types VALUES (?,?,?)', (lid, 'quad', json.dumps(QUAD_LFO_DEFAULTS)))
     # sequencers (docs/44) are plugin files: the loader adds / removes their seq_types rows
-    # drum+ (drumplus/dp_fw.c): a drum_types row; dp_type_job handles its id (DP_TYPE_ID)
-    if not c.execute("SELECT 1 FROM drum_types WHERE type='drum+'").fetchone():
-        did = c.execute('SELECT MAX(id) FROM drum_types').fetchone()[0] + 1
-        assert did == 2, did                                             # = DP_TYPE_ID in drumplus/dp_fw.c
-        c.execute('INSERT INTO drum_types VALUES (?,?,?)', (did, 'drum+', '[0, 0, 0, 0, 0, 0, 0, 0]'))
+    # drum+ is a plugin file (docs/43): the loader adds / removes its drum_types row (id 2)
     c.commit()
     for r in c.execute('SELECT * FROM synth_types ORDER BY id'): print('  ', r)
     for r in c.execute('SELECT * FROM fx_types ORDER BY id'): print('  fx', r)
@@ -432,7 +428,7 @@ def patch_db(dbp, engs, fxs):
 def main(opz=False, release=False, plugin_files='all', builtin=''):
     check_collisions()
     engs, fxs = plugins.load()
-    seqs = plugins.load_seqs()                  # sequencers (docs/44): always plugin files
+    seqs = plugins.load_seqs() + plugins.load_seqs('drum')   # sequencers / drum+ (docs/44, 43): always plugin files
     # plugin files (docs/37, default: all) are built into the tree's plugins/ instead of being compiled in;
     # --builtin compiles the named ones (or all) into the firmware
     names = {e['name'] for e in engs + fxs + seqs}

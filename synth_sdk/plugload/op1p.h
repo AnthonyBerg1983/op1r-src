@@ -25,6 +25,7 @@
 #define OP1P_SYNTH    0
 #define OP1P_FX       1
 #define OP1P_SEQ      2              /* op1_seq_t (docs/44) */
+#define OP1P_DRUM     3              /* op1_drum_t (docs/43) */
 #define OP1P_NO_SCREEN 0xFFFFFFFFu
 #define OP1P_F_USES_SAMPLE 1u
 #define OP1P_PREF(flags) (((flags) >> 8) & 0xFF)   /* preferred number (plugin.json order 1..31: keeps old sounds), 0 none */

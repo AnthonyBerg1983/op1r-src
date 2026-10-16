@@ -211,6 +211,25 @@ typedef struct {
     const char *alias;                                /* an older name that also selects it, or 0 */
 } op1_seq_t;
 #define OP1_SEQ_MAX 8                                  /* sequencer plugins loaded at once */
+
+/* ---- drum engine plugin (plugin.json "kind": "drum", docs/43): drum+ ----
+ * One at a time. The core keeps the DrumSampler vtable slots, the "op1r" key in drum patches (also without the plugin),
+ * the drum_types row (id 2) and the two page objects for screens 0x10 / 0x17; it calls these when a plugin is loaded,
+ * else the stock code. pad = the stock pad words (int16[8]). */
+typedef struct {
+    void (*render)(void *self, int16_t *out, const void *pad);   /* drum voice (audio interrupt): may call the stock */
+    void (*note_on)(void *self, const void *pad);
+    void (*note_off)(void *self, const void *pad);
+    void (*slot_loaded)(int slot, void *op1r);       /* drum patch loaded: its "op1r" object (Json::Value) or 0 */
+    int  (*is_plus)(int slot);                        /* slot is drum+ (browser row, pages) */
+    void (*type_job)(void *job);                      /* drum type browser job (stock job for other rows) */
+    void (*ui_attach)(uint32_t *page_t1, uint32_t *page_t2, void *stock_t1, void *stock_t2);   /* screens built */
+    void *(*screen_for)(int id);                      /* object for 0x10 / 0x17 (0: none) */
+    void (*sync)(int editor_open_on_10);
+    int  (*knob)(int knob, int delta);                /* 1 = consumed */
+    int  (*key)(int code, int pressed);
+    const op1_screen_t *screen;                       /* the two page objects' init / update */
+} op1_drum_t;
 #ifndef OP1_HOST
 #define op1_find_node(scr, id) (((void *(*)(void *, const char *))0x01A3B580)((scr), (id)))
 #define op1_node_set_transform(node, m9) (((void (*)(void *, const int32_t *))0x019EAD58)((node), (m9)))

@@ -1,0 +1,12 @@
+{
+  "name": "drumplus",
+  "author": "pcppcp",
+  "kind": "drum",
+  "symbol": "DRUMPLUS",
+  "sources": [
+    "../../drumplus/dp_fw.c",
+    "../../drumplus/dp_ui.c",
+    "../../drumplus/dp_plus.c",
+    "../../drumplus/dp_voice.c"
+  ]
+}
