@@ -237,6 +237,10 @@ void ms_note_in(ms_t *s, int note, int vel, int ch, int on)
         if (insert(s, t, s->prev, &e)) return;
         s->held[s->nheld].note = (uint8_t)note; s->held[s->nheld].ch = (uint8_t)(ch & 15); s->held[s->nheld].pos = s->prev;
         s->nheld++;
+        if (s->ntake < MS_TAKE) {
+            s->take[s->ntake].pos = s->prev; s->take[s->ntake].note = (uint8_t)note;
+            s->take[s->ntake].ch = (uint8_t)(ch & 15); s->take[s->ntake].track = (uint8_t)t; s->ntake++;
+        }
         return;
     }
     for (int i = 0; i < s->nheld; i++)
@@ -417,6 +421,72 @@ int ms_paste(ms_t *s, int32_t at)
     }
     return bad;
 }
+
+/* ---- quantize (main loop) ---- */
+int32_t ms_grid_step(int grid, int32_t bpm_q8)
+{
+    static const uint8_t div[MS_Q_N] = { 0, 1, 2, 4, 8, 3, 6 };          /* steps per beat */
+    if (grid <= MS_Q_OFF || grid >= MS_Q_N || bpm_q8 <= 0) return 0;
+    return (int32_t)(((int64_t)2646000 << 8) / ((int64_t)bpm_q8 * div[grid]));   /* 44100 * 60 / bpm / div */
+}
+static int32_t snap(int32_t p, int32_t step) { int32_t q = (p + step / 2) / step * step; return q > MS_MAXPOS ? q - step : q; }
+/* move one note (track t, position pos, note / channel) to np: removed from its slot, inserted again (len kept) */
+static int move_note(ms_t *s, int t, int32_t pos, int note, int ch, int32_t np)
+{
+    if (np == pos) return 0;
+    if (ms_load_range(s, t, (int)(pos >> MS_PAGE_BITS), (int)(pos >> MS_PAGE_BITS)) ||
+        ms_load_range(s, t, (int)(np >> MS_PAGE_BITS), (int)(np >> MS_PAGE_BITS))) return -1;
+    int p = (int)(pos >> MS_PAGE_BITS);
+    uint16_t off = (uint16_t)(pos & 0xFFFF);
+    for (uint16_t *link = &s->h.first[t][p]; *link != MS_NONE;) {
+        ms_slot *x = res(s, *link);
+        if (!x) return -1;
+        for (int i = 0; i < x->n; i++) {
+            if (x->ev[i].off != off || x->ev[i].kind != MS_NOTE || x->ev[i].d1 != note || x->ev[i].ch != ch) continue;
+            ms_ev e = x->ev[i];
+            uint32_t m = s->env->irq_off();
+            for (int j = i; j + 1 < x->n; j++) x->ev[j] = x->ev[j + 1];
+            x->n--; dirty(s, x);
+            if (!x->n) { int sl = *link; *link = x->next; slot_free(s, sl); s->head_dirty = 1; }
+            int r = insert(s, t, np, &e);
+            s->env->irq_on(m);
+            return r;
+        }
+        link = &x->next;
+    }
+    return -1;                                   /* not found (edited away meanwhile) */
+}
+int ms_quantize(ms_t *s, int track, int32_t a, int32_t b, int32_t step)
+{
+    if (step <= 0 || b <= a) return 0;
+    if (a < 0) a = 0;
+    if (b > MS_MAXPOS + 1) b = MS_MAXPOS + 1;
+    if (ms_load_range(s, track, (int)(a >> MS_PAGE_BITS), (int)((b - 1) >> MS_PAGE_BITS))) return -1;
+    static ms_ev ev[MS_TAKE]; static int32_t ps[MS_TAKE];
+    int n = 0;                                    /* collect first: moved notes must not be met again */
+    for (int p = (int)(a >> MS_PAGE_BITS); p <= (int)((b - 1) >> MS_PAGE_BITS) && n < MS_TAKE; p++)
+        for (int sl = s->h.first[track][p]; sl != MS_NONE && n < MS_TAKE;) {
+            ms_slot *x = res(s, sl);
+            if (!x) break;
+            for (int i = 0; i < x->n && n < MS_TAKE; i++) {
+                int32_t q = ((int32_t)p << MS_PAGE_BITS) | x->ev[i].off;
+                if (q >= a && q < b && x->ev[i].kind == MS_NOTE) { ev[n] = x->ev[i]; ps[n++] = q; }
+            }
+            sl = x->next;
+        }
+    int moved = 0;
+    for (int i = 0; i < n; i++) if (!move_note(s, track, ps[i], ev[i].d1, ev[i].ch, snap(ps[i], step))) moved++;
+    return moved;
+}
+int ms_quantize_take(ms_t *s, int32_t step)
+{
+    int moved = 0;
+    for (int i = 0; step > 0 && i < s->ntake; i++)
+        if (!move_note(s, s->take[i].track, s->take[i].pos, s->take[i].note, s->take[i].ch, snap(s->take[i].pos, step))) moved++;
+    s->ntake = 0;
+    return moved;
+}
+void ms_take_reset(ms_t *s) { s->ntake = 0; }
 
 /* ---- queries ---- */
 int ms_events(ms_t *s, int t, int32_t a, int32_t b, ms_ev *out, int32_t *pos, int max)

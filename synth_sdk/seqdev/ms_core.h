@@ -23,6 +23,7 @@
 #define MS_ACTIVE    64                     /* sounding notes */
 #define MS_HELD      32                     /* notes being recorded (pressed, not released yet) */
 #define MS_CLIP      512                    /* clipboard events */
+#define MS_TAKE      256                    /* notes of one recording take (quantized when it ends) */
 
 enum { MS_NOTE = 0, MS_CC = 1 };
 enum { MS_DEST_INSTR = 0, MS_DEST_SEQ = 1, MS_DEST_MIDI = 2 };
@@ -81,7 +82,12 @@ typedef struct {
     uint8_t clip_trk[MS_CLIP];              /* source track of each event */
     int nclip, clip_all;                    /* clip_all: paste into the source tracks, else into the selected one */
     int32_t clip_len, clip_first;           /* clip_len -1: empty; clip_first: position of the first copied event */
+    struct { int32_t pos; uint8_t note, ch, track; } take[MS_TAKE];   /* notes recorded since ms_take_reset */
+    int ntake;
 } ms_t;
+
+/* quantize grids (one per song): 0 off, 1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T */
+enum { MS_Q_OFF, MS_Q_4, MS_Q_8, MS_Q_16, MS_Q_32, MS_Q_8T, MS_Q_16T, MS_Q_N };
 
 void ms_init(ms_t *s, const ms_env *env);  /* empty song */
 int  ms_load(ms_t *s);                      /* header from the file (0 ok; else an empty song) */
@@ -95,6 +101,10 @@ int  ms_copy(ms_t *s, int32_t a, int32_t b, int mask);   /* mask: tracks (bit t)
 int  ms_cut(ms_t *s, int32_t a, int32_t b, int mask);
 int  ms_paste(ms_t *s, int32_t at);
 void ms_all_off(ms_t *s);
+int32_t ms_grid_step(int grid, int32_t bpm_q8);                 /* grid step in samples (0: off) */
+int  ms_quantize(ms_t *s, int track, int32_t a, int32_t b, int32_t step);   /* notes starting in [a, b) to the grid */
+int  ms_quantize_take(ms_t *s, int32_t step);                  /* the notes of the last take (then the list is empty) */
+void ms_take_reset(ms_t *s);
 int  ms_load_range(ms_t *s, int track, int pa, int pb);          /* main loop: make pages resident (0 ok) */
 /* queries (drawing, tests) */
 int  ms_count(ms_t *s, int track);                               /* resident events of a track */

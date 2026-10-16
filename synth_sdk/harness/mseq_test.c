@@ -123,6 +123,31 @@ int main(void)
     }
     printf("cut / copy / paste ok\n");
 
+    {   /* quantize: grid steps at 120 bpm, a take, a selection, a note crossing a page boundary */
+        assert(ms_grid_step(MS_Q_4, 120 << 8) == 22050 && ms_grid_step(MS_Q_16, 120 << 8) == 5512 &&
+               ms_grid_step(MS_Q_8T, 120 << 8) == 7350 && ms_grid_step(MS_Q_OFF, 120 << 8) == 0);
+        static ms_t QQ; ms_t *Q = &QQ; ms_init(Q, &env); lon = 0;
+        int32_t st = ms_grid_step(MS_Q_16, 120 << 8);
+        static ms_ev qe[32]; static int32_t qp[32];
+        Q->sel = 1; Q->rec = 1; tplay = 1;
+        int32_t at[4] = { st * 10 + 100, st * 11 - 300, 65536 - 200, st * 30 + st / 2 + 5 };   /* 65536-200 -> next page */
+        for (int i = 0; i < 4; i++) { tpos = at[i]; ms_block(Q); ms_note_in(Q, 60 + i, 90, 0, 1); tpos += 640; ms_block(Q); ms_note_in(Q, 60 + i, 0, 0, 0); }
+        Q->rec = 0; tplay = 0; ms_block(Q);
+        assert(Q->ntake == 4 && ms_quantize_take(Q, st) == 4 && Q->ntake == 0);
+        int n = ms_events(Q, 1, 0, 40 * st, qe, qp, 32);
+        assert(n == 4);
+        for (int i = 0; i < n; i++) assert(qp[i] % st == 0 && qe[i].len == 10);
+        assert(qp[0] == st * 10 && qp[1] == st * 11 && qp[2] == (65536 + st / 2) / st * st && qp[3] == st * 31);
+        /* selection: a note off the grid, outside the selection one stays */
+        Q->rec = 1; tplay = 1; tpos = st * 50 + 777; ms_block(Q); ms_note_in(Q, 70, 90, 0, 1); ms_note_in(Q, 70, 0, 0, 0);
+        tpos = st * 60 + 777; ms_block(Q); ms_note_in(Q, 71, 90, 0, 1); ms_note_in(Q, 71, 0, 0, 0); Q->rec = 0; tplay = 0; ms_block(Q);
+        ms_take_reset(Q);
+        assert(ms_quantize(Q, 1, st * 45, st * 55, st) == 1);
+        n = ms_events(Q, 1, st * 45, st * 65, qe, qp, 32);
+        assert(n == 2 && qp[0] == st * 50 && qp[1] == st * 60 + 777);
+        printf("quantize: grid, take, selection, page boundary ok\n");
+    }
+
     /* damaged slot: loads as empty, others survive */
     for (int k = 0; k < 20; k++) ms_service(&B, 1000);
     int victim = B.h.first[2][5];

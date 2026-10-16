@@ -26,7 +26,7 @@ static void txt(void *r, ms_txt *t, int32_t x, int32_t y, const uint8_t *c, int 
     if (str[k] != t->last[k]) { op1_text_set(t->mem, str); for (k = 0; k < 11 && (t->last[k] = str[k]) != 0; k++) ; t->last[11] = 0; }
     op1_text_draw(t->mem, r, ident);
 }
-enum { T_TRACK_W, T_TRACK_G, T_POS, T_MIN, T_COLON, T_S1, T_S2, T_DOT, T_H1, T_H2, T_IN_W, T_IN_G, T_OUT_W, T_OUT_G, T_N };
+enum { T_TRACK_W, T_TRACK_G, T_POS, T_MIN, T_COLON, T_S1, T_S2, T_DOT, T_H1, T_H2, T_IN_W, T_IN_G, T_OUT_W, T_OUT_G, T_Q, T_N };
 static ms_txt tx[T_N];
 
 static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0x4A, 0x52, 255 },
@@ -39,6 +39,7 @@ static const uint8_t c_lane[4] = { 0x6F, 0x71, 0x73, 255 }, c_bar[4] = { 0x48, 0
 #define LANE_Y(t) OP1_Q10(34 + (t) * 26)     /* top of lane t, 26 px each, separators below */
 #define BAND_Y  OP1_Q10(28)                  /* loop bar / marker carets */
 #define TXT_Y   4                            /* status bar text, px */
+#define QUANT_X 92                           /* quantize grid, px (left of the time) */
 #define TIME_X  160                          /* time: second digit's cell centre, px */
 #define ARROW_X 280                          /* input -> output arrow, px */
 
@@ -79,6 +80,8 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         int32_t p = ph < 0 ? 0 : ph, b = p / bar, q = (p - b * bar) / beat, x = (p - b * bar - q * beat) / (beat / 4);
         o = sq_num(o, (uint32_t)b + 1, 0); *o++ = '.'; o = sq_num(o, (uint32_t)q + 1, 0); *o++ = '.'; sq_num(o, (uint32_t)x + 1, 0);
         txt(r, &tx[T_POS], OP1_Q10(30), TXT_Y, c_white, 0, t);
+        static const char *const qn[MS_Q_N] = { "", "q4", "q8", "q16", "q32", "q8t", "q16t" };   /* (stock font: caps) */
+        if (v->quant > 0 && v->quant < MS_Q_N) txt(r, &tx[T_Q], OP1_Q10(QUANT_X), TXT_Y, c_grey, 0, qn[v->quant]);
         uint32_t cs = (uint32_t)((int64_t)p * 100 / 44100);
         /* time: one text per digit in fixed cells (the stock font is proportional, a single string jumps) */
         sq_num(t, cs / 6000, 0);

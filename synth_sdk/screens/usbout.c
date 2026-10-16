@@ -8,6 +8,7 @@
 extern volatile uint8_t usb_tracks_live;
 static uint8_t setting;                                    /* 0 master, 1 master + tracks */
 volatile uint8_t ms_enabled;                               /* MIDI sequencer device on (read by seqdev/ms_fw.c) */
+volatile uint8_t ms_quant;                                 /* MIDI recorder quantize grid (MS_Q_*, set in its view) */
 
 #ifdef OP1_HOST
 int usbout_host_saved;
@@ -15,6 +16,7 @@ int usbout_host_seq_saved;
 int usbout_load(void) { setting = (uint8_t)usbout_host_saved; ms_enabled = (uint8_t)usbout_host_seq_saved; return setting; }
 static void usbout_save(void) { usbout_host_saved = setting; }
 static void seq_save(void) { usbout_host_seq_saved = ms_enabled; }
+void ms_quant_save(void) { }
 #else
 #define DB_HANDLE ((void *(*)(void))0x0196DD44)
 #define DB_EXEC   ((void (*)(void *, const char *))0x0196F950)
@@ -34,6 +36,10 @@ int usbout_load(void)
     DB_GET(&s2, db, "SELECT val FROM op1rsettings WHERE key='midiseq'");
     p = s2.cap > 15 ? s2.u.ptr : s2.u.buf;
     ms_enabled = (uint8_t)(s2.size && p[0] == '1');
+    us_dstr s3 = { 0 };
+    DB_GET(&s3, db, "SELECT val FROM op1rsettings WHERE key='msquant'");
+    p = s3.cap > 15 ? s3.u.ptr : s3.u.buf;
+    ms_quant = (uint8_t)(s3.size && p[0] >= '0' && p[0] <= '6' ? p[0] - '0' : 0);
     return setting;
 }
 static void usbout_save(void)                               /* KeyHandler thread, on change */
@@ -49,6 +55,14 @@ static void seq_save(void)
     DB_EXEC(db, US_CREATE);
     DB_EXEC(db, ms_enabled ? "INSERT OR REPLACE INTO op1rsettings VALUES ('midiseq',1)"
                            : "INSERT OR REPLACE INTO op1rsettings VALUES ('midiseq',0)");
+}
+void ms_quant_save(void)                                    /* KeyHandler thread (MIDI recorder, Shift + blue) */
+{
+    static char q[] = "INSERT OR REPLACE INTO op1rsettings VALUES ('msquant',0)";
+    q[sizeof q - 3] = (char)('0' + (ms_quant % 7));
+    void *db = DB_HANDLE();
+    DB_EXEC(db, US_CREATE);
+    DB_EXEC(db, q);
 }
 #endif
 

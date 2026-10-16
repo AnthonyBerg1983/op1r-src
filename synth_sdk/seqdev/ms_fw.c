@@ -6,7 +6,8 @@
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
  * the track (Shift: mute), REC held = record the selected track (from stop: the first note starts the tape, then latched) (Shift + REC: latched, STOP ends it; from stop: armed,
  * the first note on the track's input starts the tape and the recording), REC held + metronome from stop: count-in
- * (beats as the tape count-in), then PLAY and latched recording; scissors marks
+ * (beats as the tape count-in), then PLAY and latched recording; Shift + blue turn: quantize grid (off, 1/4 .. 1/32,
+ * 1/8T, 1/16T; a take's notes snap when it ends), Shift + blue press: quantize the selection; scissors marks
  * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
  * tracks, then the playhead jumps to the first lifted note; DROP pastes with the first note at the playhead, white press switches between the track's input and output, white turn scrolls the
  * targets (I instrument, S sequencer, M1..M16 MIDI); red press / Shift + red / Shift + red turn: tape markers as on the tape screen. TAPE alone or another mode key leaves the view (the device keeps playing with the tape). */
@@ -38,6 +39,9 @@
 #define MS_HEAD_SZ  4096
 
 extern volatile uint8_t ms_enabled;                    /* screens/usbout.c: clock + T2, green (opt-in) */
+extern volatile uint8_t ms_quant;                       /* screens/usbout.c: grid, saved */
+void ms_quant_save(void);
+static int32_t bpm_q8(void);
 static ms_t *ms;                            /* heap (~60 KB), allocated by the main loop */
 /* the view is its own screen object (iter screen class, empty SVG, drawing in code) swapped into the tape screen's
  * slot while open; made on first use with the tape screen's id (the current screen when the view opens) */
@@ -51,7 +55,7 @@ static uint32_t ms_scr[32], ms_vt[10];
 static int ms_scr_id = -1;
 static void *tape_obj;
 static volatile uint8_t view, seq_open_req, rec_held, rec_latch, seq_down, seq_chord, sel_set, own_play;
-static volatile uint8_t rec_arm, arm_go, ci_latch;     /* armed (first note starts), its PLAY wanted, count-in */
+static volatile uint8_t rec_arm, arm_go, ci_latch, take_done;     /* armed (first note starts), its PLAY wanted, count-in */
 int ci_start_ext(void), ci_pending(void), ci_counting(void);   /* tape/countin.c */
 void ci_cancel(void);
 /* the view is on screen (tape mode, its screen current): keys / encoders / recording only then. The view flag itself
@@ -61,8 +65,16 @@ static int32_t sel_a = -1, sel_b = -1;
 static uint8_t io_sel;                                   /* white knob edits: 0 output, 1 input */
 static int io_acc;
 /* white turn: one step per detent through I, S, M1..M16 (wraps) for the selected track's input or output */
+static int q_acc;
 int ms_knob(int knob, int delta)
 {
+    if (knob == 0 && SHIFT && shown() && ms) {            /* Shift + blue: quantize grid off / 1/4 .. 1/32 / 1/8T / 1/16T */
+        if ((q_acc > 0 && delta < 0) || (q_acc < 0 && delta > 0)) q_acc = 0;
+        q_acc += delta;
+        int st = q_acc / 1024;
+        if (st) { q_acc = 0; ms_quant = (uint8_t)(((ms_quant + st) % MS_Q_N + MS_Q_N) % MS_Q_N); ms_quant_save(); }
+        return 1;
+    }
     if (!shown() || !ms || knob != 2) return 0;
     if ((io_acc > 0 && delta < 0) || (io_acc < 0 && delta > 0)) io_acc = 0;
     io_acc += delta;
@@ -214,7 +226,10 @@ void ms_fw_block(void)
         if (ci_latch) { ci_latch = 0; rec_latch = 1; }
         if (rec_arm) { rec_arm = 0; arm_go = 0; rec_latch = 1; }
     } else if (ci_latch && !ci_pending()) ci_latch = 0;   /* count-in cancelled */
+    int was = ms->rec;
     ms->rec = recording();
+    if (ms->rec && !was) ms_take_reset(ms);               /* a take starts */
+    if (!ms->rec && was) take_done = 1;                   /* ...and ends: quantized in the main loop */
     ms_block(ms);
     if (waiting()) return;                                /* the notes wait for the tape (recorded at its start) */
     while (qr != qw) {
@@ -253,6 +268,11 @@ void ms_fw_service(void)
         return;
     }
     ms_service(ms, 4);
+    if (take_done) {                                      /* recording ended: the take's notes to the grid */
+        take_done = 0;
+        int32_t step = ms_grid_step(ms_quant, bpm_q8());
+        if (step) ms_quantize_take(ms, step); else ms_take_reset(ms);
+    }
     if (arm_go) {                                         /* armed + first note: PLAY as the user would */
         arm_go = 0;
         if (waiting()) { KEY_DISPATCH(0x22, 1); KEY_DISPATCH(0x22, 0); }
@@ -334,6 +354,11 @@ int ms_key(int code, int pressed, int on_tape)
         swallow[code] = 1; return 1;
     }
     if (code == 0x0B) { ms_paste(ms, ph); swallow[code] = 1; return 1; }
+    if (code == 0x3B && sh) {                             /* Shift + blue press: quantize the selection (selected track) */
+        int32_t step = ms_grid_step(ms_quant, bpm_q8());
+        if (sel_b >= 0 && step) ms_quantize(ms, ms->sel & 3, sel_a, sel_b, step);
+        swallow[code] = 1; return 1;
+    }
     if (code == 0x3D) { io_sel ^= 1; swallow[code] = 1; return 1; }
     return 0;
 }
@@ -361,7 +386,7 @@ static void ms_scr_update(void *self, int dt)
     ms_view v;
     v.ph = TAPE_POS >> 6; v.zoom_q10 = tm_zoom_q10(); v.bpm_q8 = bpm_q8();
     v.loop_on = LOOP_ON; v.loop_in = LOOP_IN; v.loop_out = LOOP_OUT;
-    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode; v.io = io_sel; v.shift = SHIFT;
+    v.sel_a = sel_a; v.sel_b = sel_b; v.sel_track = ms->sel & 3; v.rec = recording(); v.punch = pu_mode; v.io = io_sel; v.shift = SHIFT; v.quant = ms_quant;
     v.tm_n = tm_n; v.tm = tm_pos;
     ms_draw(op1_raster(), &v, ms);
 }

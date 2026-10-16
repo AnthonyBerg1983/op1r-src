@@ -70,5 +70,6 @@ int main(void)
     v.io = 1; frame("track 2, input selected (white press)", &v); v.io = 0; v.sel_track = 2;
     v.zoom_q10 = 12 << 10; v.sel_a = v.sel_b = -1; v.sel_track = 0; frame("zoomed out", &v);
     v.zoom_q10 = 40 << 10; v.loop_on = 0; frame("loop off: start marker only", &v);
+    v.quant = MS_Q_16; frame("quantize 1/16 (Shift + blue)", &v); v.quant = MS_Q_8T; frame("quantize 1/8T", &v);
     return 0;
 }

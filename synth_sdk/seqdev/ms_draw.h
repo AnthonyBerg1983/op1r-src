@@ -7,6 +7,7 @@ typedef struct {
     int loop_on; int32_t loop_in, loop_out;
     int32_t sel_a, sel_b;                   /* selection (-1: none) */
     int shift;                              /* Shift held: the selection covers all tracks */
+    int quant;                              /* quantize grid MS_Q_* (status bar) */
     int io;                                 /* white knob edits: 0 output, 1 input */
     int sel_track, rec, punch;              /* selected track, recording, tape punch mode (markers red) */
     int tm_n; const int32_t *tm;            /* tape markers (tape/markers.c) */
