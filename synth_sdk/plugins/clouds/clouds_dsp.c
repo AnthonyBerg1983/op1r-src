@@ -22,7 +22,18 @@ static void dump(int k, const int32_t *o, int n){ if(!dbgf[k]){char nm[32]; spri
 enum { Q_LOW, Q_MEDIUM, Q_HIGH };
 
 static inline int32_t clip16(int32_t x) { return x < -32768 ? -32768 : (x > 32767 ? 32767 : x); }
-static inline int32_t mulq15(int32_t a, int32_t b) { return (int32_t)(((int64_t)a * b) >> 15); }
+/* (a * b) >> 15 exactly without a 64-bit multiply: a = ah 2^15 + al, al in 0..32767. Needs |b| <= 2^16 and
+ * |a| < 2^30 (all call sites: b is a gain / coefficient, a the signal) */
+static inline int32_t mulq15(int32_t a, int32_t b) { return (a >> 15) * b + (((a & 32767) * b) >> 15); }
+/* (d * f) >> 16 exactly, f 0..65535, |d| < 2^31: the same split */
+static inline int32_t mulf16(int32_t d, int32_t f) { return (d >> 16) * f + (int32_t)(((uint32_t)(d & 65535) * (uint32_t)f) >> 16); }
+#ifdef CLOUDS_CHECK                   /* host: the split must equal the 64-bit result (clouds_compare CLOUDS_FLAGS) */
+#include <assert.h>
+static inline int32_t mulq15_c(int32_t a, int32_t b) { int32_t r = mulq15(a, b); assert(r == (int32_t)(((int64_t)a * b) >> 15)); return r; }
+static inline int32_t mulf16_c(int32_t d, int32_t f) { int32_t r = mulf16(d, f); assert(r == (int32_t)(((int64_t)d * f) >> 16)); return r; }
+#define mulq15 mulq15_c
+#define mulf16 mulf16_c
+#endif
 /* same result as mulq15 when |a * b| < 2^31 (16-bit-ish operands): one 32-bit multiply on the Blackfin */
 static inline int32_t mul16(int32_t a, int32_t b) { return (a * b) >> 15; }
 static inline uint32_t rnd(clouds_t *c) { c->rng = c->rng * 1664525u + 1013904223u; return c->rng; }
@@ -33,7 +44,7 @@ static inline int32_t soft_limit(int32_t x)
     if (x <= -8 * Q15) return cl_soft_limit[0];
     if (x >= 8 * Q15 - 1) return cl_soft_limit[4096];
     int32_t i = (x + 8 * Q15) >> 7, f = (x + 8 * Q15) & 127;          /* 1/256 steps = 128 Q15 units */
-    return cl_soft_limit[i] + (int32_t)(((int64_t)(cl_soft_limit[i + 1] - cl_soft_limit[i]) * f) >> 7);
+    return cl_soft_limit[i] + (((cl_soft_limit[i + 1] - cl_soft_limit[i]) * f) >> 7);   /* Q15 step * 0..127: 32 bit */
 }
 static inline int16_t soft_convert(int32_t x) { return (int16_t)clip16(soft_limit(x >> 1)); }
 
@@ -345,7 +356,7 @@ static void diffuser(clouds_t *c, int32_t *io, int n, int32_t amount)
             acc = mulq15(acc, -kap) + prev;
             base += diff_len[k] + 1;
         }
-        io[t] += mulq15(amount, acc - io[t]);
+        io[t] += mulq15(acc - io[t], amount);
     }
 }
 
@@ -354,7 +365,7 @@ static inline int32_t ps_interp(clouds_t *c, int64_t off_q16)
 {
     int32_t i = (int32_t)(off_q16 >> 16), f = (int32_t)(off_q16 & 65535);
     int32_t a = c->ps_buf[(c->ps_wp + i) & 4095], b = c->ps_buf[(c->ps_wp + i + 1) & 4095];
-    return a + (int32_t)(((int64_t)(b - a) * f) >> 16);
+    return a + mulf16(b - a, f);
 }
 static void pitch_shifter(clouds_t *c, int32_t *io, int n, uint64_t ratio_q30, int32_t size_q15)
 {
@@ -386,7 +397,7 @@ static inline int32_t rv_interp(clouds_t *c, int i, int64_t off_q16)
 {
     int32_t k = (int32_t)(off_q16 >> 16), f = (int32_t)(off_q16 & 65535);
     int32_t a = rv_dec(RV(i, k)), b = rv_dec(RV(i, k + 1));
-    return a + (int32_t)(((int64_t)(b - a) * f) >> 16);
+    return a + mulf16(b - a, f);
 }
 static void reverb(clouds_t *c, int32_t *io, int n, int32_t amount, int32_t time, int32_t lp)
 {
@@ -412,7 +423,7 @@ static void reverb(clouds_t *c, int32_t *io, int n, int32_t amount, int32_t time
         apout = acc;
         /* left branch */
         acc = apout + mulq15(rv_interp(c, 9, (4680LL << 16) + (int64_t)100 * c->rev_lfo[1] * 2), time);
-        c->rev_lp1 += mulq15(lp, acc - c->rev_lp1); acc = c->rev_lp1;
+        c->rev_lp1 += mulq15(acc - c->rev_lp1, lp); acc = c->rev_lp1;
         prev = rv_dec(RV_TAIL(4)); acc += mulq15(prev, -kap); RV(4, 0) = rv_enc(acc); acc = mulq15(acc, kap) + prev;
         prev = rv_dec(RV_TAIL(5)); acc += mulq15(prev, kap);  RV(5, 0) = rv_enc(acc); acc = mulq15(acc, -kap) + prev;
         RV(6, 0) = rv_enc(acc); acc *= 2;                                   /* Write(del1, 2.0) */
@@ -420,7 +431,7 @@ static void reverb(clouds_t *c, int32_t *io, int n, int32_t amount, int32_t time
         io[t] += mulq15(wet - io[t], amount);
         /* right branch (feeds del2, output unused in mono) */
         acc = apout + mulq15(rv_dec(RV_TAIL(6)), time);
-        c->rev_lp2 += mulq15(lp, acc - c->rev_lp2); acc = c->rev_lp2;
+        c->rev_lp2 += mulq15(acc - c->rev_lp2, lp); acc = c->rev_lp2;
         prev = rv_dec(RV_TAIL(7)); acc += mulq15(prev, kap);  RV(7, 0) = rv_enc(acc); acc = mulq15(acc, -kap) + prev;
         prev = rv_dec(RV_TAIL(8)); acc += mulq15(prev, -kap); RV(8, 0) = rv_enc(acc); acc = mulq15(acc, kap) + prev;
         RV(9, 0) = rv_enc(acc);
@@ -479,8 +490,8 @@ void clouds_process(clouds_t *c, const clouds_params_t *p, const int16_t *input,
     int32_t fb_gain = mulq15(fbk, 32768 - (c->freeze_lp_q30 >> 15));
     if (fb_gain)
         for (int i = 0; i < n; i++) {
-            int32_t x = mulq15(mulq15(fb_gain, 45875), c->fb[i]) + in[i];          /* 1.4 */
-            in[i] += mulq15(fb_gain, soft_limit(x) - in[i]);
+            int32_t x = mulq15(c->fb[i], mulq15(fb_gain, 45875)) + in[i];          /* 1.4 */
+            in[i] += mulq15(soft_limit(x) - in[i], fb_gain);
         }
 
     /* recording + playback */
