@@ -4,7 +4,7 @@
  * Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
  * (switching off closes the view, silences, saves pending slots, then idles).
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
- * the track (Shift: mute), REC held = record the selected track (Shift + REC: latched, STOP ends it; from stop: armed,
+ * the track (Shift: mute), REC held = record the selected track (from stop: the first note starts the tape) (Shift + REC: latched, STOP ends it; from stop: armed,
  * the first note on the track's input starts the tape and the recording), REC held + metronome from stop: count-in
  * (beats as the tape count-in), then PLAY and latched recording; scissors marks
  * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
@@ -167,6 +167,9 @@ static void q_put(int cc, int d1, int d2, int ch)
     irq_on(m);
 }
 static int recording(void) { return ms && shown() && (rec_held || rec_latch || rec_arm); }
+static int e_playing(void);
+/* tape stopped and armed (Shift + REC) or REC held (not counting in): the first note starts the tape */
+static int waiting(void) { return (rec_arm || (rec_held && !ci_latch)) && !e_playing(); }
 /* input source of a VoiceCtl note, from its caller: the keyboard (global_controller key down / up with no sequencer
  * taking the key), received MIDI (VoiceCtl note on / off), else a player (the stock sequencers, arpeggio, ...) */
 static int src_of(uint32_t ret)
@@ -181,7 +184,7 @@ void ms_vc_down(const int32_t *rec, int param, uint32_t ret)      /* VoiceCtl ke
     (void)param;
     if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], rec[1] < 1 ? 100 : rec[1] > 127 ? 127 : rec[1], 1);
-    if (rec_arm) arm_go = 1;                                         /* armed: the first note starts the tape */
+    if (waiting()) arm_go = 1;                                       /* armed / REC held from stop: the note starts the tape */
 }
 void ms_vc_up(const int32_t *rec, uint32_t ret)
 {
@@ -198,7 +201,7 @@ void ms_midi_rx(const volatile uint8_t *pk)
     if (!mine) return;
     if (cin == 11) q_put(1, d1, d2, ch);
     else q_put(0, d1, cin == 9 ? d2 : 0, cin == 9 && d2);           /* note on with velocity 0 = off */
-    if (rec_arm && cin == 9 && d2) arm_go = 1;
+    if (waiting() && cin == 9 && d2) arm_go = 1;
 }
 
 /* ---- audio thread (tape/countin.c, once per block) ---- */
@@ -212,7 +215,7 @@ void ms_fw_block(void)
     } else if (ci_latch && !ci_pending()) ci_latch = 0;   /* count-in cancelled */
     ms->rec = recording();
     ms_block(ms);
-    if (rec_arm && !e_playing()) return;                  /* armed: the notes wait for the tape (recorded at its start) */
+    if (waiting()) return;                                /* the notes wait for the tape (recorded at its start) */
     while (qr != qw) {
         int i = qr % QN;
         if (q[i].cc) ms_cc_in(ms, q[i].d1, q[i].d2, q[i].ch);
@@ -251,7 +254,7 @@ void ms_fw_service(void)
     ms_service(ms, 4);
     if (arm_go) {                                         /* armed + first note: PLAY as the user would */
         arm_go = 0;
-        if (rec_arm && !e_playing()) { KEY_DISPATCH(0x22, 1); KEY_DISPATCH(0x22, 0); }
+        if (waiting()) { KEY_DISPATCH(0x22, 1); KEY_DISPATCH(0x22, 0); }
     }
     if (seq_open_req && CUR_MODE_ID == 2) { seq_open_req = 0; view_set(1); }   /* SEQ + TAPE from another mode */
 }
