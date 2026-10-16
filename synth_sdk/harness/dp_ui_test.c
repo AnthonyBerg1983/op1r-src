@@ -49,7 +49,8 @@ int main(int argc, char **argv)
     /* presses */
     assert(dpu_press(&x, pw, 0, 0) == 2 && pw[4] == 16384);                         /* reverse on */
     assert(dpu_press(&x, pw, 0, 1) == 2 && pw[3] == 16384);                         /* one-shot -> loop */
-    assert(dpu_press(&x, pw, 0, 1) == 2 && pw[3] == 0);                             /* -> gate */
+    assert(dpu_press(&x, pw, 0, 1) == 2 && pw[3] == 4096);                          /* -> gate (stock minimum, not 0: error 12) */
+    assert(dpu_press(&x, pw, 0, 1) == 2 && pw[3] == 8192);                          /* gate -> one-shot */
     for (int i = 0; i < 5; i++) dpu_press(&x, pw, 0, 2);
     assert(x.choke == 0);
     assert(dpu_press(&x, pw, 1, 3) == 1 && x.vel_start == 40);

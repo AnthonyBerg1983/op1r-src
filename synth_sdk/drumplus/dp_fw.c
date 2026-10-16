@@ -143,8 +143,10 @@ void *dp_keep_op1r(void *patch, void *fresh)
     return JV_ASSIGN(patch, fresh);
 }
 
+static void dp_repair_playmode(void *json);
 int dp_load_parse(void *json, int mode)
 {
+    dp_repair_playmode(json);                          /* before the stock range check (error 12) */
     uint32_t off = (uint32_t)json - 4 - DRUM_PATCHES;
     dp_loading_slot = off % 0x38 == 0 && off / 0x38 < DP_SLOTS ? (int)(off / 0x38) : -1;
     int r = PARSE_PATCH(json, mode);
@@ -202,10 +204,31 @@ static int jv_is_str(void *v, const char *s)
     return *p == *s;
 }
 
+/* kits saved by drum+ 2.6 .. 2.7.1 hold gate as playmode 0; the stock check (load_drum_patch, Ranges group 8
+ * index 3: 4096..20480) rejects it: "Invalid drum patch ... error 12" at boot. Words below 4096 become 4096 = gate
+ * (>> 13 == 0), only where "playmode" is an array (const lookup first: no member is added to other patches). */
+#define JV_FROM_INT ((void *(*)(void *, int))0x019BD890)               /* Value(int) */
+#define JV_CGET ((const void *(*)(const void *, const char *))0x019BEB70)   /* const operator[](key) */
+#define DP_GATE 4096
+static void dp_repair_playmode(void *json)
+{
+    const void *c = JV_CGET(json, "playmode");
+    if (!c || jv_type(c) != JV_ARRAY) return;
+    void *pm = JV_KEY(json, "playmode");
+    unsigned n = JV_SIZE(pm);
+    uint32_t tmp[4];
+    for (unsigned i = 0; i < n && i < 64; i++) {
+        void *v = JV_IDX(pm, i);
+        if ((jv_type(v) == JV_INT || jv_type(v) == JV_UINT) && *(const int32_t *)v < DP_GATE) {
+            JV_FROM_INT(tmp, DP_GATE);
+            JV_ASSIGN(v, tmp);
+            JV_DTOR(tmp, 2);
+        }
+    }
+}
 void dpu_sync_auto(void);                                        /* dispatcher.c: screens for 0x10 / 0x17 */
 
 /* op1r.pads[pad] = the pad's fields (UI edits); the caller marks the patch changed (stock saver writes it) */
-#define JV_FROM_INT ((void *(*)(void *, int))0x019BD890)               /* Value(int) */
 void dp_fw_store_pad(int slot, int pad)
 {
     if ((unsigned)slot >= DP_SLOTS || (unsigned)pad >= DP_PADS) return;
