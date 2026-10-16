@@ -35,6 +35,66 @@ static int cur_slot(void)
 static int voice_of(void *self) { uint32_t d = (uint32_t)self - VOICE0; return d < SP_VOICES * 0x10 && !(d & 15) ? (int)(d >> 4) : -1; }
 static sp_voice *model(void *self) { return (sp_voice *)((uint8_t *)self + 8); }   /* pos, released, first */
 
+/* ---- ping-pong / crossfade on the stock render (the C voice, sp_plus_render, is the host model only) ----
+ * stock_at: the stock render on a copy of the voice object from pos, loop off (k2 = k0) and forward / reverse;
+ * positions inside a block are taken as linear between its ends (the step is nearly constant over 128 samples). */
+static int32_t stock_at(void *self, int16_t *out, const int16_t *k, int32_t pos, int rev, int loop)
+{
+    uint32_t vo[4];
+    for (int i = 0; i < 4; i++) vo[i] = ((const uint32_t *)self)[i];
+    vo[2] = (uint32_t)pos; ((uint8_t *)vo)[13] = 0;                 /* +8 pos, +0xD first block: off */
+    int16_t kk[8];
+    for (int i = 0; i < 8; i++) kk[i] = k[i];
+    if (!loop) kk[2] = kk[0];
+    kk[4] = (int16_t)(rev ? 20000 : 12000);
+    STOCK_RENDER(vo, out, kk);
+    return (int32_t)vo[2];
+}
+static void pingpong(void *self, int16_t *out, const int16_t *k, const sp_extra *x, sp_xvoice *xs)
+{
+    sp_voice *v = model(self);
+    if (v->first) { if (xs->dir > 0 && v->pos < sp_bound(k[0], 0)) v->pos = sp_bound(k[0], 0); v->first = 0; }
+    int32_t ls = sp_bound(k[1], k[5]), le = sp_bound(k[2], k[6]);
+    int loop = k[0] < k[2] && le > ls && (!v->released || x->loop_rel);
+    int32_t p0 = v->pos, p1 = stock_at(self, out, k, p0, xs->dir < 0, 0);
+    int32_t edge = xs->dir > 0 ? le : ls;
+    if (loop && (xs->dir > 0 ? p1 >= le && p0 < le : p1 < ls && p0 >= ls) && p1 != p0) {
+        int32_t n = (int32_t)(((int64_t)(edge - p0) * SP_BLOCK) / (p1 - p0));   /* turn sample (once per turn) */
+        if (n < 0) n = 0; else if (n > SP_BLOCK - 1) n = SP_BLOCK - 1;
+        for (int i = 0; i + n < SP_BLOCK; i++) BUF_INC[i] = BUF_INC[i + n];   /* the rest of the block's steps */
+        int16_t tmp[SP_BLOCK];
+        int32_t q1 = stock_at(self, tmp, k, edge, xs->dir > 0, 0);
+        for (int i = 0; i + n < SP_BLOCK; i++) out[i + n] = tmp[i];
+        xs->dir = (int8_t)-xs->dir;
+        p1 = edge + (int32_t)(((int64_t)(q1 - edge) * (SP_BLOCK - n)) >> 7);   /* where the turned part ends */
+    }
+    v->pos = p1;
+}
+static void xfade(void *self, int16_t *out, const int16_t *k, const sp_extra *x)
+{
+    sp_voice *v = model(self);
+    int32_t ls = sp_bound(k[1], k[5]), le = sp_bound(k[2], k[6]), span = le - ls;
+    int loop = k[0] < k[2] && span > 0 && !v->released, rev = k[4] >= 0x4000;
+    int32_t p0 = v->pos;
+    STOCK_RENDER(self, out, k);                                   /* the voice itself, stock loop (wraps at le) */
+    int32_t xf = (int32_t)x->xfade * 32 << 12;
+    if (xf > span) xf = span;
+    if (xf > ls) xf = ls;
+    if (!loop || rev || xf < (256 << 12)) return;
+    int32_t p1 = v->pos, pe = p1 < p0 ? p1 + span : p1, z0 = le - xf;   /* pe: unwrapped end */
+    if (pe <= z0 || p0 >= le) return;                             /* block does not touch the fade zone */
+    int16_t tmp[SP_BLOCK];
+    stock_at(self, tmp, k, p0 - span, 0, 0);                      /* the audio before the loop start */
+    int32_t inv = (1 << 23) / (xf >> 8), d = pe - p0;             /* one division per fade block */
+    for (int n = 0; n < SP_BLOCK; n++) {
+        int32_t p = p0 + (int32_t)(((int64_t)d * n) >> 7);
+        if (p < z0 || p >= le) continue;
+        int32_t gi, go;
+        sp_xfade_gains((((p - z0) >> 8) * (inv >> 4)) >> 9, &gi, &go);
+        out[n] = (int16_t)(((out[n] * go) >> 15) + ((tmp[n] * gi) >> 15));
+    }
+}
+
 static void spx_render(void *self, int16_t *out, const int16_t *k)
 {
     int s = cur_slot(), v = voice_of(self);
@@ -49,12 +109,12 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
             sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200);
         }
     }
-    if (sp_plus_fast_ok(&sp_x[s])) {                              /* the stock (assembler) render + pre / post */
-        sp_plus_fast_pre(&sp_xs[v], &sp_c[s], BUF_INC);
-        STOCK_RENDER(self, out, k);
-        sp_plus_fast_post(&sp_xs[v], &sp_x[s], &sp_c[s], out);
-    } else
-        sp_plus_render(model(self), &sp_xs[v], out, k, &sp_x[s], &sp_c[s], BUF_INC, (int32_t)obj[1], data, FIR);
+    (void)data;
+    sp_plus_fast_pre(&sp_xs[v], &sp_c[s], BUF_INC);              /* pitch envelope / sync: the voice's inc bus */
+    if (sp_x[s].loop_mode) pingpong(self, out, k, &sp_x[s], &sp_xs[v]);
+    else if (sp_x[s].xfade) xfade(self, out, k, &sp_x[s]);
+    else STOCK_RENDER(self, out, k);                              /* the stock (assembler) render */
+    sp_plus_fast_post(&sp_xs[v], &sp_x[s], &sp_c[s], out);
 }
 static void spx_note_on(void *self, const int16_t *k)
 {

@@ -249,6 +249,14 @@ static const int16_t sp_qsin[33] = {
     0, 1608, 3212, 4808, 6393, 7962, 9512, 11039, 12539, 14010, 15446, 16846, 18204, 19519, 20787, 22005,
     23170, 24279, 25329, 26319, 27245, 28105, 28898, 29621, 30273, 30852, 31356, 31785, 32137, 32412, 32609, 32728, 32767 };
 
+void sp_xfade_gains(int32_t w, int32_t *gin, int32_t *gout)     /* w 0..1024 */
+{
+    int32_t i = w >> 5, f = w & 31;
+    if (i >= 32) { i = 31; f = 32; } else if (i < 0) { i = 0; f = 0; }
+    *gin = sp_qsin[i] + (((sp_qsin[i + 1] - sp_qsin[i]) * f) >> 5);
+    *gout = sp_qsin[32 - i] + (((sp_qsin[31 - i] - sp_qsin[32 - i]) * f) >> 5);
+}
+
 void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *k, const sp_extra *x, const sp_pre *c,
                     const int32_t *inc, int32_t rate, const int16_t *data, const int16_t *fir)
 {

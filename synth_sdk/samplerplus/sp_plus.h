@@ -74,5 +74,6 @@ void sp_plus_render(sp_voice *v, sp_xvoice *s, int16_t *out, const int16_t *knob
 static inline int sp_plus_fast_ok(const sp_extra *x) { return !x->loop_mode && !x->xfade; }
 void sp_plus_fast_pre(sp_xvoice *s, const sp_pre *c, int32_t *inc);
 void sp_plus_fast_post(sp_xvoice *s, const sp_extra *x, const sp_pre *c, int16_t *out);
+void sp_xfade_gains(int32_t w, int32_t *gin, int32_t *gout);   /* equal power, w 0..1024 (Q10) */
 #define SP_INC_C4 3691513                             /* phase-increment bus at C4, octave 0 (emulator dump) */
 #endif
