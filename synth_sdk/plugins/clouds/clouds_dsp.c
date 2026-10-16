@@ -27,10 +27,28 @@ static inline int32_t clip16(int32_t x) { return x < -32768 ? -32768 : (x > 3276
 static inline int32_t mulq15(int32_t a, int32_t b) { return (a >> 15) * b + (((a & 32767) * b) >> 15); }
 /* (d * f) >> 16 exactly, f 0..65535, |d| < 2^31: the same split */
 static inline int32_t mulf16(int32_t d, int32_t f) { return (d >> 16) * f + (int32_t)(((uint32_t)(d & 65535) * (uint32_t)f) >> 16); }
+/* 32 x 32 -> 64 exactly from four 16 x 16 products: the Blackfin has no widening 32-bit multiply, gcc would call
+ * __muldi3 (a 64 x 64 multiply) for (int64_t)a * b */
+static inline uint64_t umul64(uint32_t a, uint32_t b)
+{
+    uint32_t al = a & 65535, ah = a >> 16, bl = b & 65535, bh = b >> 16;
+    return ((uint64_t)(ah * bh) << 32) + ((uint64_t)(al * bh) << 16) + ((uint64_t)(ah * bl) << 16) + al * bl;
+}
+static inline int64_t smul64(int32_t a, int32_t b)
+{
+    uint64_t r = umul64((uint32_t)a, (uint32_t)b);                     /* two's complement correction: */
+    if (a < 0) r -= (uint64_t)(uint32_t)b << 32;
+    if (b < 0) r -= (uint64_t)(uint32_t)a << 32;
+    return (int64_t)r;
+}
 #ifdef CLOUDS_CHECK                   /* host: the split must equal the 64-bit result (clouds_compare CLOUDS_FLAGS) */
 #include <assert.h>
 static inline int32_t mulq15_c(int32_t a, int32_t b) { int32_t r = mulq15(a, b); assert(r == (int32_t)(((int64_t)a * b) >> 15)); return r; }
 static inline int32_t mulf16_c(int32_t d, int32_t f) { int32_t r = mulf16(d, f); assert(r == (int32_t)(((int64_t)d * f) >> 16)); return r; }
+static inline uint64_t umul64_c(uint32_t a, uint32_t b) { uint64_t r = umul64(a, b); assert(r == (uint64_t)a * b); return r; }
+static inline int64_t smul64_c(int32_t a, int32_t b) { int64_t r = smul64(a, b); assert(r == (int64_t)a * b); return r; }
+#define umul64 umul64_c
+#define smul64 smul64_c
 #define mulq15 mulq15_c
 #define mulf16 mulf16_c
 #endif
@@ -93,11 +111,11 @@ static void svf_set(clouds_svf_t *s, int32_t f_q30, int32_t r_q24)    /* f = cut
 /* state and internal signals Q23 (8 extra bits: integrators with tiny g would drift in Q15) */
 static inline int32_t svf_hp(clouds_svf_t *s, int32_t in, int32_t *lp_out)
 {
-    int64_t hp = ((int64_t)(in * 256 - (int32_t)(((int64_t)(s->r + s->g) * s->s1) >> 24) - s->s2) * s->h) >> 24;
-    int32_t gh = (int32_t)((s->g * hp) >> 24);
+    int32_t hp = (int32_t)(smul64(in * 256 - (int32_t)(smul64(s->r + s->g, s->s1) >> 24) - s->s2, s->h) >> 24);   /* Q23 */
+    int32_t gh = (int32_t)(smul64(s->g, hp) >> 24);
     int32_t bp = gh + s->s1;
     s->s1 = gh + bp;
-    int32_t gb = (int32_t)(((int64_t)s->g * bp) >> 24);
+    int32_t gb = (int32_t)(smul64(s->g, bp) >> 24);
     int32_t lp = gb + s->s2;
     s->s2 = gb + lp;
     if (lp_out) *lp_out = lp >> 8;
@@ -124,7 +142,7 @@ static void buf_write_fade(clouds_t *c, const int32_t *in, int n, int write)
             if (c->crossfade) {
                 --c->crossfade;
                 int32_t t = c->tail[CROSSFADE - c->crossfade];
-                x += (int32_t)(((int64_t)(t - x) * c->crossfade) >> 8);
+                x += ((t - x) * c->crossfade) >> 8;                     /* 17 bit * 0..256: 32 bit */
             }
             buf_write(c, x);
         }
@@ -295,7 +313,8 @@ static void play_looping(clouds_t *c, const clouds_params_t *p, int32_t *out, in
               cur = cur + 0.00005f * (tgt - cur); c->lp_current_delay = (int64_t)((double)cur * 268435456.0); }
             int32_t d = (c->head - 4 - k + c->size) * 4096 - (int32_t)((float)c->lp_current_delay / 268435456.0f * 4096.0f);
 #else
-            c->lp_current_delay += ((target - c->lp_current_delay) * 107374) >> 31;   /* 0.00005 */
+            { int64_t d = target - c->lp_current_delay;                     /* |d| < 2^46: d * 107374 fits */
+              c->lp_current_delay += (((int64_t)((int32_t)(d >> 32) * 107374) << 32) + (int64_t)umul64((uint32_t)d, 107374)) >> 31; }   /* 0.00005 */
             int32_t d = (c->head - 4 - k + c->size) * 4096 - (int32_t)(c->lp_current_delay >> 16);
 #endif
             out[t] = buf_read(c, Q_HIGH, d >> 12, ((uint32_t)d << 4) & 65535);
@@ -327,7 +346,7 @@ static void play_looping(clouds_t *c, const clouds_params_t *p, int32_t *out, in
         c->lp_phase += inc;
         int32_t gain = 32768;
         if (c->lp_tail_duration) {
-            gain = (int32_t)(((int64_t)c->lp_phase * c->lp_inv_tail) >> 27);    /* Q15 */
+            gain = (int32_t)(smul64(c->lp_phase, c->lp_inv_tail) >> 27);    /* Q15 */
             if (gain > 32768) gain = 32768;
             if (gain < 0) gain = 0;
         }
@@ -378,7 +397,7 @@ static void pitch_shifter(clouds_t *c, int32_t *io, int n, uint64_t ratio_q30, i
         c->ps_phase += (uint32_t)delta;
         uint32_t ph = c->ps_phase;
         int32_t tri = (int32_t)((ph >= 0x80000000u ? ~ph : ph) >> 16);          /* Q15 */
-        int64_t phase = ((uint64_t)ph * (uint32_t)c->ps_size_q16) >> 32;        /* Q16 */
+        int64_t phase = umul64(ph, (uint32_t)c->ps_size_q16) >> 32;        /* Q16 */
         int64_t half = phase + (c->ps_size_q16 >> 1);
         if (half >= c->ps_size_q16) half -= c->ps_size_q16;
         c->ps_buf[c->ps_wp & 4095] = (int16_t)clip16(io[t]);
@@ -413,7 +432,7 @@ static void reverb(clouds_t *c, int32_t *io, int n, int32_t amount, int32_t time
             }
         int32_t acc, prev, apout, wet;
         /* smear AP1 inside the loop */
-        acc = rv_interp(c, 0, (10LL << 16) + (int64_t)60 * c->rev_lfo[0] * 2);
+        acc = rv_interp(c, 0, (10LL << 16) + 120 * c->rev_lfo[0]);
         RV(0, 100) = rv_enc(acc);
         acc = mulq15(2 * io[t], gain);                                     /* Read(l + r, gain) */
         for (int k = 0; k < 4; k++) {                                       /* 4 allpasses */
@@ -422,7 +441,7 @@ static void reverb(clouds_t *c, int32_t *io, int n, int32_t amount, int32_t time
         }
         apout = acc;
         /* left branch */
-        acc = apout + mulq15(rv_interp(c, 9, (4680LL << 16) + (int64_t)100 * c->rev_lfo[1] * 2), time);
+        acc = apout + mulq15(rv_interp(c, 9, (4680LL << 16) + 200 * c->rev_lfo[1]), time);
         c->rev_lp1 += mulq15(acc - c->rev_lp1, lp); acc = c->rev_lp1;
         prev = rv_dec(RV_TAIL(4)); acc += mulq15(prev, -kap); RV(4, 0) = rv_enc(acc); acc = mulq15(acc, kap) + prev;
         prev = rv_dec(RV_TAIL(5)); acc += mulq15(prev, kap);  RV(5, 0) = rv_enc(acc); acc = mulq15(acc, -kap) + prev;
