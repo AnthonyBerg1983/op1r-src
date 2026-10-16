@@ -4,7 +4,7 @@
  * Opt-in: clock + T2, green (screens/usbout.c ms_enabled, saved); off = SEQ + TAPE stock, no allocation, no work
  * (switching off closes the view, silences, saves pending slots, then idles).
  * Synced to the tape: positions are tape samples; PLAY / STOP stay the tape's. While the view is open: T1..T4 select
- * the track (Shift: mute), REC held = record the selected track (from stop: the first note starts the tape) (Shift + REC: latched, STOP ends it; from stop: armed,
+ * the track (Shift: mute), REC held = record the selected track (from stop: the first note starts the tape, then latched) (Shift + REC: latched, STOP ends it; from stop: armed,
  * the first note on the track's input starts the tape and the recording), REC held + metronome from stop: count-in
  * (beats as the tape count-in), then PLAY and latched recording; scissors marks
  * the selection start / end, LIFT cuts it from the selected track (no selection: the 1.5 s page under the playhead), Shift + LIFT from all
@@ -184,7 +184,8 @@ void ms_vc_down(const int32_t *rec, int param, uint32_t ret)      /* VoiceCtl ke
     (void)param;
     if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], rec[1] < 1 ? 100 : rec[1] > 127 ? 127 : rec[1], 1);
-    if (waiting()) arm_go = 1;                                       /* armed / REC held from stop: the note starts the tape */
+    if (waiting()) { arm_go = 1; rec_arm = 1; }                      /* armed / REC held from stop: the note starts the tape,
+                                                                         recording then latched (REC can be released) */
 }
 void ms_vc_up(const int32_t *rec, uint32_t ret)
 {
@@ -201,7 +202,7 @@ void ms_midi_rx(const volatile uint8_t *pk)
     if (!mine) return;
     if (cin == 11) q_put(1, d1, d2, ch);
     else q_put(0, d1, cin == 9 ? d2 : 0, cin == 9 && d2);           /* note on with velocity 0 = off */
-    if (waiting() && cin == 9 && d2) arm_go = 1;
+    if (waiting() && cin == 9 && d2) { arm_go = 1; rec_arm = 1; }
 }
 
 /* ---- audio thread (tape/countin.c, once per block) ---- */
