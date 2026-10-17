@@ -163,11 +163,13 @@ static void spx_render(void *self, int16_t *out, const int16_t *k)
     const int16_t *data = *(const int16_t *const *)obj[0];
     if (sp_vpend[v]) { sp_vpend[v] = 0; sp_plus_velocity(model(self), &sp_xs[v], k, &sp_x[s], VOICE_VEL[v] >> 8); }
     if (sp_x[s].sync) {
-        int32_t bar = (BEAT_LEN >> 14) * 4, ref = sync_ref_inc();
+        /* a bar in voice samples: the voices tick 2 x 44100 / s (hardware: F3 at speed 0.5 = a recording's original
+         * speed, one bar = 2 x 4 beats), the beat length counts 44.1 kHz samples */
+        int32_t bar = (BEAT_LEN >> 14) * 8, ref = sync_ref_inc();
         if (bar != sp_sync_key[s][0] || k[0] != sp_sync_key[s][1] || k[3] != sp_sync_key[s][2] ||
             sp_x[s].sync != sp_sync_key[s][3] || ref != sp_sync_key[s][4]) {   /* rare: one division */
             sp_sync_key[s][0] = bar; sp_sync_key[s][1] = k[0]; sp_sync_key[s][2] = k[3]; sp_sync_key[s][3] = sp_x[s].sync; sp_sync_key[s][4] = ref;
-            sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 88200, ref);
+            sp_plus_sync(&sp_x[s], &sp_c[s], k, (int32_t)obj[1], bar > 0 ? (uint32_t)bar : 176400, ref);
         }
     }
     (void)data;
