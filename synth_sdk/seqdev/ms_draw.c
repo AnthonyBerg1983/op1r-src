@@ -77,6 +77,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
     int32_t span = (int32_t)(((int64_t)OP1_Q10(160) << 16) / (k ? k : 1));   /* samples to the screen edge */
 #define MS_X(p) (OP1_Q10(160) + (int32_t)(((int64_t)((p) - ph) * k) >> 16))
 #define ON(x) ((x) >= X0 && (x) <= X1)
+#define TAPE_END 0xF23FA0                   /* 6 min of tape (docs/11), position units */
     int32_t beat = (int32_t)(((int64_t)2646000 << 8) / (v->bpm_q8 > 0 ? v->bpm_q8 : 120 << 8)), bar = beat * 4;
 
     /* status bar (y 3..17): selected track number in a square of the bar's height (grey while muted), position
@@ -131,19 +132,20 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
     /* bars and beats: lines through the lanes (bars thicker), beat ticks above the lanes when there is room */
     int32_t bpx = (int32_t)(((int64_t)bar * k) >> 16);
     int32_t b0 = ph - span > 0 ? (ph - span) / bar : 0;
-    int32_t mlo = X1 + 1, mhi = X0 - 1;                  /* first / last bar or beat marker on screen */
-#define MARK(x) do { if ((x) < mlo) mlo = (x); if ((x) > mhi) mhi = (x); } while (0)
     for (int32_t bi = b0, n = 0; n < 64; bi++, n++) {
         int32_t xb = MS_X(bi * bar);
         if (xb > X1) break;
-        if (ON(xb)) { sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x500, c_bar); MARK(xb); }
+        if (ON(xb)) sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x500, c_bar);
         if (bpx >= OP1_Q10(32))
             for (int q = 1; q < 4; q++) {
                 int32_t xq = MS_X(bi * bar + q * beat);
-                if (ON(xq)) { sq_line(r, xq, LANE_Y(0) - OP1_Q10(3), xq, LANE_Y(0), 0x300, c_bar); MARK(xq); }
+                if (ON(xq)) sq_line(r, xq, LANE_Y(0) - OP1_Q10(3), xq, LANE_Y(0), 0x300, c_bar);
             }
     }
-#undef MARK
+    /* the tape's extent on screen (bar 1 .. 6 min): the track separators stop there, continuous while scrolling */
+    int32_t mlo = MS_X(0), mhi = MS_X(TAPE_END);
+    if (mlo < X0) mlo = X0;
+    if (mhi > X1) mhi = X1;
 
     /* loop (as the tape: green bar, open ring at loop in, filled dot at loop out) + green lines through the lanes */
     if (v->loop_on && v->loop_out > v->loop_in) {
@@ -177,7 +179,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         int32_t y = LANE_Y(t);
         const uint8_t *lc = t == v->sel_track ? c_red : s->h.mute[t] ? c_grey : c_white;
         int in_sel = v->sel_b >= 0 && (t == v->sel_track || v->shift);   /* LIFT takes these: blue */
-        if (mhi > mlo) sq_line(r, mlo, y + OP1_Q10(26), mhi, y + OP1_Q10(26), 0x600, c_lane);   /* between the markers */
+        if (mhi > mlo) sq_line(r, mlo, y + OP1_Q10(26), mhi, y + OP1_Q10(26), 0x600, c_lane);   /* within the tape */
         int n = ms_events(s, t, ph - span, ph + span, ev, ps, 96);
         for (int i = 0; i < n; i++) {
             int32_t x0 = MS_X(ps[i]);
