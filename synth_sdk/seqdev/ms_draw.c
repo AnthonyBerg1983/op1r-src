@@ -131,16 +131,19 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
     /* bars and beats: lines through the lanes (bars thicker), beat ticks above the lanes when there is room */
     int32_t bpx = (int32_t)(((int64_t)bar * k) >> 16);
     int32_t b0 = ph - span > 0 ? (ph - span) / bar : 0;
+    int32_t mlo = X1 + 1, mhi = X0 - 1;                  /* first / last bar or beat marker on screen */
+#define MARK(x) do { if ((x) < mlo) mlo = (x); if ((x) > mhi) mhi = (x); } while (0)
     for (int32_t bi = b0, n = 0; n < 64; bi++, n++) {
         int32_t xb = MS_X(bi * bar);
         if (xb > X1) break;
-        if (ON(xb)) sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x500, c_bar);
+        if (ON(xb)) { sq_line(r, xb, LANE_Y(0), xb, LANE_Y(4), 0x500, c_bar); MARK(xb); }
         if (bpx >= OP1_Q10(32))
             for (int q = 1; q < 4; q++) {
                 int32_t xq = MS_X(bi * bar + q * beat);
-                if (ON(xq)) sq_line(r, xq, LANE_Y(0) - OP1_Q10(3), xq, LANE_Y(0), 0x300, c_bar);
+                if (ON(xq)) { sq_line(r, xq, LANE_Y(0) - OP1_Q10(3), xq, LANE_Y(0), 0x300, c_bar); MARK(xq); }
             }
     }
+#undef MARK
 
     /* loop (as the tape: green bar, open ring at loop in, filled dot at loop out) + green lines through the lanes */
     if (v->loop_on && v->loop_out > v->loop_in) {
@@ -174,7 +177,7 @@ void ms_draw(void *r, const ms_view *v, ms_t *s)
         int32_t y = LANE_Y(t);
         const uint8_t *lc = t == v->sel_track ? c_red : s->h.mute[t] ? c_grey : c_white;
         int in_sel = v->sel_b >= 0 && (t == v->sel_track || v->shift);   /* LIFT takes these: blue */
-        sq_line(r, X0, y + OP1_Q10(26), X1, y + OP1_Q10(26), 0x600, c_lane);
+        if (mhi > mlo) sq_line(r, mlo, y + OP1_Q10(26), mhi, y + OP1_Q10(26), 0x600, c_lane);   /* between the markers */
         int n = ms_events(s, t, ph - span, ph + span, ev, ps, 96);
         for (int i = 0; i < n; i++) {
             int32_t x0 = MS_X(ps[i]);
