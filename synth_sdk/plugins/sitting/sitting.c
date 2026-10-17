@@ -16,6 +16,8 @@
  *   blue press  -> page 2: loop length of the next capture (params[5]): the first 40 % FREE 0.5 .. 3.9 s, then 6
  *                  tempo-synced lengths: 1/4 BEAT, 1/2 BEAT, 1 BEAT, 2 BEATS, 1 BAR, 2 BARS (4/4)
  *   green press -> page 2: absorption, high-frequency loss per generation (none .. one-pole ~1.3 kHz; params[6])
+ *   white press -> page 2: crossfade at the loop boundary of the next capture, off .. 93 ms (params[7]): the loop's
+ *                  end blends into the input just before its start instead of fading both ends to silence
  *   orange press-> LATCH: every toggle starts a new capture (generation 0): the input is recorded for the loop
  *                  length, then the erosion starts. Before the first capture the wet signal is silence.
  *                  Synced length: the press ARMS the capture (the old loop keeps playing); it starts on the next
@@ -42,9 +44,10 @@
  * Copyright (C) 2026 ultralazr. GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "op1_plugin.h"
 
-#define NMAX     86016                 /* loop samples: 3.9 s at 22.05 kHz, 7.8 s at 11.025 kHz */
+#define NMAX     84096                 /* loop samples: 3.8 s at 22.05 kHz, 7.6 s at 11.025 kHz */
 #define NMIN     11025                 /* 0.5 s */
 #define ERLEN    2048                  /* early-reflection line (93 ms), power of two */
+#define RING     2048                  /* input pre-roll at 22.05 kHz for the crossfade (93 ms), power of two */
 #define NMODE    6
 #define FADE     220                   /* free loop: 10 ms fade at both ends of a capture: seamless, no click */
 #define SFADE    32                    /* synced loop: 1.5 ms (keeps the downbeat's attack) */
@@ -138,6 +141,11 @@ typedef struct {
     int32_t pw, x, ph, dsh, lw;        /* loop samples before / now, output sample in it (0 .. 2^dsh - 1), last wet */
     int32_t e1, e2, e3, f1, f2, f3;    /* decimator histories ([1 3 3 1] / 8 per 2:1 stage) */
     int32_t fade, fmul;                /* capture fade length (loop samples), 32768 / fade */
+    int32_t xf, xfw;                   /* crossfade length (loop samples, 0 = fades), pre-roll end in the ring */
+    int32_t xl, xs;                    /* first erosion pass: samples left blending raw -> room, 32768 / (x + 1) */
+    int32_t rgw, r1, r2, r3;           /* pre-roll ring write index, its decimator history */
+    int32_t goff;                      /* output sample of the capture start in this block (ring already filled to 64) */
+    int16_t inb[OP1_FX_BLOCK + 3];     /* dry input: the last 3 of the previous block, then this block */
     int32_t erw, erc;                  /* early-reflection write index, entries cleared (during REC) */
     int32_t dkv, dkn;                  /* de-click offset when the state changes */
     int32_t rb, ba, cb, bhi, blo;      /* waveform bucket: 128 / len (Q16), position (Q16), current, max / min */
@@ -190,6 +198,7 @@ static void sit_init(int pos)
     s->gen = 0; s->i = 0; s->len = s->plen = NMIN; s->dkn = 0;
     s->pw = s->x = s->ph = s->lw = 0; s->dsh = 1;
     s->e1 = s->e2 = s->e3 = s->f1 = s->f2 = s->f3 = 0;
+    s->xf = s->xl = 0; s->rgw = s->r1 = s->r2 = s->r3 = 0;
     s->lq = s->armed = 0; s->qbar = -1; s->bp = 0; s->blen = 22050 << 14; s->tape = 0; s->tbeat = -1;
     s->kroom = s->kero = s->kabs = s->kdsh = -1;
     for (int k = 0; k < NMODE; k++) s->env[k] = 0;
@@ -208,7 +217,7 @@ static int32_t sync_fit(int32_t blen, int32_t *lq, int32_t *dsh)
 }
 
 /* a new capture (generation 0) from output sample n of this block: free (lq 0, length from the knob) or synced */
-static void start_capture(sit_t *s, int pos, int32_t w5, int32_t lq)
+static void start_capture(sit_t *s, int pos, int32_t w5, int32_t lq, int32_t w7)
 {
     s->dkv = s->lw; s->dkn = 256;                   /* the old wet level fades out (de-click) */
     s->mode = S_REC; s->i = 0; s->gen = 0; s->cpeak = 0; s->ph = 0; s->pw = s->x = 0; s->erc = 0;
@@ -222,6 +231,15 @@ static void start_capture(sit_t *s, int pos, int32_t w5, int32_t lq)
         s->qleft = lq;
     }
     s->lq = lq;
+    /* crossfade (white page 2): the loop's end is blended into the input just before its start (pre-roll ring), so
+     * the wrap is seamless without fading to silence; 0 = the fades as before */
+    s->xf = ((w7 < 0 ? 0 : w7) * (RING - 1) >> 15) >> (s->dsh - 1);
+    s->xfw = (s->rgw - ((OP1_FX_BLOCK - s->goff) >> 1)) & (RING - 1);   /* the ring sample before loop[0] */
+    /* decimator histories from the input just before the start (they were stale: loop[0] came out half) */
+    s->e1 = s->inb[s->goff + 2]; s->e2 = s->inb[s->goff + 1]; s->e3 = s->inb[s->goff];
+    const int16_t *ring = (const int16_t *)op1_fx_scratch(pos) + NMAX + ERLEN;
+    s->f1 = ring[(s->xfw - 1) & (RING - 1)]; s->f2 = ring[(s->xfw - 2) & (RING - 1)]; s->f3 = ring[(s->xfw - 3) & (RING - 1)];
+    if (s->xf) s->fade = 0;
     s->rb = (WB << 16) / s->plen;                   /* per capture */
     s->cb = 0; s->ba = 0; s->bhi = s->blo = 0;
     wave_clear(pos);
@@ -234,6 +252,7 @@ static void start_erode(sit_t *s, int16_t *er)
     for (int k = 0; k < NMODE; k++) s->res[k].lp = s->res[k].bp = 0;
     s->dcx = s->dcy = s->z = 0; s->erw = 0;
     s->mode = S_ERODE; s->i = 0; s->gen = 0; s->peak = 0; s->ipeak = 0; s->gk = 0; s->gap = 0;
+    if (s->xf == 0) s->xl = 0;
     s->ph = 0; s->pw = s->x;                        /* playback starts from the last recorded sample */
     s->cb = 0; s->ba = 0; s->bhi = s->blo = 0;
     /* first pass: normalise from the capture's peak, with a guess of the room's loss (narrow resonators eat
@@ -300,7 +319,7 @@ static inline void bucket_flush(int pos, int32_t cb, int32_t hi, int32_t lo)
 /* The erosion. Its hot state lives in locals of the caller (two small structs the compiler keeps in registers /
  * on the stack); erode1 runs one loop sample through the room and writes the next generation back in place. */
 typedef struct { int32_t t0, t1, t2, q, wd, wr, ab, rb, len, dcs, fr; } cst_t;
-typedef struct { int32_t i, erw, dcx, dcy, z, pk, ipk, ba, cb, bhi, blo, gm, rsh, gmo, rso, gk, gap; } hot_t;
+typedef struct { int32_t i, erw, dcx, dcy, z, pk, ipk, ba, cb, bhi, blo, gm, rsh, gmo, rso, gk, gap, xl, xs; } hot_t;
 #define ALWAYS_INLINE static inline __attribute__((always_inline))
 ALWAYS_INLINE void hot_load(sit_t *s, cst_t *c, hot_t *h)
 {
@@ -308,12 +327,12 @@ ALWAYS_INLINE void hot_load(sit_t *s, cst_t *c, hot_t *h)
     c->ab = s->a15; c->rb = s->rb; c->len = s->len; c->dcs = s->dcs; c->fr = !s->lq;
     h->i = s->i; h->erw = s->erw; h->dcx = s->dcx; h->dcy = s->dcy; h->z = s->z; h->pk = s->peak; h->ipk = s->ipeak;
     h->ba = s->ba; h->cb = s->cb; h->bhi = s->bhi; h->blo = s->blo; h->gm = s->gm; h->rsh = s->rs;
-    h->gmo = s->gmo; h->rso = s->rso; h->gk = s->gk; h->gap = s->gap;
+    h->gmo = s->gmo; h->rso = s->rso; h->gk = s->gk; h->gap = s->gap; h->xl = s->xl; h->xs = s->xs;
 }
 ALWAYS_INLINE void hot_store(sit_t *s, const hot_t *h)
 {
     s->i = h->i; s->erw = h->erw; s->dcx = h->dcx; s->dcy = h->dcy; s->z = h->z; s->peak = h->pk; s->ipeak = h->ipk;
-    s->ba = h->ba; s->cb = h->cb; s->bhi = h->bhi; s->blo = h->blo; s->gk = h->gk; s->gap = h->gap;
+    s->ba = h->ba; s->cb = h->cb; s->bhi = h->bhi; s->blo = h->blo; s->gk = h->gk; s->gap = h->gap; s->xl = h->xl;
 }
 /* one loop sample: returns the heard sample (generation g) and writes generation g + 1 in its place; a synced
  * loop that ran out before its grid point fades from its last sample (prev) to silence until the grid point */
@@ -349,6 +368,13 @@ ALWAYS_INLINE int32_t erode1(sit_t *s, int pos, int16_t *loop, int16_t *er, cons
         int32_t oo = (mq15(zc, h->gmo) * 256) >> h->rso;
         o += (clampi(oo - o, (1 << 22) - 1) * h->gk) >> GRAMP_SH;
         h->gk--;
+    }
+    if (h->xl > 0) {                                /* crossfade, first pass: the next generation starts as the raw
+                                                     * recording (continuous with the baked end) and turns into the
+                                                     * room's output over the crossfade */
+        int32_t t = (h->i + 1) * h->xs;
+        o = (x * (32768 - t) + clampi(o, 65535) * t) >> 15;
+        h->xl--;
     }
     int32_t a = o < 0 ? -o : o;
     if (a > h->pk) h->pk = a;
@@ -428,6 +454,23 @@ static int32_t erode_run(sit_t *s, int pos, int16_t *loop, int16_t *er, int16_t 
     return opk;
 }
 
+/* end of a capture with a crossfade: the last xf loop samples move from the recording to the pre-roll (the input
+ * just before loop[0]), so loop[len - 1] runs on into loop[0] (one division per capture) */
+static void xfade_bake(sit_t *s, int16_t *loop, const int16_t *ring, int32_t len)
+{
+    int32_t x = s->xf < len / 2 ? s->xf : len / 2;
+    s->xl = 0;
+    if (x <= 0) return;
+    int32_t step = 32768 / (x + 1), d = s->dsh - 1;
+    s->xl = x; s->xs = step;                                                 /* and the raw -> room blend (erode1) */
+    for (int32_t k = 0; k < x; k++) {
+        int32_t t = (k + 1) * step, i = len - x + k;
+        int32_t r = (s->xfw - ((x - k) << d)) & (RING - 1);
+        int32_t pre = d ? (ring[r] + ring[(r + 1) & (RING - 1)]) >> 1 : ring[r];
+        loop[i] = (int16_t)((loop[i] * (32768 - t) + pre * t) >> 15);
+    }
+}
+
 /* one recorded loop sample (after the decimator) */
 static void capture_sample(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t x)
 {
@@ -449,7 +492,7 @@ static void capture_sample(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_
         s->i = i + 1;
     } else x = 0;                                                            /* synced: full, wait for the grid point */
     s->pw = s->x; s->x = x;
-    if (s->i >= s->len && !s->lq) { bucket_flush(pos, s->cb, s->bhi, s->blo); start_erode(s, er); }
+    if (s->i >= s->len && !s->lq) { bucket_flush(pos, s->cb, s->bhi, s->blo); xfade_bake(s, loop, er + ERLEN, s->len); start_erode(s, er); }
 }
 
 /* idle (silence) or recording, output samples n .. end - 1; hands over to the erosion when a free capture ends */
@@ -521,7 +564,7 @@ static int beat_grid(sit_t *s, int32_t *qpos)
 }
 
 /* a grid point: start an armed capture, or count down the synced capture / generation */
-static void grid_event(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t qpos, int32_t w5)
+static void grid_event(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t qpos, int32_t w5, int32_t w7)
 {
     if (!qpos && s->tbeat >= 0) s->qbar = (s->tbeat & 3) << 2;               /* bar from the tape */
     else if (s->qbar >= 0) s->qbar = ((s->qbar & 12) + (qpos ? qpos : 4)) & 15;
@@ -531,7 +574,7 @@ static void grid_event(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t qp
         if (lq && s->qbar < 0 && !qpos) s->qbar = 0;                         /* no bar known: this beat is beat 1 */
         if (!lq || (a <= 4 ? (qpos & (a - 1)) == 0 : s->qbar >= 0 && (s->qbar & (a - 1)) == 0)) {
             s->armed = 0;
-            start_capture(s, pos, w5, lq);
+            start_capture(s, pos, w5, lq, w7);
             return;
         }
     }
@@ -543,6 +586,7 @@ static void grid_event(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t qp
         s->len = s->plen = n;
         int32_t f = s->fade < n / 2 ? s->fade : n / 2;
         for (int32_t j = 0; j < f; j++) loop[n - 1 - j] = (int16_t)((loop[n - 1 - j] * j * s->fmul) >> 15);   /* fade out */
+        xfade_bake(s, loop, er + ERLEN, n);
         bucket_flush(pos, s->cb, s->bhi, s->blo);
         s->rb = (WB << 16) / n;                                              /* per capture */
         start_erode(s, er);
@@ -576,15 +620,27 @@ static void sit_render(int pos, int16_t *buf, const int16_t *p)
     if (l != s->latch) {                                                      /* orange press */
         s->latch = l;
         if (s->armed) s->armed = 0;                                          /* armed: cancel */
-        else if (sync_sel(w5) < 0) start_capture(s, pos, w5, 0);            /* free: new capture now */
+        else if (sync_sel(w5) < 0) { s->goff = OP1_FX_BLOCK; start_capture(s, pos, w5, 0, p[7]); }   /* ring: last block */            /* free: new capture now */
         else s->armed = 1;                                                   /* synced: on the grid */
     }
 
+    s->inb[0] = s->inb[OP1_FX_BLOCK]; s->inb[1] = s->inb[OP1_FX_BLOCK + 1]; s->inb[2] = s->inb[OP1_FX_BLOCK + 2];
+    for (int n = 0; n < OP1_FX_BLOCK; n++) s->inb[n + 3] = buf[n];
+    if (s->mode != S_REC) {                                                  /* pre-roll ring (dry input, 22.05 kHz) */
+        int16_t *ring = er + ERLEN;
+        for (int n = 1; n < OP1_FX_BLOCK; n += 2) {
+            int32_t a = buf[n - 1], b = buf[n];
+            ring[s->rgw] = (int16_t)((s->r2 + 3 * s->r1 + 3 * a + b) >> 3);  /* [1 3 3 1] / 8, then 2:1 */
+            s->rgw = (s->rgw + 1) & (RING - 1);
+            s->r2 = a; s->r1 = b;
+        }
+    }
     int32_t qpos = 0;
     int off = beat_grid(s, &qpos);
     int32_t peak = run(s, pos, loop, er, buf, 0, off < 0 ? OP1_FX_BLOCK : off, mix);
     if (off >= 0) {
-        grid_event(s, pos, loop, er, qpos, w5);
+        s->goff = off;                                                   /* ring holds this whole block */
+        grid_event(s, pos, loop, er, qpos, w5, p[7]);
         int32_t pk = run(s, pos, loop, er, buf, off, OP1_FX_BLOCK, mix);
         if (pk > peak) peak = pk;
     }
@@ -601,7 +657,7 @@ static void sit_render(int pos, int16_t *buf, const int16_t *p)
 }
 
 const op1_fx_t FX_sitting = { sit_init, sit_render,
-                              { OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_NONE, OP1_PRESS_LATCH } };
+                              { OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_LATCH } };
 
 
 /* ======================= screen (GUI thread) =======================
@@ -662,7 +718,7 @@ static void sit_screen_update(void *scr, int dt)
     sq_fx_knobs_live(k);
     const int16_t *wd = op1_fx_knobs(pos);
     int32_t w5 = wd[5] < 0 ? 0 : wd[5], w6 = wd[6] < 0 ? 0 : wd[6];
-    int pg_blue = op1_fx_page[pos][0], pg_green = op1_fx_page[pos][1];
+    int pg_blue = op1_fx_page[pos][0], pg_green = op1_fx_page[pos][1], pg_white = op1_fx_page[pos][2];
     op1_screen_draw(scr, dt);
     void *r = op1_raster();
     blink += (uint32_t)dt;
@@ -718,6 +774,10 @@ static void sit_screen_update(void *scr, int dt)
     } else if (pg_green) {
         p = put_str(t, "ABSORB "); p = put_num(p, w6 * 100 >> 15, 1); put_str(p, "%");
         ic = C_GREEN;
+    } else if (pg_white) {                                                   /* next capture's crossfade */
+        int32_t w7 = wd[7] < 0 ? 0 : wd[7], ms = (w7 * (RING - 1) >> 15) * 10 / 2205;   /* 22.05 kHz samples */
+        if (ms) { p = put_str(t, "XFADE "); p = put_num(p, ms, 1); put_str(p, " MS"); } else put_str(t, "XFADE OFF");
+        ic = C_WHITE;
     } else if (mode == S_ERODE && emax > 0) {
         p = put_num(t, (s->room.f[kmax] + 128) >> 8, 1); put_str(p, " HZ");
     } else if (mode == S_IDLE) {
@@ -792,10 +852,10 @@ static void sit_screen_update(void *scr, int dt)
 
     /* ---- knobs: label + bar (page 2: its label, dashed); synced lengths ticked on the blue page-2 track ---- */
     static const uint8_t *const kc[4] = { C_BLUE, C_GREEN, C_WHITE, C_RED };
-    static const char *const lab1[4] = { "SIZE", "SHAPE", "ERODE", "MIX" }, *const lab2[2] = { "LOOP", "ABSORB" };
+    static const char *const lab1[4] = { "SIZE", "SHAPE", "ERODE", "MIX" }, *const lab2[3] = { "LOOP", "ABSORB", "XFADE" };
     for (int i = 0; i < 4; i++) {
-        int pg = (i == 0 && pg_blue) || (i == 1 && pg_green);
-        int32_t v = pg ? (i ? w6 : w5) : k[i];
+        int pg = (i == 0 && pg_blue) || (i == 1 && pg_green) || (i == 2 && pg_white);
+        int32_t v = pg ? (i == 2 ? (wd[7] < 0 ? 0 : wd[7]) : i ? w6 : w5) : k[i];
         int32_t kx = Q(sg_knob_x[i]), ky = Q(SG_KNOB_Y), len = Q(SG_KNOB_W) * v >> 15;
         sq_text(r, kx, Q(SG_LABEL_Y), SG_LABEL_S, pg ? lab2[i] : lab1[i], 0x500, kc[i]);
         if (i == 3 && (s->armed || mode == S_REC) && ((blink >> 8) & 1))      /* capture pending / running */

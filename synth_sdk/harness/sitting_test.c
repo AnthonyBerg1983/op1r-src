@@ -352,15 +352,17 @@ static void test_random(void)
  * generation (wet only, silence in once the loop runs) */
 static int16_t rec_out[1 << 21]; static int64_t rec_n;
 static int16_t src_until_loop(int64_t n) { return st[0].mode == S_ERODE ? 0 : speech(n); }
-static void wrap_case(const char *name, int16_t w5, double *worst)
+static int16_t src_tone(int64_t n);
+static void wrap_case(const char *name, int16_t w5, double *worst, int16_t w7)
 {
     fx_reset(4242);
-    knobs[5] = w5; knobs[3] = 32767;
+    knobs[5] = w5; knobs[3] = 32767; knobs[7] = w7;
     rec_n = 0;
     int64_t t0 = M.t;
     for (int k = 0; k < 30000 && ngen < 24; k++) {
         if (k == 5) press();
-        block(src_until_loop);
+        block(w7 ? src_tone : src_until_loop);                             /* crossfade: a smooth tone (raw speech
+                                                                            * is spikier than the room's output) */
         for (int n = 0; n < 64 && rec_n < (1 << 21); n++) rec_out[rec_n++] = outbuf[n];
     }
     double w = 0; int at = 0;
@@ -377,12 +379,46 @@ static void wrap_case(const char *name, int16_t w5, double *worst)
     printf("  %s: worst boundary step / largest inner step %.2f (generation %d of %d)\n", name, w, at, ngen);
     *worst = w;
 }
+/* crossfade (white page 2): a steady tone loops without the level dip of the end fades */
+static int16_t src_tone(int64_t n) { return st[0].mode == S_ERODE ? 0 : (int16_t)(12000 * sin(n * 2 * M_PI * 220 / 44100)); }
+static double dip_case(int16_t w7)
+{
+    fx_reset(99);
+    knobs[5] = 1000; knobs[3] = 32767; knobs[7] = w7; knobs[2] = 0;           /* free 0.6 s, least erosion */
+    rec_n = 0;
+    int64_t t0 = M.t;
+    for (int k = 0; k < 30000 && ngen < 6; k++) {
+        if (k == 5) press();
+        block(src_tone);
+        for (int n = 0; n < 64 && rec_n < (1 << 21); n++) rec_out[rec_n++] = outbuf[n];
+    }
+    double worst = 1e9;
+    for (int g = 1; g + 1 < ngen && g < 4; g++) {
+        int64_t a = gen_at[g] - t0;                                            /* around the boundary vs inside */
+        double in = 0, edge = 1e9;
+        for (int64_t n = a + 2000; n < a + 6000; n++) in += (double)rec_out[n] * rec_out[n];
+        in = sqrt(in / 4000);
+        for (int64_t c = a - 600; c < a + 600; c += 50) {
+            double e = 0; for (int64_t n = c; n < c + 100; n++) e += (double)rec_out[n] * rec_out[n];
+            e = sqrt(e / 100); if (e < edge) edge = e;
+        }
+        if (in > 0 && edge / in < worst) worst = edge / in;
+    }
+    return worst;
+}
+
 static void test_wrap_click(void)
 {
+    double off = dip_case(0), on = dip_case(32767);
+    printf("  steady tone, free loop: level at the boundary (lowest 100-sample RMS / inside) fades %.2f, crossfade %.2f\n", off, on);
+    CHECK(on > 0.6 && on > off + 0.2, "crossfade: boundary dip %.2f (fades %.2f)", on, off);
     double a, b;
-    wrap_case("free 0.6 s", 1000, &a);
-    wrap_case("synced 1 BEAT", (int16_t)(FREE_V + 2 * (32768 - FREE_V) / NSYNC + 500), &b);
-    CHECK(a < 1.5 && b < 1.5, "click at the loop boundary: free %.2f, synced %.2f", a, b);
+    for (int x = 0; x < 2; x++) {
+        int16_t w7 = x ? 20000 : 0;
+        wrap_case(x ? "free 0.6 s, crossfade" : "free 0.6 s", 1000, &a, w7);
+        wrap_case(x ? "synced 1 BEAT, crossfade" : "synced 1 BEAT", (int16_t)(FREE_V + 2 * (32768 - FREE_V) / NSYNC + 500), &b, w7);
+        CHECK(a < 1.5 && b < 1.5, "click at the loop boundary: free %.2f, synced %.2f", a, b);
+    }
 }
 
 static void test_level(void)
