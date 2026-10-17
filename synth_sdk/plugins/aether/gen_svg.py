@@ -1,52 +1,283 @@
 #!/usr/bin/env python3
-"""Generate aether.svg + aether_geom.h (geometry shared with aether.c).
+"""Generate aether.svg + aether_geom.h from the designer's orbit-1.svg (satellite dish, 4 dials + sliders).
 
-A theremin seen from the front: cabinet on two legs, the pitch rod standing up on the right, the volume loop on
-the left. Code draws over it: the horizon (tilts with the OP-1's side tilt), the pitch dot on the rod (blue, up /
-down with the pitch bend, the rod lit up to it), the loop in green (brightness = volume) and four knob bars at
-the bottom (blue / green / white / red; page-2 values while a page is on).
+The OP-1's SVG parser (docs/16) has no CSS, no stroke-dasharray, no rotate() transforms and no usable text, so the
+drawing is flattened here: class styles become attributes, opacity is baked into the colour (on black), transforms
+and rounded rects are baked into the coordinates, paths are rewritten absolute with 2 decimals, the dotted signal
+waves become rows of small dots, the labels become stroke-font paths (seq/seq_text.h glyphs) and everything moves
+up by Y_SHIFT (content above ~y 140). Moving / code-drawn parts:
+  dish     group: the dish and its feed, waves: the radio waves (under the right signal's mask); aether.c rotates both about the hinge (elevation, front /
+           back tilt) and squeezes it horizontally (azimuth, side tilt)
+  ndl0..3  dial needles, rotated by the knobs (blue ORBIT, green FORM, white SPACE, red DEPTH)
+  sld0..3  slider handles, moved by the page-2 words (red: the voice's volume)
+  the dial value arcs are drawn by aether.c (geometry in aether_geom.h)
 """
-import os
+import math, os, re, xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-GREY = '#6F7173'
-CAB = (118, 92, 202, 112)                        # cabinet x0, y0, x1, y1
-ROD_X, ROD_Y0, ROD_Y1 = 190, 14, 92              # pitch rod (top .. cabinet)
-LOOP_CX, LOOP_CY, LOOP_RX, LOOP_RY = 96, 88, 16, 7
-HOR_CX, HOR_CY, HOR_R = 160, 54, 120             # horizon centre + half length
-BAR_X = (46, 122, 198, 274)                      # knob bar centres
-BAR_Y, BAR_W = 134, 44
-PITCH_PX = 1.6                                   # px per semitone (dot above / below the rod middle)
-ROD_MID = 53
+SDK = os.path.dirname(os.path.dirname(HERE))
+SRC = os.path.join(HERE, 'orbit-1.svg')
+Y_SHIFT = -4.0
+NS = '{http://www.w3.org/2000/svg}'
+DOT_STEP = 2.68                                   # the source's dotted stroke (dasharray 0 2.68, round caps)
+
+# ---------------- source: styles ----------------
+src = open(SRC).read()
+rules = {}
+for sel, body in re.findall(r'([^{}]+)\{([^}]*)\}', re.search(r'<style>(.*?)</style>', src, re.S).group(1)):
+    props = dict((k.strip(), v.strip()) for k, v in (p.split(':', 1) for p in body.split(';') if ':' in p))
+    for c in sel.split(','):
+        rules.setdefault(c.strip().lstrip('.'), {}).update(props)
+root = ET.fromstring(src)
 
 
+def style(el):
+    st = {}
+    for c in (el.get('class') or '').split(): st.update(rules.get(c, {}))
+    return st
+
+
+def col(v, op):
+    v = v.lstrip('#')
+    if len(v) == 3: v = ''.join(c * 2 for c in v)
+    return '#%02X%02X%02X' % tuple(round(int(v[i:i + 2], 16) * op) for i in (0, 2, 4))
+
+
+def matrix(t):                                    # transform attribute -> (a b c d e f)
+    m = (1, 0, 0, 1, 0, 0)
+    for fn, args in re.findall(r'(\w+)\(([^)]*)\)', t or ''):
+        a = [float(x) for x in re.split(r'[ ,]+', args.strip())]
+        if fn == 'translate': n = (1, 0, 0, 1, a[0], a[1] if len(a) > 1 else 0)
+        elif fn == 'rotate':
+            r = math.radians(a[0]); n = (math.cos(r), math.sin(r), -math.sin(r), math.cos(r), 0, 0)
+        else: raise ValueError(fn)
+        m = (m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3],
+             m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5])
+    return m
+
+
+def path_ops(d):                                  # absolute M / L / C / Z (harness/render.py's parser)
+    import sys; sys.path.insert(0, os.path.join(SDK, 'harness'))
+    import render
+    return render.path_ops(d)
+
+
+def f2(v): return ('%.2f' % v).rstrip('0').rstrip('.') if abs(v) >= 0.005 else '0'
+
+
+# ---------------- flatten: every drawable -> (kind, points / ops, attrs) in screen coordinates ----------------
+items = []                                         # (tag, data, stroke, fill, width, group)
+
+
+def walk(el, m, op, grp):
+    tag = el.tag.replace(NS, '')
+    st = style(el)
+    op *= float(st.get('opacity', 1))
+    m2 = m
+    if el.get('transform'):
+        a = matrix(el.get('transform'))
+        m2 = (m[0] * a[0] + m[2] * a[1], m[1] * a[0] + m[3] * a[1], m[0] * a[2] + m[2] * a[3],
+              m[1] * a[2] + m[3] * a[3], m[0] * a[4] + m[2] * a[5] + m[4], m[1] * a[4] + m[3] * a[5] + m[5])
+    P = lambda x, y: (m2[0] * x + m2[2] * y + m2[4], m2[1] * x + m2[3] * y + m2[5] + Y_SHIFT)
+    if tag in ('svg', 'g'):
+        for ch in el: walk(ch, m2, op, grp)
+        return
+    if tag in ('defs', 'style', 'text') or (tag == 'rect' and not el.get('class')): return   # bg rect, labels: own
+    f = lambda k: float(el.get(k, 0))
+    stroke = st.get('stroke'); fill = st.get('fill', '#000' if 'fill' not in st else st['fill'])
+    if fill == 'none': fill = None
+    stroke = col(stroke, op) if stroke and stroke != 'none' else None
+    fill = col(fill, op) if fill else None
+    w = float(st.get('stroke-width', '1').replace('px', ''))
+    dotted = 'stroke-dasharray' in st
+    ops = []
+    if tag == 'line': ops = [('M', *P(f('x1'), f('y1'))), ('L', *P(f('x2'), f('y2')))]
+    elif tag == 'polyline':
+        p = [float(v) for v in el.get('points').split()]
+        ops = [('M' if i == 0 else 'L', *P(p[i], p[i + 1])) for i in range(0, len(p), 2)]
+    elif tag == 'rect':                            # rounded corners dropped (1 px at this size)
+        x, y, wd, ht = f('x'), f('y'), f('width'), f('height')
+        ops = [('M', *P(x, y)), ('L', *P(x + wd, y)), ('L', *P(x + wd, y + ht)), ('L', *P(x, y + ht)), ('Z',)]
+    elif tag in ('circle', 'ellipse'):
+        cx, cy = f('cx'), f('cy'); rx = f('r') or f('rx'); ry = f('r') or f('ry')
+        k = 0.5523
+        q = [(cx + rx, cy), (cx, cy + ry), (cx - rx, cy), (cx, cy - ry)]
+        ops = [('M', *P(*q[0]))]
+        for i in range(4):                         # 4 cubic quarter arcs
+            (x0, y0), (x1, y1) = q[i], q[(i + 1) % 4]
+            c1 = (x0 + (0 if i % 2 else 0) - (k * rx if i == 1 else 0) + (0), 0)
+            if i == 0: c1, c2 = (cx + rx, cy + k * ry), (cx + k * rx, cy + ry)
+            elif i == 1: c1, c2 = (cx - k * rx, cy + ry), (cx - rx, cy + k * ry)
+            elif i == 2: c1, c2 = (cx - rx, cy - k * ry), (cx - k * rx, cy - ry)
+            else: c1, c2 = (cx + k * rx, cy - ry), (cx + rx, cy - k * ry)
+            ops.append(('C', *P(*c1), *P(*c2), *P(x1, y1)))
+        ops.append(('Z',))
+    elif tag == 'path':
+        for o in path_ops(el.get('d')):
+            if o[0] == 'Z': ops.append(o)
+            else: ops.append((o[0], *sum((P(o[i], o[i + 1]) for i in range(1, len(o), 2)), ())))
+    items.append(dict(tag=tag, ops=ops, stroke=stroke, fill=fill, w=w, dotted=dotted, grp=grp, el=el))
+
+
+# group membership by source structure: the dish = the group holding the ellipse + the waves + dish ribs / rim
+def classify():
+    kids = list(root)
+    for i, ch in enumerate(kids):
+        tag = ch.tag.replace(NS, '')
+        grp = None
+        if tag == 'g':
+            inner = [c.tag.replace(NS, '') for c in ch]
+            if 'ellipse' in inner: grp = 'dish'
+            elif all(c.get('class') == 'cls-6' for c in ch): grp = 'waves'         # the radio waves (moved with the dish)
+        elif tag in ('path', 'line') and ch.get('class') == 'cls-5':
+            grp = 'dish'                                                            # ribs / rim
+        walk(ch, (1, 0, 0, 1, 0, 0), 1.0, grp)
+
+
+classify()
+
+# ---------------- dials / sliders (source layout: left blue / white, right green / red) ----------------
+DIALS = [  # knob, centre, colour, label, slider x, slider y0 .. y1, handle centre in the source
+    dict(k=0, cx=55.26, cy=31.29, c='#4D9EFF', lab='ORBIT', sx=22.29, sy0=18.75, sy1=52.43),
+    dict(k=1, cx=267.85, cy=31.29, c='#00ED95', lab='FORM', sx=297.85, sy0=18.75, sy1=52.43),
+    dict(k=2, cx=55.26, cy=90.85, c='#FFFFFF', lab='SPACE', sx=22.29, sy0=78.31, sy1=112.0),
+    dict(k=3, cx=267.85, cy=90.85, c='#FF3A5D', lab='DEPTH', sx=297.85, sy0=78.31, sy1=112.0),
+]
+R_ARC = 13.07                                     # value arc radius (the bright arc of the source)
+A0 = math.radians(135)                            # arc start (lower left), 270 degrees clockwise
+
+
+def is_value_part(it):
+    """the parts aether.c draws / moves: bright value arcs, needles, slider handles"""
+    ops = it['ops']
+    if it['tag'] == 'rect' and it['el'].get('class') in ('cls-4', 'cls-7', 'cls-11', 'cls-16'): return 'handle'
+    if it['tag'] == 'line' and it['el'].get('class') in ('cls-5', 'cls-6', 'cls-2', 'cls-8') and it['grp'] is None:
+        x0, y0 = ops[0][1:3]
+        for d in DIALS:
+            if abs(x0 - d['cx']) < 0.6 and abs(y0 - d['cy'] - Y_SHIFT) < 0.6: return 'needle'
+    if it['tag'] == 'path' and it['grp'] is None:
+        x0, y0 = ops[0][1:3]
+        for d in DIALS:                                                            # partial arc from the start
+            if abs(x0 - (d['cx'] - 9.29)) < 0.6 and abs(y0 - (d['cy'] + 9.19 + Y_SHIFT)) < 0.6 \
+                    and it['stroke'] and it['stroke'].upper() == d['c'] and len(ops) < 5:
+                return 'arc'
+    return None
+
+
+def ops_d(ops):
+    out = []
+    for o in ops:
+        out.append(o[0] if o[0] == 'Z' else o[0] + ' '.join(f2(v) for v in o[1:]))
+    return ''.join(out)
+
+
+def dots(ops, step):                              # points along a path every `step` px
+    pts, (px, py) = [], ops[0][1:3]
+    acc = step; out = [(px, py)]
+    for o in ops[1:]:
+        if o[0] == 'L': seg = [(o[1], o[2])]
+        elif o[0] == 'C':
+            seg = []
+            for t in range(1, 17):
+                t /= 16; u = 1 - t
+                seg.append((u**3 * px + 3*u*u*t*o[1] + 3*u*t*t*o[3] + t**3*o[5], u**3 * py + 3*u*u*t*o[2] + 3*u*t*t*o[4] + t**3*o[6]))
+        else: continue
+        for x, y in seg:
+            d = math.hypot(x - px, y - py)
+            while d >= acc:
+                r = acc / d; px, py = px + (x - px) * r, py + (y - py) * r
+                out.append((px, py)); d = math.hypot(x - px, y - py); acc = step
+            acc -= d; px, py = x, y
+    return out
+
+
+# ---------------- stroke-font labels (seq/seq_text.h) ----------------
+def glyphs():
+    h = open(os.path.join(SDK, 'seq', 'seq_text.h')).read()
+    fc = re.search(r'sq_fc\[\] = "([^"]*)"', h).group(1)
+    num = lambda name: [int(v, 0) for v in re.search(name + r'\[\] = \{([^}]*)\}', h).group(1).replace('\n', ' ').split(',') if v.strip()]
+    fo, fn, seg = num('sq_fo'), num('sq_fn'), num('sq_seg')
+    g = {}
+    for k, ch in enumerate(fc):
+        g[ch] = [((seg[2 * j] >> 4, seg[2 * j] & 15), (seg[2 * j + 1] >> 4, seg[2 * j + 1] & 15)) for j in range(fo[k], fo[k] + fn[k])]
+    return g
+
+
+def label(text, cx, top, s, colour, o):
+    g = glyphs()
+    wch = 4 * s + 1.6 * s                         # glyph 4 units + gap
+    x = cx - (len(text) * wch - 1.6 * s) / 2
+    d = []
+    for ch in text:
+        for (x0, y0), (x1, y1) in g.get(ch, []):
+            d.append('M%s %sL%s %s' % (f2(x + x0 * s), f2(top + y0 * s), f2(x + x1 * s), f2(top + y1 * s)))
+        x += wch
+    o.append(f'<path fill="none" stroke="{colour}" stroke-width="1.3" stroke-linecap="square" d="{"".join(d)}"/>')
+
+
+# ---------------- output ----------------
 def svg():
-    x0, y0, x1, y1 = CAB
     o = ['<?xml version="1.0" encoding="utf-8"?>',
-         '<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"',
-         '\t width="320px" height="160px" viewBox="0 0 320 160">',
-         '<!-- generated by gen_svg.py - theremin: cabinet, rod, loop; horizon, pitch dot, loop colour and knob bars',
-         '     are drawn by aether.c -->']
-    L = lambda a, b, c, d, w=1: o.append(f'<line fill="none" stroke="{GREY}" stroke-width="{w}" x1="{a}" y1="{b}" x2="{c}" y2="{d}"/>')
-    L(x0, y0, x1, y0); L(x1, y0, x1, y1); L(x1, y1, x0, y1); L(x0, y1, x0, y0)
-    L(x0 + 10, y1, x0 + 6, 124); L(x1 - 10, y1, x1 - 6, 124)                      # legs
-    L(ROD_X, ROD_Y0, ROD_X, y0, 2)                                                 # pitch rod
-    L(x0, LOOP_CY + 2, LOOP_CX + LOOP_RX, LOOP_CY + 2)                              # loop arm
-    for b in BAR_X:                                                                # knob bar tracks
-        L(b - BAR_W // 2, BAR_Y, b + BAR_W // 2, BAR_Y)
+         '<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="320px" height="160px" viewBox="0 0 320 160">',
+         '<!-- generated by gen_svg.py from orbit-1.svg: the dish (id dish), needles (ndl0..3) and slider handles (sld0..3)',
+         '     are moved by aether.c, the dial value arcs drawn by it -->']
+
+    def emit(it, ident=None):
+        a = f'stroke="{it["stroke"]}" stroke-width="{f2(it["w"])}" stroke-linecap="round" stroke-linejoin="round"' if it['stroke'] else ''
+        fl = f'fill="{it["fill"]}"' if it['fill'] else 'fill="none"'
+        idt = f' id="{ident}"' if ident else ''
+        if it['dotted']:                           # dotted stroke: dots (filled circles; zero-length lines vanish)
+            o.append(f'<g{idt}>' + ''.join(f'<circle fill="{it["stroke"]}" cx="{f2(x)}" cy="{f2(y)}" r="0.75"/>'
+                                         for x, y in dots(it['ops'], DOT_STEP)) + '</g>')
+            return
+        o.append(f'<path{idt} {fl} {a} d="{ops_d(it["ops"])}"/>')
+
+    dish = [it for it in items if it['grp'] == 'dish']
+    rest = [it for it in items if it['grp'] != 'dish']   # source order: the waves come before the black mask under
+                                                         # the right signal, so it cuts them as drawn
+    handles, needles = {}, {}
+    in_waves = False
+    for it in rest:
+        if it['grp'] == 'waves' and not in_waves: o.append('<g id="waves">'); in_waves = True
+        elif it['grp'] != 'waves' and in_waves: o.append('</g>'); in_waves = False
+        kind = is_value_part(it)
+        if kind == 'arc': continue                 # drawn by aether.c
+        ox, oy = it['ops'][0][1:3]
+        if it['tag'] == 'path' and it['grp'] is None and it['stroke'] and len(it['ops']) >= 5 and any(
+                abs(ox - (d['cx'] - 9.29)) < 0.6 and abs(oy - (d['cy'] + 9.19 + Y_SHIFT)) < 0.6
+                and it['stroke'].upper() == d['c'] for d in DIALS):
+            it = dict(it, stroke=col(it['stroke'], 0.4))   # a bright full ring (red dial): dim track like the others
+        if kind == 'needle':
+            k = next(d['k'] for d in DIALS if abs(it['ops'][0][1] - d['cx']) < 0.6 and abs(it['ops'][0][2] - d['cy'] - Y_SHIFT) < 0.6)
+            needles[k] = it; continue
+        if kind == 'handle':
+            k = next(d['k'] for d in DIALS if abs((it['ops'][0][1] + it['ops'][1][1]) / 2 - d['sx']) < 2
+                     and d['sy0'] < it['ops'][0][2] - Y_SHIFT < d['sy1'])
+            handles[k] = it; continue
+        emit(it)
+    o.append('<g id="dish">')
+    for it in dish: emit(it)
+    o.append('</g>')
+    for d in DIALS:                                # needle pointing straight up (0 = mid) and handle at the middle
+        cx, cy = d['cx'], d['cy'] + Y_SHIFT
+        o.append(f'<line id="ndl{d["k"]}" fill="none" stroke="{d["c"]}" stroke-width="1.5" stroke-linecap="round" '
+                 f'x1="{f2(cx)}" y1="{f2(cy)}" x2="{f2(cx)}" y2="{f2(cy - 6.5)}"/>')
+        ym = (d['sy0'] + d['sy1']) / 2 + Y_SHIFT
+        o.append(f'<path id="sld{d["k"]}" fill="{d["c"]}" d="M{f2(d["sx"] - 5)} {f2(ym - 1.88)}H{f2(d["sx"] + 5)}V{f2(ym + 1.88)}'
+                 f'H{f2(d["sx"] - 5)}Z"/>')
+        label(d['lab'], cx, d['cy'] + 17.5 + Y_SHIFT, 1.25, d['c'], o)
     o.append('</svg>')
     return '\n'.join(o) + '\n'
 
 
 def header():
-    return '\n'.join([
-        '/* generated by gen_svg.py - geometry of aether.svg */',
-        f'#define AE_ROD_X {ROD_X}', f'#define AE_ROD_Y0 {ROD_Y0}', f'#define AE_ROD_Y1 {ROD_Y1}', f'#define AE_ROD_MID {ROD_MID}',
-        f'#define AE_PITCH_PX_Q10 {int(PITCH_PX * 1024)}',
-        f'#define AE_LOOP_CX {LOOP_CX}', f'#define AE_LOOP_CY {LOOP_CY}', f'#define AE_LOOP_RX {LOOP_RX}', f'#define AE_LOOP_RY {LOOP_RY}',
-        f'#define AE_HOR_CX {HOR_CX}', f'#define AE_HOR_CY {HOR_CY}', f'#define AE_HOR_R {HOR_R}',
-        f'#define AE_BAR_Y {BAR_Y}', f'#define AE_BAR_W {BAR_W}',
-        'static const int16_t ae_bar_x[4] = { ' + ', '.join(map(str, BAR_X)) + ' };', ''])
+    L = ['/* generated by gen_svg.py - geometry of aether.svg (from orbit-1.svg) */',
+         '#define AE_HINGE_X_Q10 %d' % round(132.34 * 1024), '#define AE_HINGE_Y_Q10 %d' % round((106.68 + Y_SHIFT) * 1024),
+         '#define AE_ARC_R_Q10 %d' % round(R_ARC * 1024),
+         '#define AE_SLD_HALF_Q10 %d   /* slider travel: +- from the middle */' % round((52.43 - 18.75) / 2 * 1024 - 2.5 * 1024)]
+    L.append('static const int32_t ae_dial_x[4] = { ' + ', '.join(str(round(d['cx'] * 1024)) for d in DIALS) + ' };   /* by knob */')
+    L.append('static const int32_t ae_dial_y[4] = { ' + ', '.join(str(round((d['cy'] + Y_SHIFT) * 1024)) for d in DIALS) + ' };')
+    return '\n'.join(L) + '\n'
 
 
 if __name__ == '__main__':

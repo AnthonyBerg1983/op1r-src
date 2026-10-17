@@ -134,83 +134,91 @@ static void ae_render(void *self, int16_t *out, const int16_t *params)
 const op1_engine_t ENGINE_aether = { ae_note_on, ae_render, 0, { OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_NONE } };
 
 /* ======================= screen (GUI thread) =======================
- * aether.svg (gen_svg.py): cabinet, pitch rod, loop arm, knob bar tracks. Drawn here: the horizon (white, tilts
- * with the OP-1's side tilt, live sensor), the pitch dot on the rod (blue; the rod lit from the cabinet to it), the
- * loop (green, brightness = volume), a vibrato ripple beside the rod (white, while shaking) and the knob bars (page 2 on:
- * the bar shows the page-2 value and a dot sits under it). */
+ * aether.svg (gen_svg.py from the designer's orbit-1.svg): a satellite dish on a tower, four dials with sliders.
+ * Moved here: the dish (node "dish") follows the OP-1's tilt, live sensor, smoothed - front / back tilt turns it up /
+ * down about its hinge (elevation, +-30 degrees), the side tilt turns it around (azimuth: the dish is squeezed
+ * horizontally, mirrored past 90 degrees); the dial needles (ndl0..3) and value arcs show the knobs (blue ORBIT =
+ * range, green FORM = timbre, white SPACE = vibrato, red DEPTH = volume tilt), the slider handles (sld0..3) the
+ * page-2 values (dead zone, tilt range, vibrato rate) and, red, the playing voice's volume. */
 #include "aether_geom.h"
-static const uint8_t C_WHITE[4] = { 0xFF, 0xFF, 0xFF, 0xFF }, C_BLUE[4] = { 0x4D, 0x9E, 0xFF, 0xFF },
-                     C_GREEN[4] = { 0x00, 0xED, 0x95, 0xFF }, C_RED[4] = { 0xFF, 0x3A, 0x5D, 0xFF },
-                     C_GREY[4] = { 0x6F, 0x71, 0x73, 0xFF };
-static int32_t sx, sz = 16384;        /* smoothed sensor (screen) */
+static const uint8_t *const ae_col[4] = {
+    (const uint8_t[4]){ 0x4D, 0x9E, 0xFF, 0xFF }, (const uint8_t[4]){ 0x00, 0xED, 0x95, 0xFF },
+    (const uint8_t[4]){ 0xFF, 0xFF, 0xFF, 0xFF }, (const uint8_t[4]){ 0xFF, 0x3A, 0x5D, 0xFF } };
+static int32_t sx, sy, sz = 16384;    /* smoothed sensor (screen) */
+static void *dish, *waves, *ndl[4], *sld[4];
 
 static void ln(void *r, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t w, const uint8_t *c)   /* Q10 */
 {
     op1_pt a = { x0, y0 }, b = { x1, y1 };
     op1_raster_line(r, &a, &b, w, c);
 }
-static void dim(uint8_t *o, const uint8_t *c, int32_t q15)        /* 25 % .. 100 % */
-{
-    int32_t l = 64 + (q15 * 192 >> 15);
-    for (int i = 0; i < 3; i++) o[i] = (uint8_t)(c[i] * l >> 8);
-    o[3] = 0xFF;
-}
 static int32_t isqrt(int32_t v) { int32_t r = 0, b = 1 << 30; while (b > v) b >>= 2; while (b) { if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1; b >>= 2; } return r; }
 
-static void ae_screen_init(void *scr) { (void)scr; }
+static void ae_screen_init(void *scr)
+{
+    static const char *const nn[4] = { "ndl0", "ndl1", "ndl2", "ndl3" }, *const sn[4] = { "sld0", "sld1", "sld2", "sld3" };
+    dish = op1_find_node(scr, "dish"); waves = op1_find_node(scr, "waves");
+    for (int i = 0; i < 4; i++) { ndl[i] = op1_find_node(scr, nn[i]); sld[i] = op1_find_node(scr, sn[i]); }
+}
+
+/* sin / cos (Q15) of a dial position: v 0..32767 -> -135 .. +135 degrees from straight up (sine table: 8192 / turn) */
+static inline int32_t dsin(int32_t a) { return OP1_SINE_TABLE[a & 8191]; }
+static inline int32_t dcos(int32_t a) { return OP1_SINE_TABLE[(a + 2048) & 8191]; }
 
 static void ae_screen_update(void *scr, int dt)
 {
-    op1_screen_draw(scr, dt);
-    void *r = op1_raster();
     int slot = OP1_SCREEN_SLOT & 7;
     int16_t k[4];
     op1_synth_knobs_live(slot, k);
     const int16_t *w = op1_synth_knobs(slot);
     const ae_t *s = &st[ae_cur];
-    /* horizon: rotated by the side tilt (X against Z), smoothed */
-    sx += (AE_ACCEL[0] - sx) >> 2; sz += (AE_ACCEL[2] - sz) >> 2;
-    int32_t n = isqrt(sx * sx + sz * sz); if (n < 1024) n = 1024;
-    int32_t hx = (int32_t)((int64_t)OP1_Q10(AE_HOR_R) * sz / n), hy = (int32_t)((int64_t)OP1_Q10(AE_HOR_R) * sx / n);
-    ln(r, OP1_Q10(AE_HOR_CX) - hx, OP1_Q10(AE_HOR_CY) + hy, OP1_Q10(AE_HOR_CX) + hx, OP1_Q10(AE_HOR_CY) - hy, 0x500, C_WHITE);
-    /* pitch: dot on the rod, rod lit from the cabinet to it */
-    int32_t y = OP1_Q10(AE_ROD_MID) - (int32_t)((int64_t)s->semis * AE_PITCH_PX_Q10 >> 16);
-    if (y < OP1_Q10(AE_ROD_Y0)) y = OP1_Q10(AE_ROD_Y0);
-    if (y > OP1_Q10(AE_ROD_Y1)) y = OP1_Q10(AE_ROD_Y1);
-    ln(r, OP1_Q10(AE_ROD_X), OP1_Q10(AE_ROD_Y1), OP1_Q10(AE_ROD_X), y, 0x800, C_BLUE);
-    ln(r, OP1_Q10(AE_ROD_X - 5), y - 0x1400, OP1_Q10(AE_ROD_X + 5), y + 0x1400, 0x700, C_BLUE);     /* dot = cross */
-    ln(r, OP1_Q10(AE_ROD_X - 5), y + 0x1400, OP1_Q10(AE_ROD_X + 5), y - 0x1400, 0x700, C_BLUE);
-    if (s->env > 2000) {                                           /* vibrato ripple: 3 small chevrons */
-        int32_t a = OP1_Q10(3) * s->env >> 15;
-        for (int i = 0; i < 3; i++) {
-            int32_t yy = y + OP1_Q10(6 * i - 6), x = OP1_Q10(AE_ROD_X + 10);
-            ln(r, x, yy, x + a, yy + OP1_Q10(2), 0x400, C_WHITE);
-            ln(r, x + a, yy + OP1_Q10(2), x, yy + OP1_Q10(4), 0x400, C_WHITE);
-        }
+    /* dish: elevation from the front / back tilt (Y against Z), azimuth from the side tilt (X against Z) */
+    sx += (AE_ACCEL[0] - sx) >> 2; sy += (AE_ACCEL[1] - sy) >> 2; sz += (AE_ACCEL[2] - sz) >> 2;
+    if (dish) {
+        int32_t ny = isqrt(sy * sy + sz * sz), nx = isqrt(sx * sx + sz * sz);
+        if (ny < 1024) ny = 1024;
+        if (nx < 1024) nx = 1024;
+        int32_t es = -sy * 32767 / ny;                                 /* sin(elevation): front edge up = dish up */
+        if (es > 16384) es = 16384; else if (es < -16384) es = -16384; /* +-30 degrees */
+        int32_t ec = isqrt(32767 * 32767 - es * es);
+        int32_t az = sz * 32767 / nx;                                  /* cos(azimuth): flat = facing as drawn */
+        if (az >= 0 && az < 6000) az = 6000; else if (az < 0 && az > -6000) az = -6000;   /* never a line */
+        /* row-vector matrix about the hinge: rotate (elevation), then scale x by cos(azimuth) */
+        int32_t a = (ec >> 5) * az >> 15, b = -(es >> 5), c = (es >> 5) * az >> 15, d = ec >> 5;
+        int32_t hx = AE_HINGE_X_Q10, hy = AE_HINGE_Y_Q10;
+        int32_t m[9] = { a, b, 0, c, d, 0,
+                         hx - (int32_t)(((int64_t)hx * a + (int64_t)hy * c) >> 10),
+                         hy - (int32_t)(((int64_t)hx * b + (int64_t)hy * d) >> 10), 1024 };
+        op1_node_set_transform(dish, m);
+        if (waves) op1_node_set_transform(waves, m);
     }
-    /* loop: 16-segment ellipse, green by volume */
-    uint8_t c[4];
-    dim(c, C_GREEN, s->gain);
-    int32_t px = OP1_Q10(AE_LOOP_CX + AE_LOOP_RX), py = OP1_Q10(AE_LOOP_CY);
-    for (int a = 512; a <= 8192; a += 512) {
-        int32_t qx = OP1_Q10(AE_LOOP_CX) + (OP1_Q10(AE_LOOP_RX) * OP1_SINE_TABLE[(a + 2048) & 8191] >> 15);
-        int32_t qy = OP1_Q10(AE_LOOP_CY) + (OP1_Q10(AE_LOOP_RY) * OP1_SINE_TABLE[a & 8191] >> 15);
-        ln(r, px, py, qx, qy, 0x600, c); px = qx; py = qy;
-    }
-    /* knob bars (page-2 value while that page is on) */
-    static const uint8_t *col[4] = { C_BLUE, C_GREEN, C_WHITE, C_RED };
+    /* needles and slider handles (nodes), before the SVG is drawn */
+    int32_t ang[4];
     for (int i = 0; i < 4; i++) {
-        int32_t v = i < 3 && op1_eng_page[i] ? (w[5 + i] > 0 ? w[5 + i] : 8192) : k[i];
-        int32_t x0 = OP1_Q10(ae_bar_x[i] - AE_BAR_W / 2), len = (int32_t)((int64_t)OP1_Q10(AE_BAR_W) * v >> 15);
-        if (len < 0x400) len = 0x400;
-        ln(r, x0, OP1_Q10(AE_BAR_Y), x0 + len, OP1_Q10(AE_BAR_Y), 0x400, col[i]);
-        if (i < 3 && op1_eng_page[i]) {                            /* page 2: a dot under the bar (two crossing segments) */
-            int32_t cx = OP1_Q10(ae_bar_x[i]), cy = OP1_Q10(AE_BAR_Y + 7);           /* y 139.5 .. 142.5 */
-            ln(r, cx - 0x600, cy, cx + 0x600, cy, 0xC00, col[i]);
-            ln(r, cx, cy - 0x600, cx, cy + 0x600, 0xC00, col[i]);
+        ang[i] = ((int32_t)k[i] * 6144 >> 15) - 3072;                    /* -135 .. +135 degrees */
+        if (ndl[i]) op1_node_rotate(ndl[i], ae_dial_x[i], ae_dial_y[i], dsin(ang[i]), dcos(ang[i]));
+        int32_t v = i < 3 ? page_word(w, 5 + i) : s->gain;                /* page 2 / red: the voice's volume */
+        if (sld[i]) {
+            int32_t dy = AE_SLD_HALF_Q10 - (int32_t)((int64_t)2 * AE_SLD_HALF_Q10 * v >> 15);
+            int32_t m[9] = { 1024, 0, 0, 0, 1024, 0, 0, dy, 1024 };
+            op1_node_set_transform(sld[i], m);
         }
     }
-    (void)C_GREY;
+    op1_screen_draw(scr, dt);
+    void *r = op1_raster();
+    /* value arcs: from the lower left (-135 degrees) to the needle, 2 segments per 45 degrees */
+    for (int i = 0; i < 4; i++) {
+        int32_t cx = ae_dial_x[i], cy = ae_dial_y[i], R = AE_ARC_R_Q10;
+        int32_t px = cx + (R * dsin(-3072) >> 15), py = cy - (R * dcos(-3072) >> 15);
+        for (int32_t a = -3072 + 512; ; a += 512) {
+            int32_t e = a < ang[i] ? a : ang[i];
+            int32_t qx = cx + (R * dsin(e) >> 15), qy = cy - (R * dcos(e) >> 15);
+            if (qx != px || qy != py) ln(r, px, py, qx, qy, 0x600, ae_col[i]);
+            px = qx; py = qy;
+            if (e >= ang[i]) break;
+        }
+    }
+    (void)dt;
 }
 
 const op1_screen_t SCREEN_aether = { ae_screen_init, ae_screen_update };

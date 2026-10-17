@@ -13,6 +13,8 @@ int16_t host_knobs[8][8]; int host_slot;                                 /* scre
 void host_screen_draw(void *s, int dt) { (void)s; (void)dt; }
 void *host_raster(void) { return 0; }
 void host_raster_line(void *r, const void *a, const void *b, int32_t w, const uint8_t *c) { (void)r; (void)a; (void)b; (void)w; (void)c; }
+void *host_find_node(void *s, const char *id) { (void)s; (void)id; return 0; }
+void host_node_set_transform(void *n, const int32_t *m) { (void)n; (void)m; }
 #include "../plugins/aether/aether.c"
 
 static int16_t knobs[8] = { 15671, 11469, 16384, 32767, 0x530A, 0, 0, 0 };   /* defaults: 12 semitones */
