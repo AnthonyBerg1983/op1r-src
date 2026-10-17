@@ -5,8 +5,8 @@
 The OP-1 SVG parser knows no CSS and no rotate(): classes become inline attributes, `translate() rotate()` becomes
 matrix(), `Z` becomes `z`, rx/ry/data-name are dropped. Groups the screen code switches on / off (node +0x50):
   karm1..6   arms (1 left lower + cup, 2 right lower, 3/4 middle, 5 upper left (sword), 6 upper right (trident))
-  kskull1..5 the skull necklace at 5 brightness levels (white knob)
-  kfire1..5  fire ring + flames at 5 brightness levels (green knob; none shown at 0)
+  kskull     the skull necklace (leaves ks0..), recoloured by the white knob (one copy, own colour SKULL_UNIQ)
+  kfire      fire ring + flames (leaves kf0..), recoloured by the green knob, hidden at 0 (own colour FIRE_UNIQ)
   kmix0..9   red copies of the mix scale lines, 0 = top (red knob lights them from the bottom)
 Needles rotated by code: ktime (blue), kdiff (white), ktone (green: the red tone dial recoloured), pivots in kali_geom.h.
 """
@@ -16,7 +16,8 @@ from render import path_ops                           # SVG path parser of the h
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, 'kali-reverb.svg')
 NS = '{http://www.w3.org/2000/svg}'
-LEVELS = [0.3, 0.45, 0.6, 0.8, 1.0]                 # brightness of the 5 skull / fire copies
+FIRE_UNIQ = '#ff3a5c'                              # red / white no other node uses: the parser may share equal styles,
+SKULL_UNIQ = '#fffffe'                             # the screen recolours these (op1_node_line/fill_rgba) by the knobs
 GREEN = '#00ed95'
 RED = '#ff3a5d'
 
@@ -80,6 +81,11 @@ def simple_path(d, split=True):
         out.append(op[0].lower() + ''.join((',' if k and not num(a).startswith('-') else '') + num(a) for k, a in enumerate(rel)))
     return ''.join(out)
 
+def css_of(el, css):
+    a = {}
+    for c in (el.get('class') or '').split(): a.update(css.get(c, {}))
+    return a
+
 def emit(el, css, col=None, keep_id=None):
     """element (no groups) -> SVG text with inline attributes; col(f) recolours stroke / fill"""
     tag = el.tag[len(NS):]
@@ -117,8 +123,12 @@ def main():
         o.append(f'<g id="{gid}">')
         o.extend(emit(e, css, col) for e in elems)
         o.append('</g>')
-    for k, f in enumerate(LEVELS):                                             # fire, behind everything
-        group(f'kfire{k + 1}', leaves(groups['fire']), lambda c, f=f: scale(c, f))
+    def recolourable(gid, elems, prefix, uniq):    # one copy, each leaf with an id; a colour only these use
+        o.append(f'<g id="{gid}">')
+        for n, e in enumerate(elems): o.append(emit(e, css, uniq, keep_id=f'{prefix}{n}'))
+        o.append('</g>')
+    fire = leaves(groups['fire'])                                              # fire, behind everything
+    recolourable('kfire', fire, 'kf', lambda c: FIRE_UNIQ)
     piv = {}
     for gid, nid in (('time-meter', 'ktime'), ('diffusion-meter', 'kdiff'), ('tone-meter', 'ktone')):
         circ, bar = list(groups[gid])
@@ -136,8 +146,8 @@ def main():
                       ('right-middle-arm', 'karm4')):
         group(name, leaves(groups[gid]))
     group('khead', leaves(groups['head-shine']))
-    for k, f in enumerate(LEVELS):
-        group(f'kskull{k + 1}', leaves(groups['skulls']), lambda c, f=f: scale(c, f))
+    skulls = leaves(groups['skulls'])
+    recolourable('kskull', skulls, 'ks', lambda c: SKULL_UNIQ)
     group('karm1', left_lower)
     group('karm2', right_lower)
     group('kbody', rest)
@@ -147,7 +157,11 @@ def main():
     for nid, (x, y) in piv.items():
         h.append(f'#define KALI_{nid[1:].upper()}_X OP1_Q10({x})')
         h.append(f'#define KALI_{nid[1:].upper()}_Y OP1_Q10({y})')
-    h.append(f'#define KALI_LEVELS {len(LEVELS)}')
+    kind = lambda e: 'f' if (css_of(e, css).get('stroke', 'none') == 'none') else 'l'
+    h.append(f'#define KALI_NFIRE {len(fire)}')
+    h.append(f'#define KALI_NSKULL {len(skulls)}')
+    h.append('static const char kali_fire_kind[] = "' + ''.join(kind(e) for e in fire) + '";    /* l = line style, f = fill */')
+    h.append('static const char kali_skull_kind[] = "' + ''.join(kind(e) for e in skulls) + '";')
     h.append(f'#define KALI_MIX_LINES {len(meter)}')
     open(os.path.join(HERE, 'kali_geom.h'), 'w').write('\n'.join(h) + '\n')
     print('-> display/kalireverb.svg, fx/kali_geom.h')

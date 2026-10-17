@@ -28,6 +28,7 @@ extern void    *host_fx_scratch[3];
 void *host_find_node(void *scr, const char *id);
 void  host_node_set_transform(void *node, const int32_t *m9);
 void  host_node_set_visible(void *node, int on);
+uint8_t *host_node_style_rgba(void *scr, const char *id);   /* line or fill: one colour per id */
 void  host_screen_draw(void *scr, int dt);
 void *host_raster(void);
 void  host_raster_line(void *r, const void *p0, const void *p1, int32_t w_q10, const uint8_t *rgba);
@@ -35,6 +36,8 @@ void  host_raster_line(void *r, const void *p0, const void *p1, int32_t w_q10, c
 #define op1_find_node(scr, id)            host_find_node((scr), (id))
 #define op1_node_set_transform(node, m9)  host_node_set_transform((node), (m9))
 #define op1_node_set_visible(node, on)    host_node_set_visible((node), (on))
+#define op1_node_line_rgba(scr, id)       host_node_style_rgba((scr), (id))
+#define op1_node_fill_rgba(scr, id)       host_node_style_rgba((scr), (id))
 #define op1_screen_draw(scr, dt)          host_screen_draw((scr), (dt))
 #define op1_raster()                      host_raster()
 #define op1_raster_line(r, p0, p1, w, c)  host_raster_line((r), (p0), (p1), (w), (c))

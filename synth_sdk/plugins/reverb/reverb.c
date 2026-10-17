@@ -127,26 +127,34 @@ const op1_fx_t FX_reverb = { reverb_init, reverb_render };
  * display/kalireverb.svg (Kali artwork, display/gen_kali_svg.py from display/src/kali-reverb.svg). Knobs as the
  * stock screens see them (op1_fx_knobs_live):
  *   blue  (time)      1..6 arms visible (karm1..6: lower pair first, then middle, then upper) + TIME needle
- *   green (tone)      fire ring and flames fade in (0 = hidden, then kfire1..5) + TONE needle (green)
- *   white (diffusion) brightness of the skull necklace (one of kskull1..5) + DIFFUSION needle
+ *   green (tone)      fire ring and flames fade in (below 10 % hidden, then 30 .. 100 %) + TONE needle (green)
+ *   white (diffusion) brightness of the skull necklace (30 .. 100 %) + DIFFUSION needle
  *   red   (mix)       lights 0..10 lines of the right-hand scale from the bottom (kmix9 = bottom) in red
- * Only group visibility (node +0x50) and needle rotations change; no raster lines. */
+ * Only group visibility (node +0x50), the skull / fire style colours and needle rotations change; no raster lines. */
 #include "kali_geom.h"
-static void *k_arm[6], *k_skull[KALI_LEVELS], *k_fire[KALI_LEVELS], *k_mix[KALI_MIX_LINES], *k_needle[3];
+static void *k_arm[6], *k_skull, *k_fire, *k_mix[KALI_MIX_LINES], *k_needle[3];
+static uint8_t *k_skc[KALI_NSKULL], *k_fic[KALI_NFIRE];               /* their style colours (RGBA) */
 
 static void kali_screen_init(void *scr)
 {
     char id[8] = { 'k', 0 };
     for (int i = 0; i < 6; i++) { id[1] = 'a'; id[2] = 'r'; id[3] = 'm'; id[4] = (char)('1' + i); id[5] = 0; k_arm[i] = op1_find_node(scr, id); }
-    for (int i = 0; i < KALI_LEVELS; i++) {
-        static const char sk[] = "kskull1", fi[] = "kfire1";
-        char a[8], b[8];
-        for (int j = 0; j < 8; j++) { a[j] = sk[j]; b[j] = j < 7 ? fi[j] : 0; }
-        a[6] = (char)('1' + i); b[5] = (char)('1' + i);
-        k_skull[i] = op1_find_node(scr, a); k_fire[i] = op1_find_node(scr, b);
+    k_skull = op1_find_node(scr, "kskull"); k_fire = op1_find_node(scr, "kfire");
+    for (int i = 0; i < KALI_NSKULL; i++) {                            /* ks0..ks13 */
+        char a[5] = { 'k', 's', (char)(i < 10 ? '0' + i : '1'), (char)(i < 10 ? 0 : '0' + i - 10), 0 };
+        k_skc[i] = kali_skull_kind[i] == 'f' ? op1_node_fill_rgba(scr, a) : op1_node_line_rgba(scr, a);
+    }
+    for (int i = 0; i < KALI_NFIRE; i++) {
+        char a[4] = { 'k', 'f', (char)('0' + i), 0 };
+        k_fic[i] = kali_fire_kind[i] == 'f' ? op1_node_fill_rgba(scr, a) : op1_node_line_rgba(scr, a);
     }
     for (int i = 0; i < KALI_MIX_LINES; i++) { char m[6] = { 'k', 'm', 'i', 'x', (char)('0' + i), 0 }; k_mix[i] = op1_find_node(scr, m); }
     k_needle[0] = op1_find_node(scr, "ktime"); k_needle[1] = op1_find_node(scr, "kdiff"); k_needle[2] = op1_find_node(scr, "ktone");
+}
+
+static void tint(uint8_t *const *c, int n, const uint8_t *rgb, int32_t l)   /* l 0..256 */
+{
+    for (int i = 0; i < n; i++) if (c[i]) { c[i][0] = (uint8_t)(rgb[0] * l >> 8); c[i][1] = (uint8_t)(rgb[1] * l >> 8); c[i][2] = (uint8_t)(rgb[2] * l >> 8); }
 }
 
 static void kali_screen_update(void *scr, int dt)
@@ -157,12 +165,14 @@ static void kali_screen_update(void *scr, int dt)
     for (int i = 0; i < 6; i++) if (k_arm[i]) op1_node_set_visible(k_arm[i], i < arms);
     int lit = (k[3] * KALI_MIX_LINES + 16383) / 32767;                 /* 0..10 lines, from the bottom */
     for (int i = 0; i < KALI_MIX_LINES; i++) if (k_mix[i]) op1_node_set_visible(k_mix[i], i >= KALI_MIX_LINES - lit);
-    int sk = (k[2] * (KALI_LEVELS - 1) + 16383) / 32767;               /* 0..4: always one level shown */
-    int fi = (k[1] * KALI_LEVELS + 16383) / 32767;                     /* 0 = none, 1..5 */
-    for (int i = 0; i < KALI_LEVELS; i++) {
-        if (k_skull[i]) op1_node_set_visible(k_skull[i], i == sk);
-        if (k_fire[i]) op1_node_set_visible(k_fire[i], i == fi - 1);
-    }
+    /* skulls 30 .. 100 % by the white knob, fire hidden at 0 then 30 .. 100 % by the green knob (one copy each,
+     * recoloured; was 5 copies at fixed levels) */
+    static const uint8_t white[3] = { 0xFF, 0xFF, 0xFF }, red[3] = { 0xFF, 0x3A, 0x5D };
+    tint(k_skc, KALI_NSKULL, white, 77 + (k[2] * 179 >> 15));
+    int fire_on = k[1] > 3276;                                         /* below 10 %: no fire (as before: level 0) */
+    if (k_fire) op1_node_set_visible(k_fire, fire_on);
+    if (fire_on) tint(k_fic, KALI_NFIRE, red, 77 + ((k[1] - 3276) * 199 >> 15));
+    (void)k_skull;
     static const int32_t px[3] = { KALI_TIME_X, KALI_DIFF_X, KALI_TONE_X }, py[3] = { KALI_TIME_Y, KALI_DIFF_Y, KALI_TONE_Y };
     static const uint8_t kn[3] = { 0, 2, 1 };                          /* time blue, diffusion white, tone green */
     for (int i = 0; i < 3; i++) if (k_needle[i]) {                     /* needle points left at 0, right at max */

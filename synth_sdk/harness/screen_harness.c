@@ -51,6 +51,14 @@ void *host_find_node(void *scr, const char *id)
 }
 void host_node_set_transform(void *node, const int32_t *m9) { memcpy(node_m[(intptr_t)node - 1], m9, 36); }
 void host_node_set_visible(void *node, int on) { node_hid[(intptr_t)node - 1] = !on; }
+static char style_id[32][16]; static uint8_t style_c[32][4]; static int nstyles;   /* recoloured nodes: render.py */
+uint8_t *host_node_style_rgba(void *scr, const char *id)
+{
+    (void)scr;
+    for (int i = 0; i < nstyles; i++) if (!strcmp(style_id[i], id)) return style_c[i];
+    snprintf(style_id[nstyles], 16, "%s", id); memset(style_c[nstyles], 0xFF, 4);
+    return style_c[nstyles++];
+}
 void host_screen_draw(void *scr, int dt) { (void)scr; (void)dt; nlines = 0; ntexts = 0; }   /* SVG drawn by render.py */
 void *host_raster(void) { return &raster_obj; }
 void host_raster_line(void *r, const void *p0, const void *p1, int32_t w, const uint8_t *c)
@@ -149,7 +157,10 @@ int main(int argc, char **argv)
     for (int i = 0; i < nlines; i++)
         printf("%s[%d, %d, %d, %d, %d, [%d, %d, %d, %d]]", i ? ", " : "", lines[i].x0, lines[i].y0,
                lines[i].x1, lines[i].y1, lines[i].w, lines[i].c[0], lines[i].c[1], lines[i].c[2], lines[i].c[3]);
-    printf("], \"texts\": [");
+    printf("], \"styles\": {");
+    for (int i = 0; i < nstyles; i++)
+        printf("%s\"%s\": [%d, %d, %d]", i ? ", " : "", style_id[i], style_c[i][0], style_c[i][1], style_c[i][2]);
+    printf("}, \"texts\": [");
     for (int i = 0; i < ntexts; i++)
         printf("%s[%d, %d, %d, [%d, %d, %d], \"%s\"]", i ? ", " : "", texts[i]->x, texts[i]->y, texts[i]->size,
                texts[i]->c[0], texts[i]->c[1], texts[i]->c[2], texts[i]->s);

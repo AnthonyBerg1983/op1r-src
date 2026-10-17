@@ -91,6 +91,9 @@ def path_ops(d):
     return out
 
 
+STYLES = {}                                        # node id -> rgb from the screen code (op1_node_line/fill_rgba)
+
+
 def draw_svg(ctx, el, nodes, hidden=()):
     tag = el.tag.split('}')[-1]
     nid = el.get('id')
@@ -127,6 +130,10 @@ def draw_svg(ctx, el, nodes, hidden=()):
     else:
         ctx.restore(); return
     fill, stroke = colour(el.get('fill', '#000000')), colour(el.get('stroke'))
+    if nid in STYLES:                                # recoloured by the screen code
+        rgb = tuple(v / 255 for v in STYLES[nid])
+        if stroke: stroke = rgb
+        elif fill: fill = rgb
     if fill: ctx.set_source_rgb(*fill); ctx.fill_preserve() if stroke else ctx.fill()
     if stroke:
         ctx.set_source_rgb(*stroke); ctx.set_line_width(float(el.get('stroke-width', 1)))
@@ -176,6 +183,7 @@ def main(engine, out=None):
             ctx.move_to(x0, y0 + 15); ctx.show_text(f'{label}   knobs {list(knobs)}'); ctx.restore()
         ctx.save(); ctx.translate(x0, y0 + lab); ctx.rectangle(0, 0, W, H); ctx.clip()
         ctx.set_source_rgb(0, 0, 0); ctx.paint(); ctx.scale(sc, sc)
+        STYLES.clear(); STYLES.update(fr.get('styles', {}))
         draw_svg(ctx, svg, fr['nodes'], set(fr.get('hidden', ())))
         for x1, y1, x2, y2, w, c in fr['lines']:
             ctx.set_source_rgba(*(v / 255 for v in c)); ctx.set_line_width(w / 1024)

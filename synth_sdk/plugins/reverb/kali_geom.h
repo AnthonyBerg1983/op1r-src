@@ -5,5 +5,8 @@
 #define KALI_DIFF_Y OP1_Q10(95.81)
 #define KALI_TONE_X OP1_Q10(43.06)
 #define KALI_TONE_Y OP1_Q10(139.27)
-#define KALI_LEVELS 5
+#define KALI_NFIRE 3
+#define KALI_NSKULL 14
+static const char kali_fire_kind[] = "lll";    /* l = line style, f = fill */
+static const char kali_skull_kind[] = "lllllllllfffff";
 #define KALI_MIX_LINES 10
