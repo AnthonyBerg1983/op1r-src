@@ -116,10 +116,10 @@ int spu_knob(int knob, int delta)
 {
     int pg = page();
     if (pg < 0 || knob < 0 || knob > 3) return 0;
-    if (br_open) {                                                   /* browser: blue scrolls */
-        if (knob == 0) {
-            acc[0] += delta;
-            int st = acc[0] / 1024; acc[0] -= st * 1024;
+    if (br_open) {                                                   /* browser: white scrolls */
+        if (knob == 2) {
+            acc[2] += delta;
+            int st = acc[2] / 1024; acc[2] -= st * 1024;
             br_sel = (int16_t)(br_sel + st < 0 ? 0 : br_sel + st >= br_n ? br_n - 1 : br_sel + st);
         }
         return 1;
@@ -154,7 +154,7 @@ int spu_key(int code, int pressed)
     int k = code - 0x3B, slot = SLOT_CUR;
     sp_extra *x = &sp_x[slot];
     if (br_open) {
-        if (k == 0 && br_n) {                                         /* load: the stock job, sampler+ kept */
+        if (k == 2 && br_n) {                                         /* white press: load (the stock job, sampler+ kept) */
             sp_keep_next[slot] = 1;
             QUEUE_TYPE_JOB(-br_idx[br_sel], slot);
             br_open = 0;
@@ -364,7 +364,7 @@ static void draw_browser(void *r)
     }
     char v[16];
     put(num(put(num(v, br_n ? br_sel + 1 : 0, 0), "/"), br_n, 0), "");
-    txt(r, TX_LAB, "sample"); txt(r, TX_VAL, v); txt(r, TX_PRS, "load"); txt(r, TX_PRS + 3, "back");
+    txt(r, TX_LAB + 2, "sample"); txt(r, TX_VAL + 2, v); txt(r, TX_PRS + 2, "load"); txt(r, TX_PRS + 3, "back");
 }
 
 static void update(void *s, int dt)
