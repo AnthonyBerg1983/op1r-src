@@ -49,8 +49,10 @@ def matrix(t):
              a * n[4] + c * n[5] + e, b * n[4] + d * n[5] + f]
     return 'matrix(' + ' '.join(('%.4f' % x).rstrip('0').rstrip('.') for x in m) + ')'   # no exponents (OP-1 parser)
 
+PREC = 1                                             # decimals: 0.1 px is below the OP-1's pixel (rasteriser AA)
+
 def num(v):                                          # plain decimal: leading zero, no exponent
-    t = ('%.2f' % v).rstrip('0').rstrip('.')
+    t = ('%.*f' % (PREC, v)).rstrip('0').rstrip('.')
     return '0' if t in ('-0', '') else t
 
 def simple_path(d, split=True):
@@ -73,7 +75,7 @@ def simple_path(d, split=True):
         if op[0] == 'Z': out.append('z'); x, y = sx, sy; continue
         v = op[1:]
         if op[0] == 'M': out.append('M' + num(v[0]) + ',' + num(v[1])); x, y = sx, sy = v; continue
-        rel = [round(a - (x if k % 2 == 0 else y), 2) for k, a in enumerate(v)]
+        rel = [round(a - (x if k % 2 == 0 else y), PREC) for k, a in enumerate(v)]
         x, y = x + rel[-2], y + rel[-1]                  # follow the rounded points: no drift
         out.append(op[0].lower() + ''.join((',' if k and not num(a).startswith('-') else '') + num(a) for k, a in enumerate(rel)))
     return ''.join(out)
@@ -88,6 +90,8 @@ def emit(el, css, col=None, keep_id=None):
     if tag in ('line', 'polyline') and 'fill' not in a: a['fill'] = 'none'
     attrs = {k: a[k] for k in ('fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin') if k in a}
     attrs['stroke-width'] = attrs.get('stroke-width', '1').replace('px', '')
+    if attrs.get('stroke', 'none') == 'none':        # fill only: stroke attributes do nothing
+        for k in ('stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'): attrs.pop(k, None)
     for k in ('fill', 'stroke'):                     # #rrggbb only (no 3-digit colours), recoloured copies
         if attrs.get(k, 'none') != 'none': attrs[k] = (col or (lambda c: scale(c, 1)))(attrs[k])
     geo = {k: v for k, v in el.attrib.items() if k in ('x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'x1', 'y1',
