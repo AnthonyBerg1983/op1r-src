@@ -119,7 +119,7 @@ void sp_plus_sync(const sp_extra *x, sp_pre *c, const int16_t *k, int32_t rate, 
         int64_t step = sp_step(ref_inc, rate);                          /* pos units per sample at the reference key */
         if (len > 0 && want > 0 && step > 0) {
             int64_t q = (len << 12) / (want * step);                    /* speed factor, Q12 */
-            f = q < 256 ? 256 : q > 65536 ? 65536 : (int32_t)q;         /* 1/16 .. 16 x */
+            f = q < 16 ? 16 : q > 65536 ? 65536 : (int32_t)q;           /* 1/256 .. 16 x (short loops need very slow) */
         }
     }
     c->sync_q12 = f;
