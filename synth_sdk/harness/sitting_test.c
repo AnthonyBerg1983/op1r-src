@@ -348,6 +348,43 @@ static void test_random(void)
     printf("  40 random runs (knobs, presses, tempo 30..290 BPM, clock jumps, tape follow / speed): no trap\n");
 }
 
+/* clicks at the loop boundary: the step |y[n] - y[n-1]| at each generation start vs the largest step inside the
+ * generation (wet only, silence in once the loop runs) */
+static int16_t rec_out[1 << 21]; static int64_t rec_n;
+static int16_t src_until_loop(int64_t n) { return st[0].mode == S_ERODE ? 0 : speech(n); }
+static void wrap_case(const char *name, int16_t w5, double *worst)
+{
+    fx_reset(4242);
+    knobs[5] = w5; knobs[3] = 32767;
+    rec_n = 0;
+    int64_t t0 = M.t;
+    for (int k = 0; k < 30000 && ngen < 24; k++) {
+        if (k == 5) press();
+        block(src_until_loop);
+        for (int n = 0; n < 64 && rec_n < (1 << 21); n++) rec_out[rec_n++] = outbuf[n];
+    }
+    double w = 0; int at = 0;
+    for (int g = 1; g + 1 < ngen; g++) {
+        int64_t a = gen_at[g] - t0, e = gen_at[g + 1] - t0;
+        if (e >= rec_n || a < 8) break;
+        int edge = 0, in = 0;                                                /* second difference: a click */
+        for (int64_t n = a - 3; n <= a + 3; n++) { int d = abs(rec_out[n] - 2 * rec_out[n - 1] + rec_out[n - 2]); if (d > edge) edge = d; }
+        for (int64_t n = a + 16; n < e - 16; n++) { int d = abs(rec_out[n] - 2 * rec_out[n - 1] + rec_out[n - 2]); if (d > in) in = d; }
+        if (getenv("WRAPDBG")) { printf("    g%d edge %d inner %d:", g, edge, in); for (int64_t n = a - 6; n <= a + 6; n++) printf(" %d", rec_out[n]); printf("\n"); }
+        double r = in ? (double)edge / in : 0;
+        if (r > w) { w = r; at = g; }
+    }
+    printf("  %s: worst boundary step / largest inner step %.2f (generation %d of %d)\n", name, w, at, ngen);
+    *worst = w;
+}
+static void test_wrap_click(void)
+{
+    double a, b;
+    wrap_case("free 0.6 s", 1000, &a);
+    wrap_case("synced 1 BEAT", (int16_t)(FREE_V + 2 * (32768 - FREE_V) / NSYNC + 500), &b);
+    CHECK(a < 1.5 && b < 1.5, "click at the loop boundary: free %.2f, synced %.2f", a, b);
+}
+
 static void test_level(void)
 {
     /* level over the generations of a synced loop: no runaway, no stuck saturation, no collapse */
@@ -461,6 +498,8 @@ int main(int argc, char **argv)
     test_tape_bars();
     printf("idle / cancel:\n");
     test_arm_cancel_and_garbage();
+    printf("loop boundary:\n");
+    test_wrap_click();
     printf("level:\n");
     test_level();
     printf("robustness:\n");

@@ -48,6 +48,8 @@
 #define NMODE    6
 #define FADE     220                   /* free loop: 10 ms fade at both ends of a capture: seamless, no click */
 #define SFADE    32                    /* synced loop: 1.5 ms (keeps the downbeat's attack) */
+#define GRAMP_SH 8
+#define GRAMP    (1 << GRAMP_SH)          /* loop samples a new generation's gain takes over (11.6 ms at 22.05 kHz) */
 #define TARGET   16384                 /* normalised peak of a generation: -6 dBFS */
 #define KNEE     24576                 /* soft knee above -2.5 dBFS when writing back */
 #define WB       128                   /* waveform buckets for the screen */
@@ -130,6 +132,8 @@ typedef struct {
     int32_t dcx, dcy, z, dcs;          /* DC blocker (pole shift), absorption LP */
     int32_t len, i, gen, mode, latch;
     int32_t gq12, gm, rs;              /* normalisation gain Q12 = mantissa gm (Q15) >> rs */
+    int32_t gmo, rso, gk;              /* previous gain, ramp samples left: a new generation's gain fades in */
+    int32_t gap;                       /* synced: the loop ran out before the grid point (waiting) */
     int32_t peak, ipeak, cpeak;        /* peak written (before the knee) / read this generation, capture peak */
     int32_t pw, x, ph, dsh, lw;        /* loop samples before / now, output sample in it (0 .. 2^dsh - 1), last wet */
     int32_t e1, e2, e3, f1, f2, f3;    /* decimator histories ([1 3 3 1] / 8 per 2:1 stage) */
@@ -189,7 +193,7 @@ static void sit_init(int pos)
     s->lq = s->armed = 0; s->qbar = -1; s->bp = 0; s->blen = 22050 << 14; s->tape = 0; s->tbeat = -1;
     s->kroom = s->kero = s->kabs = s->kdsh = -1;
     for (int k = 0; k < NMODE; k++) s->env[k] = 0;
-    set_gain(s, 4096);
+    set_gain(s, 4096); s->gk = 0;
     wave_clear(pos % 3);
 }
 
@@ -229,7 +233,7 @@ static void start_erode(sit_t *s, int16_t *er)
     s->erc = ERLEN;
     for (int k = 0; k < NMODE; k++) s->res[k].lp = s->res[k].bp = 0;
     s->dcx = s->dcy = s->z = 0; s->erw = 0;
-    s->mode = S_ERODE; s->i = 0; s->gen = 0; s->peak = 0; s->ipeak = 0;
+    s->mode = S_ERODE; s->i = 0; s->gen = 0; s->peak = 0; s->ipeak = 0; s->gk = 0; s->gap = 0;
     s->ph = 0; s->pw = s->x;                        /* playback starts from the last recorded sample */
     s->cb = 0; s->ba = 0; s->bhi = s->blo = 0;
     /* first pass: normalise from the capture's peak, with a guess of the room's loss (narrow resonators eat
@@ -296,7 +300,7 @@ static inline void bucket_flush(int pos, int32_t cb, int32_t hi, int32_t lo)
 /* The erosion. Its hot state lives in locals of the caller (two small structs the compiler keeps in registers /
  * on the stack); erode1 runs one loop sample through the room and writes the next generation back in place. */
 typedef struct { int32_t t0, t1, t2, q, wd, wr, ab, rb, len, dcs, fr; } cst_t;
-typedef struct { int32_t i, erw, dcx, dcy, z, pk, ipk, ba, cb, bhi, blo, gm, rsh; } hot_t;
+typedef struct { int32_t i, erw, dcx, dcy, z, pk, ipk, ba, cb, bhi, blo, gm, rsh, gmo, rso, gk, gap; } hot_t;
 #define ALWAYS_INLINE static inline __attribute__((always_inline))
 ALWAYS_INLINE void hot_load(sit_t *s, cst_t *c, hot_t *h)
 {
@@ -304,17 +308,18 @@ ALWAYS_INLINE void hot_load(sit_t *s, cst_t *c, hot_t *h)
     c->ab = s->a15; c->rb = s->rb; c->len = s->len; c->dcs = s->dcs; c->fr = !s->lq;
     h->i = s->i; h->erw = s->erw; h->dcx = s->dcx; h->dcy = s->dcy; h->z = s->z; h->pk = s->peak; h->ipk = s->ipeak;
     h->ba = s->ba; h->cb = s->cb; h->bhi = s->bhi; h->blo = s->blo; h->gm = s->gm; h->rsh = s->rs;
+    h->gmo = s->gmo; h->rso = s->rso; h->gk = s->gk; h->gap = s->gap;
 }
 ALWAYS_INLINE void hot_store(sit_t *s, const hot_t *h)
 {
     s->i = h->i; s->erw = h->erw; s->dcx = h->dcx; s->dcy = h->dcy; s->z = h->z; s->peak = h->pk; s->ipeak = h->ipk;
-    s->ba = h->ba; s->cb = h->cb; s->bhi = h->bhi; s->blo = h->blo;
+    s->ba = h->ba; s->cb = h->cb; s->bhi = h->bhi; s->blo = h->blo; s->gk = h->gk; s->gap = h->gap;
 }
 /* one loop sample: returns the heard sample (generation g) and writes generation g + 1 in its place; a synced
  * loop that ran out before its grid point fades from its last sample (prev) to silence until the grid point */
 ALWAYS_INLINE int32_t erode1(sit_t *s, int pos, int16_t *loop, int16_t *er, const cst_t *c, hot_t *h, int32_t prev)
 {
-    if (h->i >= c->len) return (prev * 3) >> 2;
+    if (h->i >= c->len) { h->gap = 1; return (prev * 3) >> 2; }
     int32_t x = loop[h->i];                                                  /* generation g (heard) */
     int32_t ax = x < 0 ? -x : x;
     if (ax > h->ipk) h->ipk = ax;
@@ -337,7 +342,14 @@ ALWAYS_INLINE int32_t erode1(sit_t *s, int pos, int16_t *loop, int16_t *er, cons
     int32_t y = mq15(e, c->wd) + mq15(clampi(room, 1 << 22), c->wr);
     h->dcy = y - h->dcx + h->dcy - (h->dcy >> c->dcs); h->dcx = y;           /* DC blocker ~27 Hz */
     h->z += mq15(h->dcy - h->z, c->ab);                                      /* absorption */
-    int32_t o = (mq15(clampi(h->z, (1 << 21) - 1), h->gm) * 256) >> h->rsh; /* normalisation gain, Q3 -> int16 */
+    int32_t zc = clampi(h->z, (1 << 21) - 1);
+    int32_t o = (mq15(zc, h->gm) * 256) >> h->rsh;                         /* normalisation gain, Q3 -> int16 */
+    if (h->gk) {                                    /* a new generation: from the old gain to the new one (no step
+                                                     * at the loop boundary, where the room's output runs on) */
+        int32_t oo = (mq15(zc, h->gmo) * 256) >> h->rso;
+        o += (clampi(oo - o, (1 << 22) - 1) * h->gk) >> GRAMP_SH;
+        h->gk--;
+    }
     int32_t a = o < 0 ? -o : o;
     if (a > h->pk) h->pk = a;
     if (a > KNEE) {                                                          /* overshoot: 4:1, then 16:1 */
@@ -355,6 +367,7 @@ ALWAYS_INLINE int32_t erode1(sit_t *s, int pos, int16_t *loop, int16_t *er, cons
         bucket_flush(pos, h->cb, h->bhi, h->blo);
         h->i = 0; h->ba = 0; h->cb = 0; h->bhi = h->blo = 0;
         s->peak = h->pk; s->ipeak = h->ipk;
+        h->gmo = h->gm; h->rso = h->rsh; h->gk = GRAMP;
         next_generation(s);
         h->pk = h->ipk = 0; h->gm = s->gm; h->rsh = s->rs;
     }
@@ -535,10 +548,17 @@ static void grid_event(sit_t *s, int pos, int16_t *loop, int16_t *er, int32_t qp
         start_erode(s, er);
     } else if (s->mode == S_ERODE) {                                         /* generation: back to the start */
         bucket_flush(pos, s->cb, s->bhi, s->blo);
+        s->gmo = s->gm; s->rso = s->rs; s->gk = GRAMP;
         next_generation(s);
+        int exact = s->i >= s->len && !s->gap;                              /* the loop ended on the grid point */
+        s->gap = 0;
         s->i = 0; s->ph = 0; s->ba = 0; s->cb = 0; s->bhi = s->blo = 0;
-        int32_t x0 = loop[0];                                                /* go on from the last output: */
-        s->dkv = clampi(s->lw - x0, 32767); s->dkn = 256; s->pw = s->x = x0; /* de-click the step (cut short) */
+        if (exact) s->pw = s->x;                                             /* the room's output runs on: interpolate
+                                                                              * on from the last loop sample */
+        else {                                                               /* cut short (tempo up) or a gap: */
+            int32_t x0 = loop[0];                                            /* go on from the last output, */
+            s->dkv = clampi(s->lw - x0, 32767); s->dkn = 256; s->pw = s->x = x0;   /* de-click the step */
+        }
     }
 }
 
