@@ -12,6 +12,7 @@
 
 #define RV_SIZE 32768
 #define RV_MASK (RV_SIZE - 1)
+#define RV_KNEE 24576
 /* ap1..ap4, dap1a, dap1b, del1, dap2a, dap2b, del2 (Elements lengths * 44100 / 32000) */
 static const int16_t rv_len[10] = { 207, 295, 440, 726, 3007, 3707, 6203, 3480, 3028, 8698 };
 
@@ -76,7 +77,8 @@ static void reverb_render(int pos, int16_t *buf, const int16_t *p)
     int32_t amount = op1_fx_param_q15(p, 3);
     int32_t kap = 16384 + (op1_fx_param_q15(p, 2) * 8192 >> 15);       /* 0.5 .. 0.75 */
     int32_t klp = 9830 + (op1_fx_param_q15(p, 1) * 21299 >> 15);       /* 0.3 .. 0.95 */
-    const int32_t gain = 16384;                       /* input 0.5 (Elements 0.2 on L + R): wet ~-20 dB at 0.2 */
+    const int32_t gain = 6554;                        /* input 0.2 as Elements: headroom in the 16-bit lines (0.5
+                                                       * clipped them with loud input + long time: crackling) */
 
     int32_t peak = 0;
     for (int t = 0; t < OP1_FX_BLOCK; t++) {
@@ -110,8 +112,14 @@ static void reverb_render(int pos, int16_t *buf, const int16_t *p)
         acc = allpass(r, 7, acc, kap);
         acc = allpass(r, 8, acc, -kap);
         RV(9, 0) = sat(acc);
-        wet = (wet + acc) * 2;                                         /* mono: 2 L + 2 R, + 6 dB makeup */
-        int32_t o = sat(in + m15(wet - in, amount));
+        wet = (wet + acc) * 5;                                         /* mono: 2 L + 2 R, makeup for the 0.2 input */
+        int32_t o = in + m15(in, -amount) + (((wet >> 3) * amount) >> 12);   /* dry .. wet (wet can exceed 16 bit) */
+        int32_t ao = o < 0 ? -o : o;                                   /* soft knee above -2.5 dBFS, not a hard clip */
+        if (ao > RV_KNEE) {
+            int32_t d = ao - RV_KNEE;
+            ao = d < 16384 ? RV_KNEE + (d >> 2) : 28672 + ((d - 16384) >> 4);
+            o = sat(o < 0 ? -ao : ao);
+        }
         buf[t] = (int16_t)o;
         if (o < 0) o = -o;
         if (o > peak) peak = o;

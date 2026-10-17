@@ -129,12 +129,33 @@ def main():
         o.append('</g>')
     fire = leaves(groups['fire'])                                              # fire, behind everything
     recolourable('kfire', fire, 'kf', lambda c: FIRE_UNIQ)
+    # dial order as the knobs: TIME (blue), TONE (green), DIFFUSION (white) - the artwork has diffusion in the middle
+    DY = 139.27 - 95.81
+    def shift(el, dy):
+        for k in ('cy', 'y1', 'y2', 'y'):
+            if el.get(k): el.set(k, str(float(el.get(k)) + dy))
+        if el.get('d'): el.set('transform', f'translate(0 {dy})')
+    def cy(el):
+        if el.get('cy'): return float(el.get('cy'))
+        if el.get('y1'): return (float(el.get('y1')) + float(el.get('y2'))) / 2
+        if el.get('d'): return sum(float(v) for v in re.findall(r'M[-\d.]+,([-\d.]+)', el.get('d'))[:1])
+        return None
+    for e in groups['diffusion-meter']: shift(e, DY)
+    for e in groups['tone-meter']: shift(e, -DY)
+    for e in leaves(groups['meter-scales']):
+        if e.tag == NS + 'polyline':                              # TONE's leader to the fire: from the new label row
+            p = e.get('points').split(); p[1] = p[3] = str(float(p[1]) - DY); e.set('points', ' '.join(p)); continue
+        if e.tag == NS + 'circle': continue                       # its dot at the fire stays
+        y = cy(e)
+        if y is None: continue
+        if 60 < y < 100: shift(e, DY)
+        elif 105 < y < 145: shift(e, -DY)
     piv = {}
     for gid, nid in (('time-meter', 'ktime'), ('diffusion-meter', 'kdiff'), ('tone-meter', 'ktone')):
         circ, bar = list(groups[gid])
         col = (lambda c: GREEN if c.lower() == RED else scale(c, 1)) if nid == 'ktone' else None   # tone on green
         o.append(emit(bar, css, col, keep_id=nid)); o.append(emit(circ, css, col))
-        piv[nid] = (float(circ.get('cx')), float(circ.get('cy')))
+        piv[nid] = (float(circ.get('cx')), round(float(circ.get('cy')), 2))
     o.append('<g>'); o.extend(emit(e, css) for e in leaves(groups['meter-scales'])); o.append('</g>')
     group('kmixtitle', leaves(groups['mix-title']), lambda c: RED if c.lower() == GREEN else scale(c, 1))   # mix = red knob
     meter = leaves(groups['mix-meter'])
