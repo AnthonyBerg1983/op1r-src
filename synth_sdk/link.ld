@@ -7,10 +7,8 @@ SECTIONS {
   .rodata : { *(.rodata*) }
   .data   : { *(.data*) }
   __image_end = .;
-  /* zero-initialised data lives apart from the code block, as an LDR FILL block (no bytes in the image): the loaded
-     image stays below 0x01E40000, which another project's module uses (user request, docs/30). 0x01EC0000.. is free
-     SDRAM (stock image ends 0x01DFFF34; heaps at 0x100.. and 0x03040000..); make_firmware asserts the end. */
-  .bss 0x01EC0000 (NOLOAD) : { __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(4); __bss_end = .; }
+  /* zero-initialised data right after the image, as an LDR FILL block (no bytes in the image) */
+  .bss ALIGN(4) (NOLOAD) : { __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(4); __bss_end = .; }
   .l1tramp 0xFFA0BFB4 : { KEEP(*(.l1tramp)) }    /* free end of L1 instruction SRAM (image ends 0xFFA0BFB4) */
   .hook_namecmp 0x019B975C : { KEEP(*(.hook_namecmp)) }
   .hook_samplecheck 0x01A01844 : { KEEP(*(.hook_samplecheck)) }

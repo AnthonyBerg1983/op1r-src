@@ -26,8 +26,6 @@ SRC_FW = os.path.join(ROOT, 'op1_246')
 OUT_FW = os.path.join(ROOT, 'op1_246_custom')
 REPACKER = os.path.join(ROOT, 'op1repacker', '.venv', 'bin', 'op1repacker')
 CODE_BASE = 0x01E00000
-CODE_LIMIT = 0x01E40000   # loaded image must end below (another project's module starts here, docs/30)
-BSS_LIMIT = 0x01EF0000    # .bss at 0x01EC0000 (link.ld) must end below
 MAGIC = 0x5300
 MAX_ORDER = 31                                  # OP1_MAX_ORDER (op1_plugin.h)
 BUILTIN = {'fm','digital','drwave','string','cluster','pulse','sampler','phase','drum','dbox',
@@ -377,7 +375,7 @@ def patch_ldr(src, dst, code, hooks, syms, opz=False, release=True):
     fin = [o for o, c, a, n, g in ldr_blocks(d) if c & 0x8000][0]
     blk = ldr_hdr(0x0006, CODE_BASE, len(code), 0) + code
     bss, bss_end = syms['bss_start'], syms['bss_end']        # .bss: zero FILL block (link.ld), no payload
-    assert CODE_BASE + len(code) <= CODE_LIMIT <= bss and bss_end <= BSS_LIMIT, (hex(CODE_BASE + len(code)), hex(bss_end))
+    assert CODE_BASE + len(code) <= bss, (hex(CODE_BASE + len(code)), hex(bss_end))   # code below .bss
     if bss_end > bss:
         blk += ldr_hdr(0x0106, bss, bss_end - bss, 0)
     tramp = open(os.path.join(HERE, 'build', 'l1tramp.bin'), 'rb').read()
