@@ -15,6 +15,10 @@ void *host_raster(void) { return 0; }
 void host_raster_line(void *r, const void *a, const void *b, int32_t w, const uint8_t *c) { (void)r; (void)a; (void)b; (void)w; (void)c; }
 void *host_find_node(void *s, const char *id) { (void)s; (void)id; return 0; }
 void host_node_set_transform(void *n, const int32_t *m) { (void)n; (void)m; }
+void host_node_set_visible(void *n, int on) { (void)n; (void)on; }
+void *host_text_ctor(void *o, int32_t x, int32_t y, int32_t z, const uint8_t *c) { (void)x; (void)y; (void)z; (void)c; return o; }
+void host_text_set(void *t, const char *s) { (void)t; (void)s; }
+void host_text_draw(void *t, void *r, const int32_t *m) { (void)t; (void)r; (void)m; }
 #include "../plugins/aether/aether.c"
 
 static int16_t knobs[8] = { 15671, 11469, 16384, 32767, 0x530A, 0, 0, 0 };   /* defaults: 12 semitones */

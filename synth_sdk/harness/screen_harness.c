@@ -31,6 +31,14 @@ static char node_id[MAXN][32]; static int32_t node_m[MAXN][9]; static uint8_t no
 #define MAXL 4096
 static struct { int32_t x0, y0, x1, y1, w; uint8_t c[4]; } lines[MAXL]; static int nlines;
 static int raster_obj;
+/* stock-font text objects: position, size, colour, string; the frame's drawn ones go to the JSON (render.py draws
+ * them in a stand-in font) */
+typedef struct { int32_t x, y, size; uint8_t c[4]; char s[32]; } htext_t;
+static const htext_t *texts[64]; static int ntexts;
+void *host_text_ctor(void *obj, int32_t x_q10, int32_t y, int32_t size, const uint8_t *rgba)
+{ htext_t *t = obj; t->x = x_q10; t->y = y; t->size = size; memcpy(t->c, rgba, 4); t->s[0] = 0; return obj; }
+void host_text_set(void *t, const char *s) { snprintf(((htext_t *)t)->s, 32, "%s", s); }
+void host_text_draw(void *t, void *r, const int32_t *m9) { (void)r; (void)m9; if (ntexts < 64) texts[ntexts++] = t; }
 
 void *host_find_node(void *scr, const char *id)
 {
@@ -43,7 +51,7 @@ void *host_find_node(void *scr, const char *id)
 }
 void host_node_set_transform(void *node, const int32_t *m9) { memcpy(node_m[(intptr_t)node - 1], m9, 36); }
 void host_node_set_visible(void *node, int on) { node_hid[(intptr_t)node - 1] = !on; }
-void host_screen_draw(void *scr, int dt) { (void)scr; (void)dt; nlines = 0; }   /* SVG drawn by render.py */
+void host_screen_draw(void *scr, int dt) { (void)scr; (void)dt; nlines = 0; ntexts = 0; }   /* SVG drawn by render.py */
 void *host_raster(void) { return &raster_obj; }
 void host_raster_line(void *r, const void *p0, const void *p1, int32_t w, const uint8_t *c)
 {
@@ -140,6 +148,10 @@ int main(int argc, char **argv)
     for (int i = 0; i < nlines; i++)
         printf("%s[%d, %d, %d, %d, %d, [%d, %d, %d, %d]]", i ? ", " : "", lines[i].x0, lines[i].y0,
                lines[i].x1, lines[i].y1, lines[i].w, lines[i].c[0], lines[i].c[1], lines[i].c[2], lines[i].c[3]);
+    printf("], \"texts\": [");
+    for (int i = 0; i < ntexts; i++)
+        printf("%s[%d, %d, %d, [%d, %d, %d], \"%s\"]", i ? ", " : "", texts[i]->x, texts[i]->y, texts[i]->size,
+               texts[i]->c[0], texts[i]->c[1], texts[i]->c[2], texts[i]->s);
     printf("]}\n");
     return 0;
 }
