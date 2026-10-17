@@ -2,9 +2,9 @@
 #define KALI_TIME_X OP1_Q10(43.06)
 #define KALI_TIME_Y OP1_Q10(49.05)
 #define KALI_DIFF_X OP1_Q10(43.06)
-#define KALI_DIFF_Y OP1_Q10(139.27)
+#define KALI_DIFF_Y OP1_Q10(139.3)
 #define KALI_TONE_X OP1_Q10(43.06)
-#define KALI_TONE_Y OP1_Q10(95.81)
+#define KALI_TONE_Y OP1_Q10(95.8)
 #define KALI_NFIRE 3
 #define KALI_NSKULL 14
 static const char kali_fire_kind[] = "lll";    /* l = line style, f = fill */

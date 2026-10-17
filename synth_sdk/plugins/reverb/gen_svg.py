@@ -133,8 +133,8 @@ def main():
     DY = 139.27 - 95.81
     def shift(el, dy):
         for k in ('cy', 'y1', 'y2', 'y'):
-            if el.get(k): el.set(k, str(float(el.get(k)) + dy))
-        if el.get('d'): el.set('transform', f'translate(0 {dy})')
+            if el.get(k): el.set(k, num(float(el.get(k)) + dy))
+        if el.get('d'): el.set('transform', f'translate(0 {num(dy)})')
     def cy(el):
         if el.get('cy'): return float(el.get('cy'))
         if el.get('y1'): return (float(el.get('y1')) + float(el.get('y2'))) / 2
@@ -144,7 +144,7 @@ def main():
     for e in groups['tone-meter']: shift(e, -DY)
     for e in leaves(groups['meter-scales']):
         if e.tag == NS + 'polyline':                              # TONE's leader to the fire: from the new label row
-            p = e.get('points').split(); p[1] = p[3] = str(float(p[1]) - DY); e.set('points', ' '.join(p)); continue
+            p = e.get('points').split(); p[1] = p[3] = num(float(p[1]) - DY); e.set('points', ' '.join(p)); continue
         if e.tag == NS + 'circle': continue                       # its dot at the fire stays
         y = cy(e)
         if y is None: continue
