@@ -71,9 +71,11 @@ static void restore_metro(void)
 extern void pu_block(void), pu_service(void);              /* tape/punch.c */
 extern void ms_fw_block(void), ms_fw_service(void);        /* seqdev/ms_fw.c */
 extern void tool_service(void);                            /* screens/overlay.c: tool plugins */
+extern void inst_fade_block(void);
 void ci_metro_render(void)
 {
     pu_block();                                                   /* punch: marker crossings (audio thread) */
+    inst_fade_block();                                            /* tools: instrument fade (screens/overlay.c) */
 #ifndef OP1_HOST
     ms_fw_block();                                                /* MIDI sequencer device (docs/39) */
 #endif

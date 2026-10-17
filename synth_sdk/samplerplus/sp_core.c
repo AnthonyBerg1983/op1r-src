@@ -22,10 +22,12 @@ void sp_fw_render(void *self, int16_t *out, const int16_t *k)
 }
 void sp_fw_note_on(void *self, const int16_t *k) { if (op1_sampler) op1_sampler->note_on(self, k); else STOCK_NOTE_ON(self, k); }
 void sp_fw_note_off(void *self) { if (op1_sampler) op1_sampler->note_off(self); else STOCK_NOTE_OFF(self); }
+void inst_fade_pre(void);
 int sp_adsr(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel)
 {
     const op1_sampler_t *s = op1_sampler;
     uint32_t t0 = op1_cycles();
+    inst_fade_pre();                                              /* tools: instrument fade (screens/overlay.c) */
     int r = s ? s->adsr(adsr, env, words, vel) : sp_adsr_stock(adsr, env, words, vel);
     sm_cy[SMC_ENV] += op1_cycles() - t0;                          /* every synth voice's envelope */
     return r;

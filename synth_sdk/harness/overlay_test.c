@@ -15,6 +15,39 @@ void **host_screen_table = table;
 int host_cur_screen;
 void *host_raster(void) { return table; }
 
+/* instrument fade: the decimator's gain / step words; per block the Core sets step +0x40, then the voices'
+ * envelopes (inst_fade_pre, if any voice plays), the decimator, the block end */
+volatile int16_t host_inst_gain[2] = { 0x7FFF, 0x40 };
+volatile int host_mode_cur, host_mode_req;
+void inst_fade_pre(void), inst_fade_block(void);
+int op1_inst_fade(int out);
+static int min_gain, max_gain_silent, blocks, voices = 1, silent;
+static void audio_block(void)
+{
+    host_inst_gain[1] = 0x40;
+    if (voices) for (int v = 0; v < 6; v++) inst_fade_pre();
+    for (int i = 0; i < 64; i++) {                          /* sat16(gain + step) per sample, as ffa005d4 */
+        int g = host_inst_gain[0] + host_inst_gain[1];
+        host_inst_gain[0] = (int16_t)(g > 32767 ? 32767 : g < -32768 ? -32768 : g);
+        if (host_inst_gain[0] < min_gain) min_gain = host_inst_gain[0];
+        if (silent && host_inst_gain[0] > max_gain_silent) max_gain_silent = host_inst_gain[0];
+    }
+    inst_fade_block(); blocks++;
+}
+static void fade_case(int16_t start, int v)
+{
+    host_inst_gain[0] = start; min_gain = max_gain_silent = 0; blocks = 0; voices = v; silent = 0;
+    while (op1_inst_fade(1)) { audio_block(); assert(blocks < 5); }
+    assert(min_gain >= 0 && (!v || host_inst_gain[0] == 0));
+    silent = 1;
+    for (int i = 0; i < 5; i++) audio_block();             /* stays silent until the fade in */
+    assert(!v || max_gain_silent == 0);
+    silent = 0;
+    assert(op1_inst_fade(0) == 0);
+    for (int i = 0; i < 9; i++) audio_block();
+    assert(host_inst_gain[0] == 0x7FFF && min_gain >= 0);
+}
+
 static char trace[64]; static int nt;
 static void mark(char c) { if (nt < 63) { trace[nt++] = c; trace[nt] = 0; } }
 static void upd_a(void *self, int dt) { (void)self; (void)dt; mark('A'); }
@@ -50,6 +83,9 @@ static const op1_tool_t t0 = { key0, serve0, 0 }, t1 = { key1, serve1, 0 };
 int main(void)
 {
     setvbuf(stdout, 0, _IONBF, 0);
+    fade_case(0x7FFF, 1); fade_case(0x1000, 1); fade_case(70, 1); fade_case(0, 1); fade_case(0x7FFF, 0);
+    host_mode_req = 1; assert(op1_inst_fade(1) == 0); host_mode_req = 0;    /* mode switch running: no own fade */
+    puts("fade ok");
     for (int i = 0; i < 10; i++) vt_a[i] = vt_b[i] = vt_c[i] = (uintptr_t)other;
     vt_a[6] = vt_b[6] = vt_c[6] = 0;
     vt_a[7] = (uintptr_t)upd_a; vt_b[7] = (uintptr_t)upd_b; vt_c[7] = (uintptr_t)upd_c;

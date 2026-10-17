@@ -9,6 +9,7 @@ int32_t host_tape_state, host_tape_run, host_tape_speed, host_tape_pos;
 static int clicks, plays, block;
 static int click_half[64], click_block[64];
 void pu_block(void) {}
+void inst_fade_block(void) {}
 void pu_service(void) {}
 #include "../tape/countin.c"
 void host_metro_render(void)

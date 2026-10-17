@@ -201,16 +201,13 @@ static int panel_draw(void *r)                                  /* GUI thread: 0
 /* ---- keys (KeyHandler thread): 1 = consumed ---- */
 extern const op1_tool_t TOOL_randomiser;
 static uint8_t swallow[0x40];
+static volatile uint8_t rn_req;                                 /* 1 lift, 2 drop: run by the main loop after the fade */
 static int rn_key(int code, int pressed)
 {
     if (code < 0 || code >= 0x40) return 0;
     if (!pressed && swallow[code]) { swallow[code] = 0; return 1; }
     if (!pressed || (code != 0x0A && code != 0x0B) || !SHIFT || !synth_page()) return 0;
-    int back = code == 0x0A;                                    /* lift: back; drop: forward / random */
-    if (rn_ready && (back ? rn_lift(&rn, SLOT) : rn_drop(&rn, SLOT))) {
-        panel_back = (uint8_t)back; panel_page = (uint8_t)T_PAGE; panel_t0 = cycles();
-        op1_overlay(&TOOL_randomiser);
-    }
+    if (rn_ready && !rn_req) rn_req = (uint8_t)(code == 0x0A ? 1 : 2);   /* lift: back; drop: forward / random */
     swallow[code] = 1;
     return 1;
 }
@@ -250,6 +247,18 @@ static void rn_service(void)
         __asm__ volatile ("" ::: "memory");                     /* the lists before the flag */
         rn_ready = (uint8_t)ok;
     }
+    static uint8_t waited;
+    int req = rn_req;
+    if (!req) return;
+    if (op1_inst_fade(1) && ++waited < 40) return;              /* the voice reset / new synth and FX cut: silent first */
+    waited = 0;
+    int back = req == 1;
+    if (synth_page() && (back ? rn_lift(&rn, SLOT) : rn_drop(&rn, SLOT))) {
+        panel_back = (uint8_t)back; panel_page = (uint8_t)T_PAGE; panel_t0 = cycles();
+        op1_overlay(&TOOL_randomiser);
+    }
+    op1_inst_fade(0);
+    rn_req = 0;
 }
 
 const op1_tool_t TOOL_randomiser = { rn_key, rn_service, panel_draw };

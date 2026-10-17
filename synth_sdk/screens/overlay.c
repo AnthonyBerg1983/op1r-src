@@ -20,6 +20,19 @@ static void irq_on(uint32_t m) { (void)m; }
 static uint32_t irq_off(void) { uint32_t m; __asm__ volatile ("cli %0;" : "=d"(m)); return m; }
 static void irq_on(uint32_t m) { __asm__ volatile ("sti %0;" : : "d"(m)); }
 #endif
+#ifdef OP1_HOST
+extern volatile int16_t host_inst_gain[2];
+extern volatile int host_mode_cur, host_mode_req;
+#define INST_GAIN     host_inst_gain[0]
+#define INST_STEP     host_inst_gain[1]
+#define MODE_AUDIO    host_mode_cur
+#define MODE_REQ      host_mode_req
+#else
+#define INST_GAIN     (*(volatile int16_t *)0xFF80107C)         /* instrument bus gain (decimator, docs/29) */
+#define INST_STEP     (*(volatile int16_t *)0xFF80107E)         /* its per-sample step */
+#define MODE_AUDIO    (*(volatile int *)0xFF801038)             /* mode the audio side runs */
+#define MODE_REQ      (*(volatile int *)0x01DE4C40)
+#endif
 #define OV_VT_WORDS   10                                        /* screen vtable: 5 {adj, fn} entries */
 
 extern const op1_tool_t *op1_tools[OP1_TOOL_MAX];               /* plugload/plugload.c */
@@ -86,4 +99,36 @@ void tool_service(void)                                         /* main loop: se
     if (ov_done || !obj) { ov_unwrap(); ov_tool = 0; }
     else if (obj != ov_obj) ov_wrap(obj);
     irq_on(m);
+}
+
+/* ---- instrument fade around a sound change (op1_inst_fade): the stock gain / step words of the instrument bus
+ * (decimator 0xFFA005D4: gain += step per sample). The Core writes step = +0x40 every block before the voices
+ * (0xFFA030B0; -0x40 only while a slot / mode switch fades), so the step is set from the voices' envelope call
+ * (sp_adsr, before the decimator, each block with a voice) and the block's end checks the result. A step never
+ * crosses 0 within a block (the decimator saturates only at +-0x7FFF: a negative gain plays inverted). */
+#define IF_OUT_STEP   0x100                                     /* fade out: 128 samples (2 blocks) */
+static volatile uint8_t if_state, if_pre;                       /* 0 idle, 1 fading out, 2 silent; pre ran */
+static int16_t out_step(int g) { int s = g >> 6; return (int16_t)-(s < IF_OUT_STEP ? s : IF_OUT_STEP); }
+void inst_fade_pre(void)                                        /* audio: per voice envelope, before the decimator */
+{
+    if (!if_state) return;
+    if_pre = 1;
+    int g = INST_GAIN;
+    if (if_state == 2 || g < 64) { INST_GAIN = 0; INST_STEP = 0; if_state = 2; }
+    else INST_STEP = out_step(g);
+}
+void inst_fade_block(void)                                      /* audio: block end (master stage) */
+{
+    if (!if_state) return;
+    if (!if_pre) if_state = 2;                                  /* no voice playing: nothing to cut */
+    if (if_state == 2) INST_GAIN = 0;
+    if_pre = 0;
+}
+int op1_inst_fade(int out)              /* main loop; no waiting (call again on the next passes) */
+{                                       /* out: 0 = silent, 1 = still fading; !out: back in (the Core's own step) */
+    if (MODE_AUDIO != MODE_REQ) { if_state = 0; return 0; }   /* a mode switch fades on its own */
+    if (!out) { if_state = 0; return 0; }
+    if (if_state == 2) return 0;
+    if (!if_state) { uint32_t m = irq_off(); if_pre = 0; if_state = 1; irq_on(m); }
+    return 1;
 }

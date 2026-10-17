@@ -116,7 +116,7 @@ static const struct { const char *name; void *addr; } exports[] = {
     /* sampler engine (docs/46) */
     { "sp_adsr_stock", (void *)sp_adsr_stock },
     /* tools */
-    { "op1_overlay", (void *)op1_overlay }, { "plug_apply_synth", (void *)plug_apply_synth },
+    { "op1_overlay", (void *)op1_overlay }, { "op1_inst_fade", (void *)op1_inst_fade }, { "plug_apply_synth", (void *)plug_apply_synth },
     { "se_is_open", (void *)se_is_open }, { "op1_engines", (void *)op1_engines },
     { "op1_engine_count", (void *)&op1_engine_count }, { "op1_fxs", (void *)op1_fxs },
     { "op1_fx_count", (void *)&op1_fx_count },
