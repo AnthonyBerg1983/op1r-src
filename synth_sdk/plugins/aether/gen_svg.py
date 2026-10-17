@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate aether.svg + aether_geom.h from orbit-1.svg (graphics by Rackes) (satellite dish, 4 dials + sliders).
+"""Generate aether.svg + aether_geom.h from orbit-1.svg (graphics by DAN76/Rackes) (satellite dish, 4 dials + sliders).
 
 The OP-1's SVG parser (docs/16) has no CSS, no stroke-dasharray, no rotate() transforms and no usable text, so the
 drawing is flattened here: class styles become attributes, opacity is baked into the colour (on black), transforms
