@@ -28,6 +28,7 @@ typedef struct {
     int32_t env;                      /* shake envelope, Q15 */
     int32_t gain, mult;               /* gain Q15, pitch multiplier Q14 (end of the last block) */
     int32_t semis;                    /* pitch bend incl. vibrato, semitones Q16 (screen) */
+    int32_t envl;                     /* stock envelope (T2) at the block's end, Q15 (screen) */
     int16_t hx, hy;                   /* home (raw) */
 } ae_t;
 static ae_t st[OP1_VOICES];
@@ -68,7 +69,7 @@ static void ae_note_on(void *self, const int16_t *params)
     ae_t *s = &st[ae_cur];
     for (int i = 0; i < 3; i++) { s->sm[i] = s->prev[i] = AE_ACCEL[i] * 256; s->slow[i] = 0; }
     s->hx = AE_ACCEL[0]; s->hy = AE_ACCEL[1];
-    s->ph = 0; s->env = 0; s->gain = 32767; s->mult = 16384;
+    s->ph = 0; s->env = 0; s->gain = 32767; s->mult = 16384; s->envl = 0;
 }
 
 static void ae_render(void *self, int16_t *out, const int16_t *params)
@@ -129,6 +130,7 @@ static void ae_render(void *self, int16_t *out, const int16_t *params)
         out[n] = op1_sat16((((x * g >> 15) * vg >> 15) * LEVEL) >> 15);   /* all 32-bit */
     }
     s->ph = ph; s->mult = m1; s->gain = g1;
+    s->envl = OP1_VOICE_ENV[OP1_BLOCK - 1];                     /* computed before render (docs: OP1_VOICE_ENV) */
 }
 
 const op1_engine_t ENGINE_aether = { ae_note_on, ae_render, 0, { OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_NONE } };
@@ -139,10 +141,9 @@ const op1_engine_t ENGINE_aether = { ae_note_on, ae_render, 0, { OP1_PRESS_PAGE,
  * about its hinge (elevation, +-30 degrees), the side tilt turns it around (azimuth: squeezed horizontally, mirrored
  * past 90 degrees). FORM (green knob) shows 1..4 radio waves, which shake while a voice plays. Dials (needle + value
  * arc) = the knobs: blue ORBIT = range, green FORM = timbre, white SPACE = vibrato, red DEPTH = volume tilt; sliders =
- * the page-2 values (dead zone, tilt range, vibrato rate), red: the playing voice's volume. The active page is bright,
- * the other dim (red: the dial; its slider only shows). Stars: blue / white / red, brightness = ORBIT / SPACE / DEPTH.
+ * the page-2 values (dead zone, tilt range, vibrato rate); red has none. The active page is bright, the other dim. Stars: blue / white / red, brightness = ORBIT / SPACE / DEPTH.
  * Page-2 values also shape the picture: blue = blue star size, green = wave shake depth, white = signal stretch; the
- * signals brighten while a voice plays.
+ * signals follow the playing voice's envelope (T2) and tilt volume.
  * Labels in the stock font, the dotted signals drawn here (AGG ran out of cell blocks on them as SVG). */
 #include "op1_synth.h"                    /* stock-font text (firmware calls, no imports) */
 #include "aether_geom.h"
@@ -151,7 +152,7 @@ static const uint8_t ae_col[4][4] = { { 0x4D, 0x9E, 0xFF, 0xFF }, { 0x00, 0xED, 
 #define AE_DIM 90                     /* the inactive page: 35 % (as the SVG's dim copies) */
 static int32_t sx, sy, sz = 16384;    /* smoothed sensor (screen) */
 static uint32_t wob;                  /* wave shake phase */
-static void *dish, *waves, *wave[4], *dl[2][4], *ndl[2][4], *sl[2][4], *hdl[2][4];   /* [0] bright, [1] dim */
+static void *dish, *waves, *wave[4], *dl[2][4], *ndl[2][4], *sl[2][3], *hdl[2][3];   /* [0] bright, [1] dim; red: no slider */
 static uint32_t lab[2][4][OP1_TEXT_SIZE / 4];
 static uint8_t lab_made;
 #ifndef OP1_HOST
@@ -183,7 +184,7 @@ static void ae_screen_init(void *scr)
         wave[i] = op1_find_node(scr, wid[i]);
         for (int b = 0; b < 2; b++) {
             dl[b][i] = op1_find_node(scr, id[b][i]); ndl[b][i] = op1_find_node(scr, id[2 + b][i]);
-            sl[b][i] = op1_find_node(scr, id[4 + b][i]); hdl[b][i] = op1_find_node(scr, id[6 + b][i]);
+            if (i < 3) { sl[b][i] = op1_find_node(scr, id[4 + b][i]); hdl[b][i] = op1_find_node(scr, id[6 + b][i]); }
         }
     }
 }
@@ -251,15 +252,15 @@ static void ae_screen_update(void *scr, int dt)
     int32_t ang[4];
     for (int i = 0; i < 4; i++) {
         ang[i] = ((int32_t)k[i] * 6144 >> 15) - 3072;                   /* -135 .. +135 degrees */
-        int32_t v = i < 3 ? page_word(w, 5 + i) : s->gain;              /* page 2 / red: the voice's volume */
+        int32_t v = i < 3 ? page_word(w, 5 + i) : 0;                    /* page 2 (red: no slider) */
         int32_t dy = AE_SLD_HALF_Q10 - (int32_t)((int64_t)2 * AE_SLD_HALF_Q10 * v >> 15);
         int32_t mt[9] = { 1024, 0, 0, 0, 1024, 0, 0, dy, 1024 };
-        int sb = !act[i] && i < 3;                                      /* slider bright (red: always dim) */
+        int sb = !act[i];                                               /* slider bright */
         for (int bb = 0; bb < 2; bb++) {
             if (ndl[bb][i]) op1_node_rotate(ndl[bb][i], ae_dial_x[i], ae_dial_y[i], dsin(ang[i]), dcos(ang[i]));
-            if (hdl[bb][i]) op1_node_set_transform(hdl[bb][i], mt);
+            if (i < 3 && hdl[bb][i]) op1_node_set_transform(hdl[bb][i], mt);
             if (dl[bb][i]) op1_node_set_visible(dl[bb][i], bb == !act[i]);
-            if (sl[bb][i]) op1_node_set_visible(sl[bb][i], bb == !sb);
+            if (i < 3 && sl[bb][i]) op1_node_set_visible(sl[bb][i], bb == !sb);
         }
     }
     op1_screen_draw(scr, dt);
@@ -280,9 +281,10 @@ static void ae_screen_update(void *scr, int dt)
             if (e >= ang[i]) break;
         }
     }
-    /* dotted signals: stretched about their centres by the white page-2 word, brighter while playing */
+    /* dotted signals: stretched about their centres by the white page-2 word, brightness follows the playing voice's envelope */
     uint8_t c_dot[4];
-    dimc(c_dot, ae_col[2], playing ? 256 : 140);
+    int32_t el = playing ? s->envl * (s->gain >> 7) >> 15 : 0;        /* envelope x tilt volume, 0..255 */
+    dimc(c_dot, ae_col[2], 64 + (el * 192 >> 8));                     /* 25 % .. 100 % */
     int32_t stretch = 768 + (page_word(w, 7) * 1024 >> 15);               /* Q10: 0.75 .. 1.75 x (unset: 1 x) */
     for (unsigned q = 0, sg = 0; q < sizeof ae_dot / sizeof ae_dot[0]; q++) {
         while (q >= ae_dot_end[sg]) sg++;

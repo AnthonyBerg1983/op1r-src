@@ -9,7 +9,7 @@ up by Y_SHIFT (content above ~y 140). Moving / code-drawn parts:
   dish     group: the dish and its feed, waves: the radio waves (under the right signal's mask); aether.c rotates both about the hinge (elevation, front /
            back tilt) and squeezes it horizontally (azimuth, side tilt)
   ndl0..3  dial needles, rotated by the knobs (blue ORBIT, green FORM, white SPACE, red DEPTH)
-  sld0..3  slider handles, moved by the page-2 words (red: the voice's volume)
+  sld0..2  slider handles, moved by the page-2 words (red has none)
   the dial value arcs are drawn by aether.c (geometry in aether_geom.h)
 """
 import math, os, re, xml.etree.ElementTree as ET
@@ -291,6 +291,7 @@ def svg():
             k = next(d['k'] for d in DIALS if abs((it['ops'][0][1] + it['ops'][1][1]) / 2 - d['sx']) < 2
                      and d['sy0'] < it['ops'][0][2] - Y_SHIFT < d['sy1'])
             handles[k] = it; continue
+        if it['tag'] == 'line' and abs(ox - 288.75) < 0.1 and oy > 60: continue   # red: the divider of its (removed) slider
         dk = next((d['k'] for d in DIALS if near_dial(it, d)), None)
         if dk is not None: dial_parts[dk].append(it); continue
         sk = next((d['k'] for d in DIALS if near_slider(it, d)), None)
@@ -308,6 +309,7 @@ def svg():
             o.append(f'<line id="n{"l" if sfx else "d"}{k}" fill="none" stroke="{col(d["c"], dm)}" stroke-width="1.5" '
                      f'stroke-linecap="round" x1="{f2(cx)}" y1="{f2(cy)}" x2="{f2(cx)}" y2="{f2(cy - 6.5)}"/>')
             o.append('</g>')
+            if k == 3: continue                    # red: no slider (no page 2)
             o.append(f'<g id="s{sfx}{k}">')
             for it in slider_parts[k]: emit(it, dim=dm)
             o.append(f'<path id="h{"d" if sfx else "b"}{k}" fill="{col(d["c"], dm)}" d="M{f2(d["sx"] - 5)} {f2(ym - 1.88)}'
