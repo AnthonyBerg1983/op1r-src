@@ -9,6 +9,7 @@ extern int16_t  host_sine[8192];
 extern int32_t  host_pitch_inc[128];
 extern uint8_t  host_voice_mem[6 * 0x24];
 extern int16_t  host_voice_vel[6];
+extern int16_t  host_voice_env[128];             /* stock envelope of the voice (audio_harness.c fills it) */
 extern int16_t  host_accel[3];                  /* accelerometer X, Y, Z (aether) */
 extern int16_t  host_knobs[8][8];
 extern int      host_slot;
@@ -22,6 +23,7 @@ extern void    *host_fx_scratch[3];
 #define OP1_SINE_TABLE   ((const int16_t *)host_sine)
 #define OP1_VOICE_BASE   ((uintptr_t)host_voice_mem)
 #define OP1_VOICE_VEL    ((const int16_t *)host_voice_vel)
+#define OP1_VOICE_ENV    ((const int16_t *)host_voice_env)
 
 void *host_find_node(void *scr, const char *id);
 void  host_node_set_transform(void *node, const int32_t *m9);

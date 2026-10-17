@@ -49,6 +49,11 @@
 #define OP1_VOICE_BASE   0xFFB00000u
 /* note velocity per voice, int16 = velocity (1..127) << 8, written by VoiceCtl::note_on_synth */
 #define OP1_VOICE_VEL    ((const volatile int16_t *)0xFF801064)
+/* the stock envelope (T2 page) of the voice being rendered, for use inside render (e.g. as a timbre modulator):
+ * OP1_BLOCK int16 values, one per output sample, 0..32767 (Q15), velocity and level included. The firmware computes
+ * it just before render (Adsr_render) and still multiplies the output by it afterwards: reading it does not
+ * replace the volume envelope. Valid only during render (one shared buffer, refilled per voice). */
+#define OP1_VOICE_ENV    ((const int16_t *)0xFF801D50)
 #endif
 
 #define OP1_VOICE_SIZE   0x24u

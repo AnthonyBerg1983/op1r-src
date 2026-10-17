@@ -46,6 +46,9 @@ Include only `op1_plugin.h`.
 - `OP1_PITCH_INC[n]`: phase increment per sample of this note (2^32 = one cycle).
   `op1_voice_vel_gain(self)`: note velocity as a Q15 gain.
 - `params[0..3]`: the 4 knobs, 0..32767. The firmware's envelope and level are applied after `render`.
+- `OP1_VOICE_ENV`: the stock envelope (T2) of the voice being rendered, `OP1_BLOCK` int16 values 0..32767 (velocity
+  and level included), computed just before `render`. Use it inside `render` to modulate the timbre (cutoff, FM depth,
+  fold amount, …); the firmware still applies it to the volume afterwards. Only valid during `render`.
 
 **Effect** (`op1_fx_t`): `init(pos)`, `render(pos, buf[64], params)` (in place).
 - `pos`: 0 synth FX, 1 drum FX, 2 master FX (mono sum, mixed back as the wet part). Keep all state per position

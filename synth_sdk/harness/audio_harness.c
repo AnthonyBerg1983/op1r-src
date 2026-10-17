@@ -6,7 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-int16_t host_sine[8192]; int32_t host_pitch_inc[128]; uint8_t host_voice_mem[6 * 0x24]; int16_t host_voice_vel[6]; int16_t host_accel[3] = { 0, 0, 16384 };
+int16_t host_sine[8192]; int32_t host_pitch_inc[128]; uint8_t host_voice_mem[6 * 0x24]; int16_t host_voice_vel[6]; int16_t host_voice_env[128]; int16_t host_accel[3] = { 0, 0, 16384 };
 int16_t host_knobs[8][8]; int host_slot; const uint8_t *host_sample_buffer[8];
 int16_t host_fx_knobs[3][8]; int16_t host_fx_meter[3]; void *host_fx_scratch[3];
 volatile uint8_t op1_fx_page[3][4]; volatile uint8_t op1_eng_page[4];
@@ -47,6 +47,10 @@ int main(int argc, char **argv)
         ENGINE.note_on(host_voice_mem, k);
         for (int b = 0; b < 138; b++) {                         /* 0.4 s */
             if (b == 110 && ENGINE.note_off) ENGINE.note_off(host_voice_mem);
+            /* a stand-in stock envelope: 10-block attack, sustain 3/4, release from the note off (not applied to
+             * the output here, as before: the harness renders the raw engine) */
+            int32_t e = b < 10 ? 32767 * b / 10 : b < 110 ? 24575 : 24575 - 24575 * (b - 110) / 28;
+            for (int i = 0; i < 128; i++) host_voice_env[i] = (int16_t)e;
             ENGINE.render(host_voice_mem, out, k); emit(out, OP1_BLOCK);
         }
     }
