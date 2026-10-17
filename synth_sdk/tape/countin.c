@@ -177,6 +177,8 @@ int ci_service(int arg)
 #ifndef OP1_HOST
     ms_fw_service();                                              /* MIDI sequencer: load, prefetch, save */
     tool_service();                                               /* tool plugins: services, overlay */
+    extern void sp_hook_update(void);
+    sp_hook_update();                                             /* sampler+: envelope hook on / off */
 #endif
     extern void du_service(void) __attribute__((weak));
     if (du_service) du_service();                                 /* dev update over SysEx (--dev, docs/35) */

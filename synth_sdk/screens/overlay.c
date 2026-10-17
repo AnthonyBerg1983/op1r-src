@@ -117,6 +117,7 @@ void inst_fade_pre(void)                                        /* audio: per vo
     if (if_state == 2 || g < 64) { INST_GAIN = 0; INST_STEP = 0; if_state = 2; }
     else INST_STEP = out_step(g);
 }
+int inst_fade_active(void) { return if_state != 0; }
 void inst_fade_block(void)                                      /* audio: block end (master stage) */
 {
     if (!if_state) return;
@@ -129,6 +130,10 @@ int op1_inst_fade(int out)              /* main loop; no waiting (call again on 
     if (MODE_AUDIO != MODE_REQ) { if_state = 0; return 0; }   /* a mode switch fades on its own */
     if (!out) { if_state = 0; return 0; }
     if (if_state == 2) return 0;
-    if (!if_state) { uint32_t m = irq_off(); if_pre = 0; if_state = 1; irq_on(m); }
+    if (!if_state) {
+        uint32_t m = irq_off(); if_pre = 0; if_state = 1; irq_on(m);
+        extern volatile uint8_t sp_hook_live;
+        sp_hook_live = 1;                                       /* the envelope hook sets the step (sp_core.c) */
+    }
     return 1;
 }

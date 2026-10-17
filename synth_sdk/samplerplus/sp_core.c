@@ -23,6 +23,15 @@ void sp_fw_render(void *self, int16_t *out, const int16_t *k)
 void sp_fw_note_on(void *self, const int16_t *k) { if (op1_sampler) op1_sampler->note_on(self, k); else STOCK_NOTE_ON(self, k); }
 void sp_fw_note_off(void *self) { if (op1_sampler) op1_sampler->note_off(self); else STOCK_NOTE_OFF(self); }
 void inst_fade_pre(void);
+/* the Adsr_render hook only goes through sp_adsr while needed (hook.S fast path): a sampler slot is current with the
+ * sampler+ plugin loaded, or a tool's instrument fade runs (screens/overlay.c) */
+volatile uint8_t sp_hook_live;
+extern int inst_fade_active(void);
+void sp_hook_update(void)                                       /* main loop */
+{
+    int s = op1_current_slot();
+    sp_hook_live = (uint8_t)((op1_sampler && (unsigned)s < 8 && ((const volatile int32_t *)0xFF8016E4)[s] == 6) || inst_fade_active());
+}
 int sp_adsr(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel)
 {
     const op1_sampler_t *s = op1_sampler;

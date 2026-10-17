@@ -18,6 +18,7 @@ void *host_raster(void) { return table; }
 /* instrument fade: the decimator's gain / step words; per block the Core sets step +0x40, then the voices'
  * envelopes (inst_fade_pre, if any voice plays), the decimator, the block end */
 volatile int16_t host_inst_gain[2] = { 0x7FFF, 0x40 };
+volatile uint8_t sp_hook_live;
 volatile int host_mode_cur, host_mode_req;
 void inst_fade_pre(void), inst_fade_block(void);
 int op1_inst_fade(int out);

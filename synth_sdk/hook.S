@@ -420,8 +420,22 @@ __hook_tapesave:
 /* sampler+ (docs/46): JUMP.L at the Adsr_render entry -> sp_adsr (same arguments, 4th on the stack); the stock
  * function = the two replaced instructions, then on at 0x0191212C */
 	.section .hook_spadsr,"ax"
-	jump.l _sp_adsr;
+	jump.l _sp_adsr_entry;
 	.text
+/* fast path: straight to the stock envelope unless sp_hook_live (a sampler+ / sampler slot is current or a tool fade
+ * runs; sp_core.c, set from the main loop). The C path for every voice of every engine made the audio crackle on
+ * hardware with FX on and 4+ voices (op1r 38 / 39, not in the emulator). R3 / P1 are scratch at this entry. */
+	.global _sp_adsr_entry
+	.align 2
+_sp_adsr_entry:
+	P1.L = _sp_hook_live; P1.H = _sp_hook_live;
+	R3 = B[P1] (Z);
+	CC = R3 == 0;
+	IF !CC JUMP 1f;
+	[--SP] = (R7:4, P5:3);
+	P5 = R2;
+	jump.l _sp_adsr_cont;
+1:	jump.l _sp_adsr;
 	.global _sp_adsr_stock
 	.align 2
 _sp_adsr_stock:
