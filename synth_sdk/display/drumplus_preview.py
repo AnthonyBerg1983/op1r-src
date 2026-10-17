@@ -24,7 +24,12 @@ def dot(c, x, y, col, r=1.5):                      # the rasteriser drops zero-l
 
 ROWS = (-142.4, -57.4, 27.6, 112.7, 197.7, 282.8)    # glyph row tops in opfont.svg
 
+G = None                                            # stock font glyphs (svgfont.load); None: stand-in font (NO_OPFONT)
+
 def text(c, s, x, y, col, h=7.0):                  # y = baseline (cell height 56.7 units = h); lowercase only
+    if not G:                                       # committed previews: no stock font
+        c.set_source_rgb(*rgb(col)); c.select_font_face('DejaVu Sans', 0, 1); c.set_font_size(h * 1.25)
+        c.move_to(x, y); c.show_text(s); return x + c.text_extents(s)[4] + 2.2
     k = h / 56.7
     for ch in s:
         if ch == ' ': x += 4; continue

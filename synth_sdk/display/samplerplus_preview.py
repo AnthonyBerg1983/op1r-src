@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host mock-up of the sampler+ pages (docs/46) for approval: T1, T1 + Shift, T2, T2 + Shift, sample browser.
 Usage: samplerplus_preview.py <op1_246/content/display/opfont.svg> <out.png>
-The stock font is read at preview time only: keep the PNG local (build/), never commit it."""
+The stock font is read at preview time only: keep that PNG local; with NO_OPFONT=1 a stand-in font (committable)."""
 import math, os, sys
 import cairocffi as cairo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -106,7 +106,7 @@ def browser(c, shift):
     labels(c, [('sample', '3/24', 'load'), ('', '', ''), ('', '', ''), ('', '', 'back')])
 
 def main(font, out):
-    dpv.G = svgfont.load(font)
+    dpv.G = None if os.environ.get('NO_OPFONT') else svgfont.load(font)
     pad, lab = 12, 20
     views = [('t1 play', t1, False), ('t1 + shift', t1, True), ('t2 envelope and filter', t2, False),
              ('t2 + shift', t2, True), ('t1 white press: sample browser (sampler presets)', browser, False)]
