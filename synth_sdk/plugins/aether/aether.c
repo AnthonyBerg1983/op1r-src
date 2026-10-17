@@ -141,6 +141,8 @@ const op1_engine_t ENGINE_aether = { ae_note_on, ae_render, 0, { OP1_PRESS_PAGE,
  * arc) = the knobs: blue ORBIT = range, green FORM = timbre, white SPACE = vibrato, red DEPTH = volume tilt; sliders =
  * the page-2 values (dead zone, tilt range, vibrato rate), red: the playing voice's volume. The active page is bright,
  * the other dim (red: the dial; its slider only shows). Stars: blue / white / red, brightness = ORBIT / SPACE / DEPTH.
+ * Page-2 values also shape the picture: blue = blue star size, green = wave shake depth, white = signal stretch; the
+ * signals brighten while a voice plays.
  * Labels in the stock font, the dotted signals drawn here (AGG ran out of cell blocks on them as SVG). */
 #include "op1_synth.h"                    /* stock-font text (firmware calls, no imports) */
 #include "aether_geom.h"
@@ -231,7 +233,10 @@ static void ae_screen_update(void *scr, int dt)
     int playing = 0;
     for (int v = 0; v < OP1_VOICES; v++) playing |= AE_VOICE_ON[v];
     int32_t sc = 1024;
-    if (playing) { wob += (uint32_t)dt * 1100; sc = 1024 + (dsin((int32_t)(wob >> 10)) * 24 >> 15); }   /* +-2.3 %, ~8 Hz */
+    if (playing) {                                                     /* ~8 Hz, depth by the green page-2 word */
+        int32_t depth = page_word(w, 6) * 96 >> 15;                    /* Q10: 0 .. 9 % (unset: 2.3 %) */
+        wob += (uint32_t)dt * 1100; sc = 1024 + (dsin((int32_t)(wob >> 10)) * depth >> 15);
+    }
     if (waves) {
         int32_t fx = AE_FEED_X_Q10 * (1024 - sc) >> 10, fy = AE_FEED_Y_Q10 * (1024 - sc) >> 10;   /* scale about the feed */
         int32_t mw[9] = { a * sc >> 10, b * sc >> 10, 0, c * sc >> 10, d * sc >> 10, 0,
@@ -275,10 +280,14 @@ static void ae_screen_update(void *scr, int dt)
             if (e >= ang[i]) break;
         }
     }
-    /* dotted signals (white): one short line per dot, 1.25 x 1.25 px */
-    static const uint8_t c_dot[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
-    for (unsigned q = 0; q < sizeof ae_dot / sizeof ae_dot[0]; q++) {
-        int32_t x = (int32_t)ae_dot[q][0] << 4, y = (int32_t)ae_dot[q][1] << 4;      /* 1/64 px -> Q10 */
+    /* dotted signals: stretched about their centres by the white page-2 word, brighter while playing */
+    uint8_t c_dot[4];
+    dimc(c_dot, ae_col[2], playing ? 256 : 140);
+    int32_t stretch = 768 + (page_word(w, 7) * 1024 >> 15);               /* Q10: 0.75 .. 1.75 x (unset: 1 x) */
+    for (unsigned q = 0, sg = 0; q < sizeof ae_dot / sizeof ae_dot[0]; q++) {
+        while (q >= ae_dot_end[sg]) sg++;
+        int32_t cx = (int32_t)ae_dot_cx[sg] << 4;
+        int32_t x = cx + ((((int32_t)ae_dot[q][0] << 4) - cx) * stretch >> 10), y = (int32_t)ae_dot[q][1] << 4;
         ln(r, x - 0x280, y, x + 0x280, y, 0x500, c_dot);
     }
     /* stars: 4-point, concave sides (8 lines); blue = ORBIT, white = SPACE, red = DEPTH, 15 .. 100 % */
@@ -288,6 +297,10 @@ static void ae_screen_update(void *scr, int dt)
         int kn = star_knob[j];
         dimc(cc, ae_col[kn], 38 + (k[kn] * 218 >> 15));
         int32_t x = ae_star[j][0], y = ae_star[j][1], hw = ae_star[j][2], hh = ae_star[j][3];
+        if (kn == 0) {                                                  /* blue star: size by the blue page-2 word */
+            int32_t z = 640 + (page_word(w, 5) * 1536 >> 15);           /* Q10: 0.6 .. 2.1 x (unset: 1 x) */
+            hw = hw * z >> 10; hh = hh * z >> 10;
+        }
         int32_t iw = hw * 3 >> 4, ih = hh * 3 >> 4;                     /* waist of the concave sides */
         int32_t P[8][2] = { { x, y - hh }, { x + iw, y - ih }, { x + hw, y }, { x + iw, y + ih },
                             { x, y + hh }, { x - iw, y + ih }, { x - hw, y }, { x - iw, y - ih } };

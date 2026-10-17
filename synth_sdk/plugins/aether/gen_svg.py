@@ -241,6 +241,7 @@ def star_geom(it):                                # centre, half width / height 
 
 STARS = []                                        # (x, y, hw, hh) in source order
 DOTS = []                                         # the dotted signals: points
+DOT_SPLIT = []                                    # end index of each signal
 
 
 def svg():
@@ -258,6 +259,7 @@ def svg():
         idt = f' id="{ident}"' if ident else ''
         if it['dotted']:                           # dotted stroke: dots drawn by aether.c (AGG: a path of 90 dashes
             DOTS.extend(dots(it['ops'], DOT_STEP))  # ran out of cell blocks, small circles did not show)
+            DOT_SPLIT.append(len(DOTS))
             return
         o.append(f'<path{idt} {fl} {a} d="{ops_d(it["ops"])}"/>')
 
@@ -329,6 +331,10 @@ def header():
     L.append('static const int32_t ae_star[%d][4] = { ' % len(STARS) + ', '.join(
         '{ %s }' % ', '.join(str(round(v * 1024)) for v in st) for st in STARS) + ' };')
     L.append('/* dotted signals: dot centres, x / y in 1/64 px */')
+    ends = DOT_SPLIT; starts = [0] + ends[:-1]
+    L.append('static const uint16_t ae_dot_end[%d] = { %s };   /* end of each signal in ae_dot */' % (len(ends), ', '.join(map(str, ends))))
+    L.append('static const uint16_t ae_dot_cx[%d] = { %s };    /* its centre x, 1/64 px (stretch pivot) */' % (len(ends), ', '.join(
+        str(round((min(x for x, _ in DOTS[a:b]) + max(x for x, _ in DOTS[a:b])) / 2 * 64)) for a, b in zip(starts, ends))))
     L.append('static const uint16_t ae_dot[%d][2] = { ' % len(DOTS) + ', '.join(
         '{ %d, %d }' % (round(x * 64), round(y * 64)) for x, y in DOTS) + ' };')
     return '\n'.join(L) + '\n'
