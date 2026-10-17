@@ -19,14 +19,12 @@ void sp_slot_loaded(int slot, void *op1r);                    /* samplerplus/sp_
 #define STOCK_NOTE_OFF ((void (*)(void *, const void *))0x01978898)
 
 /* ---- voice slots (audio interrupt) ---- */
-volatile uint32_t dp_prof[2];                                 /* render cycles: plugin / stock (resource monitor) */
-static inline uint32_t cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
 void dp_fw_render(void *self, int16_t *out, const void *pad)
 {
     const op1_drum_t *d = op1_drum;
-    uint32_t t0 = cycles();
+    uint32_t t0 = op1_cycles();
     if (d) d->render(self, out, pad); else STOCK_RENDER(self, out, pad);
-    dp_prof[d ? 0 : 1] += cycles() - t0;
+    sm_cy[SMC_DRUM] += op1_cycles() - t0;
 }
 void dp_fw_note_on(void *self, const void *pad) { if (op1_drum) op1_drum->note_on(self, pad); else STOCK_NOTE_ON(self, pad); }
 void dp_fw_note_off(void *self, const void *pad) { if (op1_drum) op1_drum->note_off(self, pad); else STOCK_NOTE_OFF(self, pad); }

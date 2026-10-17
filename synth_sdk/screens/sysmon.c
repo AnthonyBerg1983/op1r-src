@@ -67,12 +67,23 @@ static void *idle_stats(void)                                /* VDK stats block 
 extern volatile uint32_t ps_prof[7] __attribute__((weak));
 static uint32_t prof_last[7];
 static int32_t prof_pct[7];
-extern volatile uint32_t dp_prof[2] __attribute__((weak));   /* drum+ voice render cycles (drumplus/dp_fw.c) */
-static uint32_t dp_last[2];
-static int32_t dp_pct[2], dp_pk[2];
-extern volatile uint32_t sp_prof[2] __attribute__((weak));   /* sampler voice render / envelope cycles (samplerplus/sp_core.c) */
-static uint32_t sp_last[2];
-static int32_t sp_pk[2];
+/* audio split (op1_synth.h SMC_*): cycles counted around the hooked calls, as % of the time (averages) */
+volatile uint32_t sm_cy[SMC_N];
+static uint32_t cy_last[SMC_N];
+static int32_t cy_pct[SMC_N];
+/* the bottom line: helper metrics, BLUE turn steps through them (sm_turn) */
+enum { PG_AUDIO, PG_VOICES, PG_PLUGINS, PG_SYSTEM, PG_N };
+static int sm_page;
+static int32_t sm_acc;
+void sm_turn(int delta)
+{
+    sm_acc += delta;
+    int st = sm_acc / 1024;
+    if (!st) return;
+    sm_acc -= st * 1024;
+    sm_page = ((sm_page + st) % PG_N + PG_N) % PG_N;
+}
+extern int plug_loaded, plug_refused, plug_last_err, plug_skipped;
 
 /* ---------------- state ---------------- */
 #define PEAK_DECAY 2                                        /* peak falls by 2 % per sample (~4 samples/s) */
@@ -102,10 +113,7 @@ static void sample_fast(void)                                /* CPU, AUDIO, MIDI
     }
     if (ps_prof)                                             /* gather fft mags synth bitrev ifft out */
         for (int i = 0; i < 7; i++) { uint32_t c = ps_prof[i]; prof_pct[i] = pct(c - prof_last[i], wall); prof_last[i] = c; }
-    if (dp_prof)
-        for (int i = 0; i < 2; i++) { uint32_t c = dp_prof[i]; dp_pct[i] = pct(c - dp_last[i], wall); dp_last[i] = c; peak(&dp_pk[i], dp_pct[i]); }
-    if (sp_prof)
-        for (int i = 0; i < 2; i++) { uint32_t c = sp_prof[i]; peak(&sp_pk[i], pct(c - sp_last[i], wall)); sp_last[i] = c; }
+    for (int i = 0; i < SMC_N; i++) { uint32_t c = sm_cy[i]; cy_pct[i] = pct(c - cy_last[i], wall); cy_last[i] = c; }
     uint32_t busy = aud_busy, mx = aud_max, mp = aud_max_period;
     aud_busy = 0; aud_max = 0;
     v_pct[SM_DSP] = pct(busy, wall);
@@ -228,6 +236,28 @@ static void bar(void *r, int x0, int x1, int y, int32_t v, int32_t pk, const uin
     }
 }
 
+/* audio row: one bar split into instruments (custom synths + sampler + drum voices, green), synth envelopes (blue),
+ * custom FX (white), the rest of the audio callback (stock engines / FX, mixer, tape: grey); the peak as before */
+static void audio_bar(void *r, int y)
+{
+    static const uint8_t seg_rgb[4][3] = { { 0x00, 0xED, 0x95 }, { 0x4D, 0x9E, 0xFF }, { 0xFF, 0xFF, 0xFF }, { 0x6F, 0x71, 0x73 } };
+    int32_t inst = cy_pct[SMC_SYNTH] + cy_pct[SMC_SAMPLER] + cy_pct[SMC_DRUM], env = cy_pct[SMC_ENV], fx = cy_pct[SMC_FX];
+    int32_t tot = v_pct[SM_DSP], rest = tot - inst - env - fx, seg[4] = { inst, env, fx, rest < 0 ? 0 : rest };
+    int32_t span = SM_BX1 - SM_BX0 - 2, x = SM_BX0 + 1, acc = 0;
+    for (int i = 0; i < 4; i++) {
+        int32_t x1 = SM_BX0 + 1 + span * (acc + seg[i]) / 100;    /* cumulative: no rounding gaps */
+        if (x1 > SM_BX1 - 1) x1 = SM_BX1 - 1;
+        acc += seg[i];
+        if (x1 > x) {
+            uint8_t c[4] = { seg_rgb[i][0], seg_rgb[i][1], seg_rgb[i][2], 0xFF };
+            op1_pt a = { OP1_Q10(x), OP1_Q10(y) + OP1_Q10(SM_BH) / 2 }, b = { OP1_Q10(x1), a.y };
+            op1_raster_line(r, &a, &b, OP1_Q10(SM_BH - 2), c);
+        }
+        x = x1;
+    }
+    bar(r, SM_BX0, SM_BX1, y, 0, pk_pct[SM_DSP], sm_row_rgb[SM_DSP], 1);   /* peak marker only */
+}
+
 static void bottom_text(void *r, const char *t)            /* the shared bottom line: rebuilt only on change */
 {
     static char last[48];
@@ -250,7 +280,9 @@ static void sm_update(void *scr, int dt)
         if (row == SM_MIDI) {
             bar(r, SM_BX0, SM_MID - 4, y, midi_pct[0], midi_pk[0], sm_row_rgb[row], 1);
             bar(r, SM_MID + 4, SM_BX1, y, midi_pct[1], midi_pk[1], sm_row_rgb[row], 1);
-        } else
+        } else if (row == SM_DSP)
+            audio_bar(r, y);
+        else
             bar(r, SM_BX0, SM_BX1, y, v_pct[row], pk_pct[row], sm_row_rgb[row], row <= SM_DSP);
     }
     if (!txt_ok) return;
@@ -269,32 +301,32 @@ static void sm_update(void *scr, int dt)
     op1_text_draw(txt_mem[2 * SM_ROWS], r, ident);
     op1_text_draw(txt_mem[2 * SM_ROWS + 1], r, ident);
     extern int32_t op1_db_last_err __attribute__((weak));
-    int dp_line = !ps_prof && dp_prof && (dp_pk[0] || dp_pk[1]);
-    if (dp_line) {                                           /* "drum+ 9 stock 3" (% of the audio time, peaks) */
-        char t[32], *q = put_s(t, "drum+ "); q = put_u(q, (uint32_t)dp_pk[0]);
-        q = put_s(q, " stock "); q = put_u(q, (uint32_t)dp_pk[1]); *q = 0;
-        bottom_text(r, t);
-    }
-    int sp_line = !dp_line && !ps_prof && sp_prof && (sp_pk[0] || sp_pk[1]);
-    if (sp_line) {                                           /* "sampler 40 env 3" (% of the audio time, peaks) */
-        char t[32], *q = put_s(t, "sampler "); q = put_u(q, (uint32_t)sp_pk[0]);
-        q = put_s(q, " env "); q = put_u(q, (uint32_t)sp_pk[1]); *q = 0;
-        bottom_text(r, t);
-    }
-    if (!dp_line && !sp_line && !ps_prof && &op1_db_last_err && op1_db_last_err) {   /* a DB write failed (op1_db_write): "db err 7" */
-        char t[16], *q = put_s(t, "db err "); q = put_u(q, (uint32_t)op1_db_last_err); *q = 0;
-        bottom_text(r, t);
-    }
+    char t[48], *q = t;
+    *q++ = (char)('1' + sm_page); *q++ = '/'; *q++ = (char)('0' + PG_N); *q++ = ' ';
     if (ps_prof) {                                           /* "paul 41 f12 m5 s9 b1 i12 o2" (% of the audio time) */
         static const char tag[7] = { 'g', 'f', 'm', 's', 'b', 'i', 'o' };
-        char t[48], *q = put_s(t, "paul ");
         int32_t sum = 0;
         for (int i = 0; i < 7; i++) sum += prof_pct[i];
-        q = put_u(q, (uint32_t)sum);
+        q = put_u(put_s(t, "paul "), (uint32_t)sum);
         for (int i = 0; i < 7; i++) { *q++ = ' '; *q++ = tag[i]; q = put_u(q, (uint32_t)prof_pct[i]); }
-        *q = 0;
-        bottom_text(r, t);
+    } else if (sm_page == PG_AUDIO) {                        /* "1/4 inst 12 env 3 fx 20 rest 8" (% of the time) */
+        int32_t inst = cy_pct[SMC_SYNTH] + cy_pct[SMC_SAMPLER] + cy_pct[SMC_DRUM];
+        int32_t rest = v_pct[SM_DSP] - inst - cy_pct[SMC_ENV] - cy_pct[SMC_FX];
+        q = put_u(put_s(q, "inst "), (uint32_t)inst); q = put_u(put_s(q, " env "), (uint32_t)cy_pct[SMC_ENV]);
+        q = put_u(put_s(q, " fx "), (uint32_t)cy_pct[SMC_FX]); q = put_u(put_s(q, " rest "), (uint32_t)(rest < 0 ? 0 : rest));
+    } else if (sm_page == PG_VOICES) {                       /* "2/4 synth 5 sampler 9 drum 3" */
+        q = put_u(put_s(q, "synth "), (uint32_t)cy_pct[SMC_SYNTH]); q = put_u(put_s(q, " sampler "), (uint32_t)cy_pct[SMC_SAMPLER]);
+        q = put_u(put_s(q, " drum "), (uint32_t)cy_pct[SMC_DRUM]);
+    } else if (sm_page == PG_PLUGINS) {                      /* "3/4 plugins 17 refused 0" (+ skipped, last error) */
+        q = put_u(put_s(q, "plugins "), (uint32_t)plug_loaded); q = put_u(put_s(q, " refused "), (uint32_t)plug_refused);
+        if (plug_skipped) q = put_u(put_s(q, " skip "), (uint32_t)plug_skipped);
+        if (plug_last_err) q = put_u(put_s(q, " err "), (uint32_t)plug_last_err);
+    } else {                                                 /* "4/4 db ok" / "db err 7" */
+        q = put_s(q, "db ");
+        if (&op1_db_last_err && op1_db_last_err) q = put_u(put_s(q, "err "), (uint32_t)op1_db_last_err); else q = put_s(q, "ok");
     }
+    *q = 0;
+    bottom_text(r, t);
 }
 
 const op1_screen_t SCREEN_sysmon = { sm_init, sm_update };

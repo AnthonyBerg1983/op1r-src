@@ -40,7 +40,14 @@ void synth_note_on(void *self, const int16_t *params)
 /* per-voice output peak of stock iter voices (screens/iterlab.c), Q15, written once per block */
 volatile int16_t op1_iter_level[6];
 
+static void synth_render_(void *self, int16_t *out, const int16_t *params);
 void synth_render(void *self, int16_t *out, const int16_t *params)
+{
+    uint32_t t0 = op1_cycles();
+    synth_render_(self, out, params);
+    sm_cy[SMC_SYNTH] += op1_cycles() - t0;
+}
+static void synth_render_(void *self, int16_t *out, const int16_t *params)
 {
     int v = op1_voice_index(self), e = engine_of(params);
     if (e != voice_engine[v]) {                       /* engine switched while voice alive */
@@ -159,7 +166,14 @@ void fx_init_stereo(void *self)
 }
 
 static void fx_sanitize(void);
+static void fx_render_stereo_(void *self, int16_t *l, int16_t *r, const int16_t *params);
 void fx_render_stereo(void *self, int16_t *l, int16_t *r, const int16_t *params)
+{
+    uint32_t t0 = op1_cycles();
+    fx_render_stereo_(self, l, r, params);
+    sm_cy[SMC_FX] += op1_cycles() - t0;
+}
+static void fx_render_stereo_(void *self, int16_t *l, int16_t *r, const int16_t *params)
 {
     fx_sanitize();
     int n = params[4] - OP1_ENGINE_MAGIC;
@@ -205,7 +219,14 @@ void *read_fx_param_safe(int slot, int pos)
     return ((void *(*)(int, int))0x01A28DA0)(slot, pos);
 }
 
+static void fx_render_(void *self, int16_t *buf, const int16_t *params);
 void fx_render(void *self, int16_t *buf, const int16_t *params)
+{
+    uint32_t t0 = op1_cycles();
+    fx_render_(self, buf, params);
+    sm_cy[SMC_FX] += op1_cycles() - t0;
+}
+static void fx_render_(void *self, int16_t *buf, const int16_t *params)
 {
     fx_sanitize();
     int n = params[4] - OP1_ENGINE_MAGIC;
@@ -1059,6 +1080,7 @@ void knob_event_hook(int knob, int16_t *delta)
     if (knob >= 0 && knob < 4 && se_is_open()) { se_knob(knob, *delta); return; }   /* sample editor */
     if (dpu_knob(knob, *delta)) return;                          /* drum+ pages (pitch / volume: stock) */
     if (spc_knob(knob, *delta)) return;                          /* sampler+ pages */
+    if (knob == 0 && sm_on == 1 && CUR_MODE_ID == 0x0C) { extern void sm_turn(int); sm_turn(*delta); return; }   /* monitor: metrics */
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
     if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_seq_turn(*delta); return; }   /* sequencer on / off: green */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }

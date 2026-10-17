@@ -33,4 +33,14 @@ static inline int op1_db_write(void *db2_handle, const char *sql)
 #define op1_text_draw(t, r, m9) (((void (*)(void *, void *, const int32_t *))0x01A6259C)((t), (r), (m9)))
 #endif
 
+/* audio-thread cycle counters for the resource monitor (screens/sysmon.c): custom synth engines, sampler voices,
+ * drum voices, synth envelopes, custom FX; incremented around the hooked calls */
+enum { SMC_SYNTH, SMC_SAMPLER, SMC_DRUM, SMC_ENV, SMC_FX, SMC_N };
+extern volatile uint32_t sm_cy[SMC_N];
+#ifndef OP1_HOST
+static inline uint32_t op1_cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
+#else
+static inline uint32_t op1_cycles(void) { return 0; }
+#endif
+
 #endif

@@ -7,6 +7,9 @@
 #include "../screens/sysmon.c"
 
 uint32_t sm_host_cycles, sm_host_idle_lo, sm_host_midi_fill[2];
+int plug_loaded = 17, plug_refused, plug_last_err, plug_skipped;
+int32_t op1_db_last_err;
+static int split[SMC_N];                                     /* % of each block per counter (audio split) */
 static uint32_t heap_sz[2], heap_used[2], dk_total, dk_free;
 int sm_host_heap(int i, uint32_t *size, uint32_t *used) { *size = heap_sz[i]; *used = heap_used[i]; return 1; }
 int sm_host_disk(uint32_t *total, uint32_t *f) { *total = dk_total; *f = dk_free; return dk_total != 0; }
@@ -31,6 +34,7 @@ static void run(int frames, uint32_t wall, int idle_pct, int aud_pct, int aud_pe
             uint32_t per = wall / 8, busy = per * (b == 3 ? aud_peak_pct : aud_pct) / 100;
             uint32_t p = sm_host_cycles - aud_last_t0;      /* block starts on a fixed grid */
             aud_last_t0 = sm_host_cycles; aud_busy += busy;
+            for (int i = 0; i < SMC_N; i++) sm_cy[i] += per * split[i] / 100;
             if (busy > aud_max) { aud_max = busy; aud_max_period = p; }
             sm_host_cycles += per;
         }
@@ -66,9 +70,19 @@ int main(int argc, char **argv)
     assert(!strcmp(val(SM_RAM), "13.0/32mb")); assert(!strcmp(val(SM_DISK), "171/488mb"));
     if (render) dump("idle"); else printf("idle: cpu %s dsp %s ram %s disk %s midi %s\n", val(0), val(1), val(2), val(3), val(4));
     heap_used[0] = 10u << 20; heap_used[1] = 5u << 20; sm_host_midi_fill[0] = 30; sm_host_midi_fill[1] = 80;
+    split[SMC_SYNTH] = 6; split[SMC_SAMPLER] = 14; split[SMC_DRUM] = 5; split[SMC_ENV] = 3; split[SMC_FX] = 15;
     run(64, 4000000, 36, 55, 71);                            /* busy */
     assert(!strcmp(val(SM_CPU), "64%")); assert(pk_pct[SM_DSP] >= 70);
-    if (render) dump("busy (6 voices, 3 FX, MIDI clock)"); else printf("busy: cpu %s dsp %s pk %d midi %s\n", val(0), val(1), pk_pct[SM_DSP], val(4));
+    if (render) dump("busy (6 voices, 3 FX, MIDI clock): audio split, page 1/4"); else printf("busy: cpu %s dsp %s pk %d midi %s\n", val(0), val(1), pk_pct[SM_DSP], val(4));
+    { char want[48]; snprintf(want, sizeof want, "1/4 inst 25 env 3 fx 15 rest 14");
+      if (strcmp(((txt_t *)txt_mem[2 * SM_ROWS + 2])->s, want)) { printf("got [%s]\n", ((txt_t *)txt_mem[2 * SM_ROWS + 2])->s); return 1; } }
+    for (int p = 1; p < PG_N; p++) {                         /* BLUE turn: the other helper metrics */
+        sm_turn(1024); run(8, 4000000, 36, 55, 71);
+        static const char *const lab[] = { "", "page 2/4: voices", "page 3/4: plugins", "page 4/4: system" };
+        if (render) dump(lab[p]); else printf("page %d: %s\n", p + 1, ((txt_t *)txt_mem[2 * SM_ROWS + 2])->s);
+    }
+    sm_turn(1024); assert(sm_page == PG_AUDIO);              /* wraps */
+    memset(split, 0, sizeof split);
     heap_used[0] = 15u << 20; heap_used[1] = 13u << 20; dk_free = 29u << 20; sm_host_midi_fill[0] = 410; sm_host_midi_fill[1] = 1023;
     run(256, 4000000, 3, 93, 100);                           /* overload */
     assert(!strcmp(val(SM_CPU), "97%")); assert(pk_pct[SM_DSP] == 100);

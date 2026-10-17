@@ -13,23 +13,21 @@ const op1_sampler_t *op1_sampler;                             /* set by the plug
 #define STOCK_TYPE_JOB ((void (*)(void *))0x0193FFAC)
 int sp_adsr_stock(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel);   /* hook.S */
 
-volatile uint32_t sp_prof[2];                                 /* sampler voice cycles: render, envelope (resource monitor) */
-static inline uint32_t cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }
 void sp_fw_render(void *self, int16_t *out, const int16_t *k)
 {
     const op1_sampler_t *s = op1_sampler;
-    uint32_t t0 = cycles();
+    uint32_t t0 = op1_cycles();
     if (s) s->render(self, out, k); else STOCK_RENDER(self, out, k);
-    sp_prof[0] += cycles() - t0;
+    sm_cy[SMC_SAMPLER] += op1_cycles() - t0;
 }
 void sp_fw_note_on(void *self, const int16_t *k) { if (op1_sampler) op1_sampler->note_on(self, k); else STOCK_NOTE_ON(self, k); }
 void sp_fw_note_off(void *self) { if (op1_sampler) op1_sampler->note_off(self); else STOCK_NOTE_OFF(self); }
 int sp_adsr(void *adsr, int16_t *env, const int16_t *words, const int16_t *vel)
 {
     const op1_sampler_t *s = op1_sampler;
-    uint32_t t0 = cycles();
+    uint32_t t0 = op1_cycles();
     int r = s ? s->adsr(adsr, env, words, vel) : sp_adsr_stock(adsr, env, words, vel);
-    if (*(const volatile int32_t *)(0xFF8016E4 + (*(volatile int *)0xFF8016D4 & 7) * 4) == 6) sp_prof[1] += cycles() - t0;
+    sm_cy[SMC_ENV] += op1_cycles() - t0;                          /* every synth voice's envelope */
     return r;
 }
 void sp_slot_loaded(int slot, void *op1r) { if (op1_sampler) op1_sampler->slot_loaded(slot, op1r); }
