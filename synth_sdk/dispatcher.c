@@ -880,6 +880,8 @@ void key_event_hook(int code, int pressed)
             }
         }
     }
+    extern int tool_key(int code, int pressed);
+    if (tool_key(code, pressed)) return;                         /* tool plugins (screens/overlay.c) */
     if (code == 0x3E && tape_page()) {                         /* red press: add, Shift: remove */
         if (pressed) { if (*(volatile uint8_t *)0x01DD7F78) tm_remove(); else tm_add(); }
         return;

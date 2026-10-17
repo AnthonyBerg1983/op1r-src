@@ -251,6 +251,18 @@ typedef struct {
     int  (*key)(int code, int pressed);
 } op1_sampler_t;
 #define OP1_SAMPLER_ROW 100                           /* synth_types id of the 'sampler+' row */
+
+/* ---- tool plugins (plugin.json "kind": "tool"): keys, the main loop, an overlay over any page ----
+ * In load order: key after op1r's own (update prompt, MIDI sequencer, drum+, sample editor) and before the stock
+ * handlers, service every main-loop pass, and after op1_overlay(t) t->draw over the current page each frame until
+ * it returns 0. */
+typedef struct {
+    int  (*key)(int code, int pressed);               /* KeyHandler thread; 1 = swallowed (its releases too) */
+    void (*service)(void);                            /* main loop */
+    int  (*draw)(void *raster);                       /* GUI thread; 0 = done */
+} op1_tool_t;
+#define OP1_TOOL_MAX 4
+void op1_overlay(const op1_tool_t *t);                /* any thread */
 #ifndef OP1_HOST
 #define op1_find_node(scr, id) (((void *(*)(void *, const char *))0x01A3B580)((scr), (id)))
 #define op1_node_set_transform(node, m9) (((void (*)(void *, const int32_t *))0x019EAD58)((node), (m9)))
@@ -260,6 +272,7 @@ typedef struct {
 #define op1_raster()        (((void *(*)(void))0x01A3B490)())
 #define op1_raster_line(r, p0, p1, w_q10, rgba) \
     (((void (*)(void *, const op1_pt *, const op1_pt *, int32_t, const uint8_t *))0x01A24A4C)((r), (p0), (p1), (w_q10), (rgba)))
+#define op1_raster_dim(r)   (((void (*)(void *))0x01A2357A)(r))   /* Raster::dim_all: the frame darkened (HELP) */
 #define OP1_SCREEN_SLOT     (*(volatile int *)0x01DF4E38)  /* instrument slot the screen shows */
 static inline const int16_t *op1_synth_knobs(int slot) { return (const int16_t *)(0xFF8013C4 + (slot & 7) * 16); }
 #endif /* !OP1_HOST */

@@ -1,0 +1,11 @@
+{
+  "name": "randomiser",
+  "author": "Lewis-Clayton",
+  "kind": "tool",
+  "symbol": "TOOL_randomiser",
+  "sources": [
+    "../../rnd/rn_fw.c",
+    "../../rnd/rn_core.c",
+    "../../rnd/rn_draw.c"
+  ]
+}

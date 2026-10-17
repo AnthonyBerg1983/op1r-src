@@ -70,6 +70,7 @@ static void restore_metro(void)
 /* L1 audio callback: replaces the call to metronome::render (0x019DE548) */
 extern void pu_block(void), pu_service(void);              /* tape/punch.c */
 extern void ms_fw_block(void), ms_fw_service(void);        /* seqdev/ms_fw.c */
+extern void tool_service(void);                            /* screens/overlay.c: tool plugins */
 void ci_metro_render(void)
 {
     pu_block();                                                   /* punch: marker crossings (audio thread) */
@@ -173,6 +174,7 @@ int ci_service(int arg)
     pu_service();                                                 /* punch in / out (main loop) */
 #ifndef OP1_HOST
     ms_fw_service();                                              /* MIDI sequencer: load, prefetch, save */
+    tool_service();                                               /* tool plugins: services, overlay */
 #endif
     extern void du_service(void) __attribute__((weak));
     if (du_service) du_service();                                 /* dev update over SysEx (--dev, docs/35) */

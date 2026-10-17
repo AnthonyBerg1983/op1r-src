@@ -29,7 +29,7 @@ before they can crash an OP-1.
 ```
 
 - `name`: shown on the OP-1; lowercase, at most 15 characters, not a stock type name.
-- `kind`: `synth` or `fx`.
+- `kind`: `synth`, `fx` or `tool` (see Tool plugins).
 - `order` (optional): leave it out. Sounds find a plugin file by its name. Only plugins that were compiled into
   earlier releases keep their old number here.
 - `symbol`: your `op1_engine_t` / `op1_fx_t` object; `sources`: C files, the first one defines `symbol`.
@@ -80,6 +80,14 @@ Without `screen`, synths use the stock iter graphics and FX a generic page with 
 Preview: `python3 harness/render.py mysynth out.png`. Look at `plugins/supersaw` (synth) or `plugins/tape` (FX).
 Colours: blue #4D9EFF, green #00ED95, white #FFFFFF, red #FF3A5D, grey #6F7173. Line ends are flat and zero-length
 lines are not drawn (draw a dot as two short crossing lines).
+
+## Tool plugins
+
+`"kind": "tool"`, `symbol` an `op1_tool_t` (op1_plugin.h). A tool gets the keys after op1r's own (update prompt,
+MIDI sequencer, drum+, sample editor) and before the stock handlers (`key`, KeyHandler thread, 1 = swallowed, its
+releases too), a call every main-loop pass (`service`) and, after `op1_overlay(&tool)`, its `draw(raster)` (GUI
+thread) over the current page each frame until it returns 0. `op1_raster_dim(r)` darkens the page first, as HELP
+does. Tools are always plugin files; example: `plugins/randomiser`.
 
 ## Plugin file (no firmware build)
 

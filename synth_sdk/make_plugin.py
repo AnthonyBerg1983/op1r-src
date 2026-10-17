@@ -8,7 +8,7 @@ The plugin is linked alone at address 0 (libgcc inside). Calls into the core go 
 (P1 = addr; JUMP (P1): heap and core are > 16 MB apart, out of PCREL24 range). The relocation list is checked by
 linking a second time at another base: applying the list to the base-0 image must give that image byte for byte.
 """
-import json, os, struct, subprocess, sys, zlib
+import json, os, re, struct, subprocess, sys, zlib
 from elftools.elf.elffile import ELFFile
 import plugins
 
@@ -19,7 +19,7 @@ CHECK_BASE = 0x0041A3C0
 IMP_FAKE = 0x0E000000                       # import addresses for the test links only (never loaded)
 OP1P_API = 1                                # = OP1_PLUGIN_API (op1_plugin.h)
 OP1P_ABS32, OP1P_HI16, OP1P_LO16, OP1P_IMPORT = 1, 2, 3, 0x80000000
-KINDS = {'synth': 0, 'fx': 1, 'seq': 2, 'drum': 3, 'sampler': 4}   # op1p.h OP1P_SYNTH / FX / SEQ / DRUM / SAMPLER
+KINDS = {'synth': 0, 'fx': 1, 'seq': 2, 'drum': 3, 'sampler': 4, 'tool': 5}   # op1p.h OP1P_SYNTH / FX / SEQ / DRUM / SAMPLER / TOOL
 R_LUIMM16, R_HUIMM16, R_BYTE4 = 6, 7, 0x12                 # binutils include/elf/bfin.h
 R_PCREL = {1, 3, 4, 8, 9, 0xA, 0xD, 0xE, 0x13}           # pc-relative: fine inside the image only
 LINK = """SECTIONS {{ . = {base:#x};
@@ -49,7 +49,7 @@ def find(name):
             e['screen'] = dict(p['screen'], svg=os.path.normpath(os.path.join(d, p['screen']['svg'])))
         return KINDS[p['kind']], e
     engs, fxs = plugins.load()
-    for kind, lst in ((0, engs), (1, fxs), (2, plugins.load_seqs()), (3, plugins.load_seqs('drum')), (4, plugins.load_seqs('sampler'))):
+    for kind, lst in ((0, engs), (1, fxs), (2, plugins.load_seqs()), (3, plugins.load_seqs('drum')), (4, plugins.load_seqs('sampler')), (5, plugins.load_seqs('tool'))):
         for e in lst:
             if name in (e['name'], e['dir']):
                 return kind, e
@@ -166,6 +166,8 @@ def build(name, out_dir=OUT):
                       len(rel), len(imports))
     assert len(hdr) == 76
     names = [i[len('__imp_'):] if i.startswith('__imp_') else i.lstrip('_') for i in imports]
+    exported = set(re.findall(r'\{ "(\w+)", \(void \*\)', open(os.path.join(HERE, 'plugload', 'plugload.c')).read()))
+    assert set(names) <= exported, f'{tag}: imports the core does not export (plugload.c exports[]): {sorted(set(names) - exported)}'
     meta = ''.join(f'{k}={e[k]}\n' for k in ('author',) if e.get(k))   # optional text after the imports (op1p.h)
     assert all(c >= ' ' and c not in '\x7f' for c in meta.replace('\n', '')), 'metadata: printable text only'
     body = hdr + bytes(img0) + b''.join(struct.pack('<IIIi', *r) for r in rel) + \
@@ -189,7 +191,7 @@ def build(name, out_dir=OUT):
 if __name__ == '__main__':
     args = sys.argv[1:]
     if args == ['--all']:
-        args = [e['dir'] for e in sum(plugins.load(), []) + plugins.load_seqs() + plugins.load_seqs('drum') + plugins.load_seqs('sampler')]
+        args = [e['dir'] for e in sum(plugins.load(), []) + plugins.load_seqs() + plugins.load_seqs('drum') + plugins.load_seqs('sampler') + plugins.load_seqs('tool')]
     if not args:
         raise SystemExit(__doc__)
     for a in args:

@@ -36,6 +36,8 @@ void  host_raster_line(void *r, const void *p0, const void *p1, int32_t w_q10, c
 #define op1_screen_draw(scr, dt)          host_screen_draw((scr), (dt))
 #define op1_raster()                      host_raster()
 #define op1_raster_line(r, p0, p1, w, c)  host_raster_line((r), (p0), (p1), (w), (c))
+void  host_raster_dim(void *r);
+#define op1_raster_dim(r)                 host_raster_dim(r)
 #define OP1_TEXT_SIZE 0xA4
 void *host_text_ctor(void *obj, int32_t x_q10, int32_t y, int32_t size, const uint8_t *rgba);
 void  host_text_set(void *t, const char *s);
