@@ -13,6 +13,7 @@ volatile uint8_t op1_fx_page[3][4]; volatile uint8_t op1_eng_page[4];
 void *host_find_node(void *s, const char *id) { (void)s; (void)id; return 0; }
 void host_node_set_transform(void *n, const int32_t *m) { (void)n; (void)m; }
 void host_node_set_visible(void *n, int on) { (void)n; (void)on; }
+uint8_t *host_node_style_rgba(void *s, const char *id) { static uint8_t c[4]; (void)s; (void)id; return c; }
 void host_screen_draw(void *s, int dt) { (void)s; (void)dt; }
 void *host_raster(void) { return 0; }
 void host_raster_line(void *r, const void *a, const void *b, int32_t w, const uint8_t *c) { (void)r; (void)a; (void)b; (void)w; (void)c; }
