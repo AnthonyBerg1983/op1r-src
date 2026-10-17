@@ -346,7 +346,7 @@ extern int se_is_open(void), se_open_close(int drum), se_screen_id(void);
 extern void se_key(int code), se_knob(int knob, int delta);
 static uint32_t se_scr[32], se_vt[10], sd_scr[32];                /* sampler (id 6), drum (id 0x10) editor screens */
 static void *sampler_screen, *drum_screen;
-static uint8_t se_ready, sd_ready, synth_held, drum_held, se_swallow[0x40];
+static uint8_t se_ready, sd_ready, synth_held, drum_held, se_swallow[0x40], se_mode_tap;
 extern void pu_toggle(void);                            /* tape/punch.c */
 extern int pu_key(int code);                               /* base view: 1 card, 0 clock (remembered) */
 static void *clock_base(void) { return ob_view && ob_ready ? (void *)ob_scr : clock_screen; }
@@ -830,18 +830,27 @@ void key_event_hook(int code, int pressed)
     se_swap();                                                   /* drum+ / stock pages follow the drum slot */
     if (dpu_key(code, pressed)) return;                          /* drum+: encoder presses */
     if (spc_key(code, pressed)) return;                          /* sampler+: encoder presses, browser */
-    /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's,
-     * the synth key is swallowed, other mode keys close it (and act as usual) */
+    /* sample editor: synth key + scissors opens / closes; while open T1, Shift + left, red press are the editor's;
+     * SYNTH / DRUM tapped alone close it and go to that mode (SYNTH: its T1 page); other mode keys close it (and act
+     * as usual) */
     if (code == 0x02) synth_held = (uint8_t)pressed;
     if (code == 0x03) drum_held = (uint8_t)pressed;
+    if (!pressed && (code == 0x02 || code == 0x03) && se_mode_tap == code) {   /* SYNTH / DRUM tapped in the editor */
+        se_mode_tap = 0; se_swallow[code] = 0;
+        if (se_is_open()) { se_open_close(0); se_swap(); }
+        KEY_DISPATCH(code, 1); KEY_DISPATCH(code, 0);               /* the mode, as a stock press */
+        if (code == 0x02) { KEY_DISPATCH(0x06, 1); KEY_DISPATCH(0x06, 0); }   /* SYNTH: its T1 (instrument) page */
+        return;
+    }
     if (code < 0x40 && !pressed && se_swallow[code]) { se_swallow[code] = 0; return; }
     if (se_ready && pressed) {
         if (code == 0x0C && (synth_held || (drum_held && sd_ready)) && se_open_close(!synth_held)) {
             se_swap();
-            se_swallow[code] = 1; return;
+            se_swallow[code] = 1; se_mode_tap = 0; return;
         }
         if (se_is_open()) {
-            if (code == 0x02 || code == 0x03) { se_swallow[code] = 1; return; }
+            if (code == 0x02 || code == 0x03) { se_swallow[code] = 1; se_mode_tap = (uint8_t)code; return; }   /* acted on release
+                                                                     * unless scissors follows (synth / drum + scissors closes) */
             if ((code >= 0x06 && code <= 0x09) || (code >= 0x0A && code <= 0x0C && !synth_held && !drum_held) || code == 0x3E || code == 0x3B || (code == 0x24 && *(volatile uint8_t *)0x01DD7F78)) {
                 se_key(code); se_swallow[code] = 1; return;
             }
