@@ -28,19 +28,7 @@ static reverb_t rv[3];                                    /* synth, drum, master
 static inline int32_t c17(int32_t x) { return x < -65535 ? -65535 : (x > 65535 ? 65535 : x); }
 /* |b| <= 32767: fits 32 bit. Truncates towards zero: >> alone biases the loop into a DC limit cycle and
  * rounding into a low-level one, magnitude truncation lets the tail die out */
-#ifndef RV_FAST
 static inline int32_t m15(int32_t a, int32_t b) { int32_t x = c17(a) * b; return x >= 0 ? x >> 15 : -(-x >> 15); }
-#else
-/* RV_FAST (plugin "reverb fast", plugins/reverb2): the same product on the 1-cycle 16 x 16 MAC instead of a 32 x 32
- * multiply (5 cycles, ~40 per sample): a (17 bit after c17) halved into 16 bit, so its LSB is dropped */
-static inline int32_t m15(int32_t a, int32_t b)
-{
-    int32_t h = c17(a) >> 1, x;
-#ifdef __bfin__
-    __asm__("%0 = %1.L * %2.L (IS);" : "=d"(x) : "d"(h), "d"(b));
-#else
-    x = (int32_t)(int16_t)h * (int32_t)(int16_t)b;
-#endif
     return x >= 0 ? x >> 14 : -(-x >> 14);
 }
 #endif
