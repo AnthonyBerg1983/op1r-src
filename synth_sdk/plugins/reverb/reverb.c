@@ -29,9 +29,6 @@ static inline int32_t c17(int32_t x) { return x < -65535 ? -65535 : (x > 65535 ?
 /* |b| <= 32767: fits 32 bit. Truncates towards zero: >> alone biases the loop into a DC limit cycle and
  * rounding into a low-level one, magnitude truncation lets the tail die out */
 static inline int32_t m15(int32_t a, int32_t b) { int32_t x = c17(a) * b; return x >= 0 ? x >> 15 : -(-x >> 15); }
-    return x >= 0 ? x >> 14 : -(-x >> 14);
-}
-#endif
 static inline int16_t sat(int32_t x) { return (int16_t)(x < -32768 ? -32768 : (x > 32767 ? 32767 : x)); }
 #define RV(i, off) r->buf[(r->wp + r->base[i] + (off)) & RV_MASK]
 #define TAIL(i) RV(i, rv_len[i] - 1)
