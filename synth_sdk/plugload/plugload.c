@@ -326,6 +326,20 @@ static void kind_map(char k, const char *name)
 }
 #define seq_map(name) kind_map('q', (name))
 
+/* loaded plugin images: base, size, file (crash reports: tools/op1crash.py reads _plug_imgs with emu_ctl peek) */
+struct plug_img { uint32_t base, size; char file[24]; };
+struct plug_img plug_imgs[32];
+uint32_t plug_img_n;
+static void placed(const uint8_t *mem, uint32_t size, const char *file)
+{
+    if (plug_img_n >= 32) return;
+    struct plug_img *p = &plug_imgs[plug_img_n++];
+    p->base = (uint32_t)mem; p->size = size;
+    int i = 0;
+    for (; i < 23 && file[i]; i++) p->file[i] = file[i];
+    p->file[i] = 0;
+}
+
 static uint32_t total;
 static int load_one(void *db, const char *file)
 {
@@ -356,7 +370,7 @@ static int load_one(void *db, const char *file)
         if (!mem) r = op1_sampler ? OP1P_E_HEADER : OP1P_E_SIZE;
         if (!r) {
             op1p_relocate(&v, mem, (uint32_t)mem, imp);
-            cache_sync(mem, v.mem_size);
+            cache_sync(mem, v.mem_size); placed(mem, v.mem_size, file);
             total += v.mem_size;
             op1_sampler = (const op1_sampler_t *)(mem + v.hdr->entry_off);
             op1_db_write(DB_FACTORY(), "INSERT OR IGNORE INTO synth_types VALUES (100,'sampler+','[0, 0, 0, 0, 0, 0, 0, 0]')");
@@ -371,7 +385,7 @@ static int load_one(void *db, const char *file)
         if (!mem) r = op1_drum ? OP1P_E_HEADER : OP1P_E_SIZE;
         if (!r) {
             op1p_relocate(&v, mem, (uint32_t)mem, imp);
-            cache_sync(mem, v.mem_size);
+            cache_sync(mem, v.mem_size); placed(mem, v.mem_size, file);
             total += v.mem_size;
             op1_drum = (const op1_drum_t *)(mem + v.hdr->entry_off);
             op1_db_write(DB_FACTORY(), "INSERT OR IGNORE INTO drum_types VALUES (2,'drum+','[0, 0, 0, 0, 0, 0, 0, 0]')");
@@ -386,7 +400,7 @@ static int load_one(void *db, const char *file)
         if (!r && !mem) r = OP1P_E_SIZE;
         if (!r) {
             op1p_relocate(&v, mem, (uint32_t)mem, imp);
-            cache_sync(mem, v.mem_size);
+            cache_sync(mem, v.mem_size); placed(mem, v.mem_size, file);
             total += v.mem_size;
             const char *svg = 0;
             if (v.svg_len && v.hdr->screen_off != OP1P_NO_SCREEN) {
@@ -410,7 +424,7 @@ static int load_one(void *db, const char *file)
         if (!mem) r = op1_tool_count < OP1_TOOL_MAX ? OP1P_E_SIZE : OP1P_E_HEADER;
         if (!r) {
             op1p_relocate(&v, mem, (uint32_t)mem, imp);
-            cache_sync(mem, v.mem_size);
+            cache_sync(mem, v.mem_size); placed(mem, v.mem_size, file);
             total += v.mem_size;
             op1_tools[op1_tool_count++] = (const op1_tool_t *)(mem + v.hdr->entry_off);
         }
@@ -425,7 +439,7 @@ static int load_one(void *db, const char *file)
     if (!r && !mem) r = OP1P_E_SIZE;
     if (!r) {
         op1p_relocate(&v, mem, (uint32_t)mem, imp);
-        cache_sync(mem, v.mem_size);
+        cache_sync(mem, v.mem_size); placed(mem, v.mem_size, file);
         total += v.mem_size;
         const char *svg = 0;
         if (v.svg_len && v.hdr->screen_off != OP1P_NO_SCREEN) {
