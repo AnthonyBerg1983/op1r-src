@@ -27,7 +27,8 @@ typedef struct {
 
 /* the chord for one played note (MIDI): notes ascending, returns the count (0..CH_MAXN) */
 int ch_notes(const ch_cfg *c, int midi, uint8_t *out);
-/* name of the chord ch_notes gives for midi ("Cm7/G", "D", "F#dim"), into s (>= 12 bytes) */
+/* name of the chord ch_notes gives for midi ("Cmin7/G", "D", "F#dim"; "min", not "m": the stock font shows capitals
+ * only), into s (>= 16 bytes) */
 void ch_name(const ch_cfg *c, int midi, char *s);
 
 /* held keys: which notes each key turned on; a note shared by two held chords sounds until both are released */
@@ -40,6 +41,8 @@ typedef void (*ch_out_fn)(int note, int vel, int on, void *ctx);
  * yet sounding. A second down of a held key releases it first. */
 void ch_down(ch_held *h, int key, const uint8_t *notes, int n, int vel, ch_out_fn out, void *ctx);
 void ch_up(ch_held *h, int key, ch_out_fn out, void *ctx);
+/* one more note for a held key (strum: the chord's notes one after the other); 0 if the key's list is full */
+int ch_add(ch_held *h, int key, int note, int vel, ch_out_fn out, void *ctx);
 void ch_all_off(ch_held *h, ch_out_fn out, void *ctx);
 /* drum mode: chord notes -> pad keys 0..23 (key + interval, folded back by octaves), duplicates removed */
 int ch_drum_fold(int key, int midi, const uint8_t *notes, int n, uint8_t *pads);

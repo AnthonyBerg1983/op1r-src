@@ -72,6 +72,7 @@ int  eu_fw_note_on(int pos, int note, int key, int vel);           /* seq/seq_co
 void eu_fw_note_off(int midi);
 extern volatile uint8_t eu_rec_play;
 void dpu_sync_auto(void);                                          /* dispatcher.c */
+void op1_key_played(int midi, int vel, int on);                   /* seqdev/ms_fw.c (docs/50) */
 
 #define Y_OPEN     ((int (*)(const char *, int, int))0x01A997F4)
 #define Y_CLOSE    ((int (*)(int))0x01A99908)
@@ -113,6 +114,8 @@ static const struct { const char *name; void *addr; } exports[] = {
     { "eu_fw_note_off", (void *)eu_fw_note_off }, { "eu_rec_play", (void *)&eu_rec_play },
     /* drum engine (docs/43) */
     { "dpu_sync_auto", (void *)dpu_sync_auto },
+    /* chord mode (docs/50): a consumed key for the MIDI recorder input I */
+    { "op1_key_played", (void *)op1_key_played },
     /* sampler engine (docs/46) */
     { "sp_adsr_stock", (void *)sp_adsr_stock },
     /* tools */

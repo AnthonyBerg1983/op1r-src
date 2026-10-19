@@ -1,0 +1,14 @@
+{
+  "name": "chord",
+  "author": "pcppcp",
+  "kind": "seq",
+  "symbol": "SEQ_chord",
+  "sources": [
+    "../../chord/ch_fw.c",
+    "../../chord/ch_core.c"
+  ],
+  "screen": {
+    "svg": "chordseq.svg",
+    "symbol": "SCREEN_chord"
+  }
+}

@@ -83,13 +83,13 @@ void ch_name(const ch_cfg *c, int midi, char *s)
     for (int i = 0; i < n; i++) mask |= 1 << (iv[i] % 12);
     const char *q = "";
     switch (mask) {                                          /* quality from the pitch classes */
-    case 0x091: q = ""; break;         case 0x089: q = "m"; break;      case 0x049: q = "dim"; break;
+    case 0x091: q = ""; break;         case 0x089: q = "min"; break;      case 0x049: q = "dim"; break;
     case 0x111: q = "aug"; break;      case 0x491: q = "7"; break;      case 0x891: q = "maj7"; break;
-    case 0x489: q = "m7"; break;       case 0x449: q = "m7b5"; break;   case 0x085: q = "sus2"; break;
+    case 0x489: q = "min7"; break;     case 0x449: q = "min7b5"; break;   case 0x085: q = "sus2"; break;
     case 0x0A1: q = "sus4"; break;     case 0x291: q = "6"; break;      case 0x095: q = "add9"; break;
-    case 0x08D: q = "madd9"; break;    case 0x081: q = "5"; break;      case 0x001: q = "oct"; break;
+    case 0x08D: q = "minadd9"; break;    case 0x081: q = "5"; break;      case 0x001: q = "oct"; break;
     case 0x4A1: q = "7sus4"; break;    case 0x083: q = "susb2"; break;  case 0x0C1: q = "sus#4"; break;
-    case 0x043: q = "susb2b5"; break;  case 0x061: q = "sus4b5"; break; case 0x08B: q = "maddb9"; break;
+    case 0x043: q = "susb2b5"; break;  case 0x061: q = "sus4b5"; break; case 0x08B: q = "minaddb9"; break;
     case 0x04B: q = "dimaddb9"; break; default: q = "?"; break;     /* (scale mode: sus / add9 on odd degrees) */
     }
     char *p = put(put(s, note_nm[(root % 12 + 12) % 12]), q);
@@ -119,6 +119,15 @@ void ch_down(ch_held *h, int key, const uint8_t *notes, int n, int vel, ch_out_f
         if (h->count[note]++ == 0) out(note, vel, 1, ctx);
     }
     h->n[key] = (uint8_t)n;
+}
+
+int ch_add(ch_held *h, int key, int note, int vel, ch_out_fn out, void *ctx)
+{
+    if (key < 0 || key >= CH_KEYS || h->n[key] >= CH_MAXN) return 0;
+    note &= 127;
+    h->notes[key][h->n[key]++] = (uint8_t)note;
+    if (h->count[note]++ == 0) out(note, vel, 1, ctx);
+    return 1;
 }
 
 void ch_all_off(ch_held *h, ch_out_fn out, void *ctx)

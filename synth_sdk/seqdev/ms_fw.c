@@ -205,6 +205,14 @@ void ms_vc_up(const int32_t *rec, uint32_t ret)
     if (own_play || !recording() || rec[0] < 0 || rec[0] > 127 || src_of(ret) != in_kind()) return;
     q_put(0, rec[0], 0, 0);
 }
+/* a key as played, from a sequencer plugin that consumed it (chord mode, docs/50): input I records it as a keyboard
+ * note, the plugin's own output (VoiceCtl notes from the plugin) counts as input S */
+void op1_key_played(int midi, int vel, int on)
+{
+    if (own_play || !recording() || midi < 0 || midi > 127 || in_kind() != MS_DEST_INSTR) return;
+    q_put(0, midi, on ? (vel < 1 ? 100 : vel > 127 ? 127 : vel) : 0, on);
+    if (on && waiting()) { arm_go = 1; rec_arm = 1; }
+}
 /* received USB-MIDI packet (devupd/du_fw.c du_rx_poll, before the stock parser, every channel): input M<ch> takes
  * notes and CCs on its channel; inputs I / S take CCs on the OP-1's MIDI channel (what stock receives) */
 void ms_midi_rx(const volatile uint8_t *pk)

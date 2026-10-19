@@ -49,7 +49,7 @@ int main(int argc, char **argv)
     }
     /* fixed chords on C4 (60) and their names */
     CHECK(notes_are(&c, 60, "60 64 67") && name_is(&c, 60, "C"), "C major");
-    c.type = CT_MIN7; CHECK(notes_are(&c, 62, "62 65 69 72") && name_is(&c, 62, "Dm7"), "Dm7");
+    c.type = CT_MIN7; CHECK(notes_are(&c, 62, "62 65 69 72") && name_is(&c, 62, "Dmin7"), "Dmin7");
     c.type = CT_7;    CHECK(notes_are(&c, 67, "67 71 74 77") && name_is(&c, 67, "G7"), "G7");
     c.type = CT_DIM;  CHECK(name_is(&c, 71, "Bdim"), "Bdim");
     c.type = CT_ADD9; CHECK(notes_are(&c, 60, "60 64 67 74") && name_is(&c, 60, "Cadd9"), "Cadd9");
@@ -66,13 +66,13 @@ int main(int argc, char **argv)
     c.bass = 0;
     /* scale mode: C major, every key gives the chord of its degree */
     c.mode = CH_SCALE; c.type = SK_TRIAD; c.root = 0; c.scale = SC_MAJOR;
-    static const char *const cmaj[7] = { "C", "Dm", "Em", "F", "G", "Am", "Bdim" };
+    static const char *const cmaj[7] = { "C", "Dmin", "Emin", "F", "G", "Amin", "Bdim" };
     static const int white[7] = { 60, 62, 64, 65, 67, 69, 71 };
     for (int d = 0; d < 7; d++) CHECK(name_is(&c, white[d], cmaj[d]), "C major degree %d", d + 1);
     CHECK(notes_are(&c, 69, "69 72 76"), "Am notes");
     CHECK(name_is(&c, 61, "C"), "C# outside C major snaps down to C");
     c.type = SK_7TH;
-    static const char *const cmaj7[7] = { "Cmaj7", "Dm7", "Em7", "Fmaj7", "G7", "Am7", "Bm7b5" };
+    static const char *const cmaj7[7] = { "Cmaj7", "Dmin7", "Emin7", "Fmaj7", "G7", "Amin7", "Bmin7b5" };
     for (int d = 0; d < 7; d++) CHECK(name_is(&c, white[d], cmaj7[d]), "C major 7th degree %d", d + 1);
     c.type = SK_TRIAD; c.root = 9; c.scale = SC_MINOR;                    /* A minor: same chords as C major */
     for (int d = 0; d < 7; d++) CHECK(name_is(&c, white[d], cmaj[d]), "A minor = C major degree %d", d + 1);
