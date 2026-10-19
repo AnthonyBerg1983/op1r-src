@@ -148,7 +148,8 @@ const op1_engine_t ENGINE_granular = { gr_note_on, gr_render, 0, { 0, 0, OP1_PRE
 /* ======================= screen (GUI thread) =======================
  * granular.svg: the sample window frame (x 20..300, y 20..90). Drawn here each frame: the recorded waveform (peak
  * table), position marker + spray range + grain size, live grains; below, as sampler+ T1: a bar per knob (y 110),
- * its label (y 114) and value (y 127) in the stock font. Red page 2: label / value "gain". */
+ * its label (y 114) and value (y 127) in the stock font, "file" above the white bar (y 94: white press = the sample
+ * browser, as sampler+ T1). Red page 2: label / value "gain". */
 #include "op1_synth.h"                    /* stock-font text (firmware calls, no imports) */
 #define WX0 20
 #define WX1 300
@@ -163,8 +164,8 @@ static const uint8_t COL_SIZE[4] = { 0x00, 0xED, 0x95, 0xFF };   /* green = grai
 static const uint8_t COL_SPRAY[4]= { 0xFF, 0xFF, 0xFF, 0xFF };   /* white = spray range */
 static const uint8_t COL_GRAIN[4]= { 0xFF, 0x3A, 0x5D, 0xFF };   /* red   = grains, density */
 static const uint8_t *const COL4[4] = { COL_POS, COL_SIZE, COL_SPRAY, COL_GRAIN };
-static uint32_t gt_lab[4][OP1_TEXT_SIZE / 4], gt_val[4][OP1_TEXT_SIZE / 4];
-static char gt_shown[8][12];
+static uint32_t gt_lab[4][OP1_TEXT_SIZE / 4], gt_val[4][OP1_TEXT_SIZE / 4], gt_file[OP1_TEXT_SIZE / 4];
+static char gt_shown[9][12];
 static int gt_made;
 
 static void gr_screen_init(void *scr) { (void)scr; }
@@ -221,7 +222,8 @@ static void gr_screen_update(void *scr, int dt)
             op1_text_ctor(gt_lab[i], Q(8 + 78 * i), 114, TS, COL4[i]);
             op1_text_ctor(gt_val[i], Q(8 + 78 * i), 127, TS, COL_SPRAY);
         }
-        for (int i = 0; i < 8; i++) gt_shown[i][0] = 0;
+        op1_text_ctor(gt_file, Q(8 + 78 * 2), 94, TS, COL_SPRAY);    /* white press: the browser (as sampler+) */
+        for (int i = 0; i < 9; i++) gt_shown[i][0] = 0;
         gt_made = 1;
     }
     op1_screen_draw(scr, dt);                                          /* SVG first, then overlays */
@@ -250,6 +252,7 @@ static void gr_screen_update(void *scr, int dt)
         gt_text(r, gt_lab[i], gt_shown[i], lab[i == 3 && pg ? 4 : i]);
         gt_text(r, gt_val[i], gt_shown[4 + i], v[i]);
     }
+    gt_text(r, gt_file, gt_shown[8], "file");
 
     if (len < 256) {                                                   /* nothing recorded: flat line */
         hline(r, Q(WX0), Q(WX1), Q(WYC), COL_WAVE, 0x300);

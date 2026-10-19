@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     host_knobs[0][4] = OP1_ENGINE_MAGIC + 1;
 #ifndef FX
     {   /* synthetic recorded sample for sampler-based engines (granular): 3 s of decaying tones */
-        static int16_t data[8 + 3 * 44100];
+        static int16_t data[8 + 3 * 44100 + 256];   /* + a peak bucket: engines read up to the bucket end, as on the device */
         static uint8_t sb[sizeof(void *) + 2 * OP1_PEAK_BUCKETS];
         int16_t *d = data + 8, *pk = (int16_t *)(sb + sizeof(void *));
         for (int i = 0; i < 3 * 44100; i++) {
