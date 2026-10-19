@@ -5,6 +5,7 @@
  *   white knob: balloon inflates (0 = 25% size, full = 100% size)
  *   red knob  : fidget spinner speed (0 = still, full = fast spin)
  *
+ * Geometry: the SVG scaled by 0.9009 around (160, 6.4) to stay above y 140 (pivots and slide below follow it).
  * Colors: blue (#4D9EFF), green (#00ED95), white (#FFFFFF), red (#FF3A5D), yellow (#FFD700)
  * Copyright (C) 2026 nick (nvmsocool). GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "op1_synth.h"
@@ -63,16 +64,16 @@ static void horn_update(void *scr, int dt)
     /* Blue knob: mute rotation (0 = closed, full = 90 deg open) */
     if (mute1_node) {
         int32_t a = -(int32_t)(32767 - k[0]) * 1820 >> 15;  /* 0..-1820 = 0..-80 deg */
-        op1_node_rotate(mute1_node, OP1_Q10(102.8), OP1_Q10(33.9), tsin(a), tcos(a));
+        op1_node_rotate(mute1_node, OP1_Q10(108.47), OP1_Q10(31.18), tsin(a), tcos(a));
     }
     if (mute2_node) {
         int32_t a = -(int32_t)(32767 - k[0]) * 1820 >> 15;
-        op1_node_rotate(mute2_node, OP1_Q10(36.5), OP1_Q10(69.7), tsin(a), tcos(a));
+        op1_node_rotate(mute2_node, OP1_Q10(48.74), OP1_Q10(63.43), tsin(a), tcos(a));
     }
 
     /* Green knob: trombone slide extension (0 = closed, full = extended) */
     if (green_move_node) {
-        int32_t ext = (int32_t)k[1] * 60 >> 15;  /* 0..60 px */
+        int32_t ext = (int32_t)k[1] * 54 >> 15;  /* 0..54 px */
         int32_t m[9];
         trans_mat(m, OP1_Q10(ext), OP1_Q10(0));
         op1_node_set_transform(green_move_node, m);
@@ -86,7 +87,7 @@ static void horn_update(void *scr, int dt)
             s += shake;
         }
         int32_t m[9];
-        scale_mat(m, OP1_Q10(83), OP1_Q10(126), s);
+        scale_mat(m, OP1_Q10(90.63), OP1_Q10(114.15), s);
         op1_node_set_transform(balloon_node, m);
     }
 
@@ -94,20 +95,20 @@ static void horn_update(void *scr, int dt)
     if (spinner_node && k[3] > 0) {
         spinner_ph += (uint32_t)k[3] * dt >> 9;
         int32_t angle = spinner_ph & 8191;
-        op1_node_rotate(spinner_node, OP1_Q10(208.1), OP1_Q10(104.8), tsin(angle), tcos(angle));
+        op1_node_rotate(spinner_node, OP1_Q10(203.33), OP1_Q10(95.05), tsin(angle), tcos(angle));
     }
 
     op1_screen_draw(scr, dt);                       /* the SVG first: raster lines drawn before it are lost */
 
     /* Green knob: draw stretch lines with moving right endpoints */
     {
-        int32_t ext = (int32_t)k[1] * 61440 >> 15;  /* Q10: 0..60 */
+        int32_t ext = (int32_t)k[1] * 55357 >> 15;  /* Q10: 0..54.06 (as the slide) */
         void *r = op1_raster();
-        static const int16_t y4[] = { 14, 47, 20, 41 };
+        static const int32_t y4[] = { OP1_Q10(13.25), OP1_Q10(42.98), OP1_Q10(18.65), OP1_Q10(37.57) };
         for (int i = 0; i < 4; i++) {
-            int32_t x0 = OP1_Q10(184.6);
-            int32_t x1 = OP1_Q10(206.7) + ext;
-            int32_t y = OP1_Q10(y4[i]);
+            int32_t x0 = OP1_Q10(182.16);
+            int32_t x1 = OP1_Q10(202.07) + ext;
+            int32_t y = y4[i];
             op1_pt a = { x0, y }, b = { x1, y };
             op1_raster_line(r, &a, &b, OP1_Q10(2), C_GREEN);
         }
