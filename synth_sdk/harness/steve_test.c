@@ -101,6 +101,8 @@ static void t_stereo_mix(void)                              /* A left, B right; 
     static int16_t src[SR], l[SR], r[SR], silent[SR];
     for (int i = 0; i < SR; i++) src[i] = (int16_t)(i % 100 < 50 ? 8000 : -8000);
     st_init(&s, mem, 8 * SR);
+    feed(&s, &q, src, 1024, l, r);                          /* no loop yet, mix 100 %: the input passes */
+    CHECK(!memcmp(l, src, 2048) && !memcmp(r, src, 2048), "no loop: input muted");
     st_capture(&s, 4410, 1000);
     feed(&s, &q, src, 1024, l, r);
     CHECK(s.state == ST_CAPTURE && s.wp == 24, "beat delay: state %d wp %d", s.state, s.wp);

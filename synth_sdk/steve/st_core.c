@@ -125,11 +125,11 @@ void st_render(st_t *s, const st_par *q, const int16_t *in_l, const int16_t *in_
         }
         s->wet += s->wet < want_wet ? RAMP : s->wet > want_wet ? -RAMP : 0;
         if (s->wet < 0) s->wet = 0; else if (s->wet > 32767) s->wet = 32767;
-        int32_t w = (mix * s->wet) >> 15;                     /* mix 0: the input untouched */
-        if (out_r) {
-            out_l[t] = sat16(xl - ((xl * mix) >> 15) + ((wl * w) >> 15));
-            out_r[t] = sat16(xr - ((xr * mix) >> 15) + ((wr * w) >> 15));
-        } else out_l[t] = sat16(x - ((x * mix) >> 15) + ((wl * w) >> 15));
+        int32_t w = (mix * s->wet) >> 15;                     /* the dry gives way only as the loop fades in: no loop */
+        if (out_r) {                                          /* (or mix 0) = the input untouched */
+            out_l[t] = sat16(xl - ((xl * w) >> 15) + ((wl * w) >> 15));
+            out_r[t] = sat16(xr - ((xr * w) >> 15) + ((wr * w) >> 15));
+        } else out_l[t] = sat16(x - ((x * w) >> 15) + ((wl * w) >> 15));
     }
     if (playing && s->steps)                                   /* landed in this block: exactly on the unit */
         for (int k = 1; k < copies; k++)

@@ -71,6 +71,7 @@ static void st_control(int pos, const int16_t *p)           /* the white press: 
     int32_t delay = 0;
     if (sync) { op1_beat_t b; op1_beat_clock(&b); delay = b.len > 0 ? b.next >> 14 : 0; }
     st_capture(&st[pos], len, delay);
+    op1_dbg("steve capture: pos, len", pos, len);
 }
 
 static void sv_init(int pos)
