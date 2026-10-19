@@ -35,6 +35,7 @@ typedef struct {
     int32_t  next;      /* samples until next grain spawn */
     int32_t  len;       /* usable recording length (samples) */
     uint32_t rng;
+    volatile uint32_t blocks;   /* render calls: the screen shows a voice's grains only while it renders */
 } gvoice_t;
 
 static gvoice_t gv[OP1_VOICES];
@@ -95,6 +96,7 @@ static void gr_render(void *self, int16_t *out, const int16_t *params)
     gvoice_t *v = &gv[op1_voice_index(self)];
     const uint8_t *sb = op1_sample_buffer(op1_current_slot());
     const int16_t *sine = OP1_SINE_TABLE;
+    v->blocks++;
 
     if (!sb || v->len < 256) {                        /* nothing recorded yet */
         if (sb) v->len = recorded_length(sb);
@@ -273,8 +275,14 @@ static void gr_screen_update(void *scr, int dt)
     hline(r, xpos(pos, len), xpos(pos + size > len ? len : pos + size, len), Q(WYC - WH - 3), COL_SIZE, 0x300);
     vline(r, xpos(pos, len), Q(WYC - WH - 1), Q(WYC + WH + 1), COL_POS);
 
-    /* live grains of all voices: height = current window amplitude */
-    for (int vi = 0; vi < OP1_VOICES; vi++)
+    /* live grains of the voices rendering since the last frame (a finished voice is not rendered any more and keeps
+     * its last grains): height = current window amplitude */
+    static uint32_t seen[OP1_VOICES];
+    for (int vi = 0; vi < OP1_VOICES; vi++) {
+        uint32_t b = gv[vi].blocks;
+        int live = b != seen[vi];
+        seen[vi] = b;
+        if (!live) continue;
         for (int i = 0; i < MAX_GRAINS; i++) {
             const grain_t *g = &gv[vi].g[i];
             if (!g->winc) continue;
@@ -282,6 +290,7 @@ static void gr_screen_update(void *scr, int dt)
             int32_t h = 2 + ((w * (WH - 4)) >> 15);
             vline(r, xpos((int32_t)(g->pos >> FRAC), len), Q(WYC - h), Q(WYC + h), COL_GRAIN);
         }
+    }
 }
 
 const op1_screen_t SCREEN_granular = { gr_screen_init, gr_screen_update };
