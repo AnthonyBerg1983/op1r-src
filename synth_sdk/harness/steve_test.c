@@ -17,7 +17,7 @@ static const int32_t PCT = 42949673;                       /* 1 % in Q32 */
 
 static void feed(st_t *s, const st_par *q, const int16_t *src, int n, int16_t *l, int16_t *r)   /* n samples */
 {
-    for (int t = 0; t < n; t += B) st_render(s, q, src + t, l + t, r ? r + t : 0, n - t < B ? n - t : B);
+    for (int t = 0; t < n; t += B) st_render(s, q, src + t, 0, l + t, r ? r + t : 0, n - t < B ? n - t : B);
 }
 static void capture(st_t *s, const st_par *q, const int16_t *src, int len)  /* capture src[0 .. len + XF] */
 {
@@ -62,7 +62,7 @@ static void t_steps(void)                                   /* lock on units, ho
     uint32_t last = st_offset(&s, 1);
     for (int b = 0; b < 40 * SR / B && ns < 64; b++) {
         int held_before = s.held[1];
-        st_render(&s, &q, zeros, out, 0, B);
+        st_render(&s, &q, zeros, 0, out, 0, B);
         uint32_t o = st_offset(&s, 1);
         if (held_before >= 0 && s.held[1] >= 0 && o != last) moved_in_hold++;
         if (s.held[1] == 0 && held_before < 0) {            /* landed */
@@ -120,6 +120,10 @@ static void t_stereo_mix(void)                              /* A left, B right; 
     q.mix = 0;
     feed(&s, &q, src, SR / 4, l, r);
     CHECK(!memcmp(l, src, SR / 4 * 2) && !memcmp(r, src, SR / 4 * 2), "mix 0 is not dry");
+    static int16_t other[SR / 4];
+    for (int i = 0; i < SR / 4; i++) other[i] = (int16_t)(-src[i] / 2);
+    st_render(&s, &q, src, other, l, r, B);                 /* stereo input: the dry stays stereo */
+    CHECK(!memcmp(l, src, B * 2) && !memcmp(r, other, B * 2), "stereo dry mixed");
     printf("ok stereo / mix / beat\n");
 }
 

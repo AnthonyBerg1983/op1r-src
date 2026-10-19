@@ -32,14 +32,16 @@ typedef struct {
     uint32_t loops;                   /* A's wraps since unison */
     int32_t  wet;                     /* wet gain ramp Q15 (fades around a capture) */
     int32_t  steps;                   /* steps mode was on in the last block (entering it sets the targets) */
+    uint32_t takes;                   /* captures finished (the screen redraws the waveform when it changes) */
 } st_t;
 
 void st_init(st_t *s, int16_t *buf, int32_t cap);
 /* capture `len` samples (capped to the buffer) starting `delay` samples into the next blocks (beat sync; 0: now) */
 void st_capture(st_t *s, int32_t len, int32_t delay);
 void st_unison(st_t *s);                         /* every copy back on A */
-/* n samples (<= 256): in = mono input (dry), out_l / out_r (out_r 0: mono out into out_l); in may alias out_l */
-void st_render(st_t *s, const st_par *q, const int16_t *in, int16_t *out_l, int16_t *out_r, int n);
+/* n samples: in_l / in_r the input (in_r 0: mono), out_l / out_r (out_r 0: mono out into out_l); in and out may be
+ * the same buffers. Stereo: the dry stays stereo, the capture takes the mono sum, the copies are panned. */
+void st_render(st_t *s, const st_par *q, const int16_t *in_l, const int16_t *in_r, int16_t *out_l, int16_t *out_r, int n);
 uint32_t st_offset(const st_t *s, int k);        /* copy k's position minus A's, samples 0 .. len-1 */
 
 #endif

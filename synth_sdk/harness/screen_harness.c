@@ -107,9 +107,10 @@ int main(int argc, char **argv)
     static int32_t scratch[2][44115];
     for (int p = 0; p < 2; p++) host_fx_scratch[p] = scratch[p];
     for (int i = 0; i < 5; i++) host_fx_knobs[0][i] = host_knobs[0][i];
-    if (argc > 8) for (int i = 0; i < 4; i++) op1_fx_page[0][i] = (atoi(argv[8]) >> i) & 1;   /* page 2 / latch */
     for (int i = 0; i < 3; i++) if (argc > 9 + i) host_fx_knobs[0][5 + i] = (int16_t)atoi(argv[9 + i]);
     FX.init(0);
+    if (argc > 8) for (int i = 0; i < 4; i++) op1_fx_page[0][i] = (atoi(argv[8]) >> i) & 1;   /* page 2 / latch: pressed after
+                                                                                              the FX was created */
     SCREEN.init(0);
     int16_t buf[OP1_FX_BLOCK]; uint32_t ph = 0, t = 0;
     for (int f = 0; f < frames; f++) {

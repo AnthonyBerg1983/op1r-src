@@ -55,7 +55,7 @@ static int32_t step_rate(st_t *s, const st_par *q, int k, int n)
     return (int32_t)(((int64_t)r << 32) / n);
 }
 
-void st_render(st_t *s, const st_par *q, const int16_t *in, int16_t *out_l, int16_t *out_r, int n)
+void st_render(st_t *s, const st_par *q, const int16_t *in_l, const int16_t *in_r, int16_t *out_l, int16_t *out_r, int n)
 {
     int copies = q->copies < 2 ? 2 : q->copies > ST_COPIES ? ST_COPIES : q->copies;
     int32_t g = gain_n[copies], mix = q->mix < 0 ? 0 : q->mix > 32767 ? 32767 : q->mix;
@@ -87,12 +87,12 @@ void st_render(st_t *s, const st_par *q, const int16_t *in, int16_t *out_l, int1
         }
     }
     for (int t = 0; t < n; t++) {
-        int32_t x = in[t];
+        int32_t xl = in_l[t], xr = in_r ? in_r[t] : xl, x = in_r ? (xl + xr) >> 1 : xl;
         if (s->state == ST_ARMED && s->wet == 0 && s->wait-- <= 0) { s->state = ST_CAPTURE; s->wp = 0; }
         if (s->state == ST_CAPTURE) {
             s->buf[s->wp++] = (int16_t)x;
             if (s->wp == s->want + XFS) {
-                s->len = s->want; s->state = ST_PLAY;
+                s->len = s->want; s->state = ST_PLAY; s->takes++;
                 s->p[0].i = s->p[0].f = 0;
                 st_unison(s);
                 playing = 0;                                  /* rates of the new loop: next block */
@@ -125,11 +125,11 @@ void st_render(st_t *s, const st_par *q, const int16_t *in, int16_t *out_l, int1
         }
         s->wet += s->wet < want_wet ? RAMP : s->wet > want_wet ? -RAMP : 0;
         if (s->wet < 0) s->wet = 0; else if (s->wet > 32767) s->wet = 32767;
-        int32_t w = (mix * s->wet) >> 15, dry = x - ((x * mix) >> 15);   /* mix 0: the input untouched */
+        int32_t w = (mix * s->wet) >> 15;                     /* mix 0: the input untouched */
         if (out_r) {
-            out_l[t] = sat16(dry + ((wl * w) >> 15));
-            out_r[t] = sat16(dry + ((wr * w) >> 15));
-        } else out_l[t] = sat16(dry + ((wl * w) >> 15));
+            out_l[t] = sat16(xl - ((xl * mix) >> 15) + ((wl * w) >> 15));
+            out_r[t] = sat16(xr - ((xr * mix) >> 15) + ((wr * w) >> 15));
+        } else out_l[t] = sat16(x - ((x * mix) >> 15) + ((wl * w) >> 15));
     }
     if (playing && s->steps)                                   /* landed in this block: exactly on the unit */
         for (int k = 1; k < copies; k++)

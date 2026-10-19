@@ -1,0 +1,11 @@
+{
+  "name": "steve",
+  "author": "pcppcp",
+  "kind": "fx",
+  "symbol": "FX_steve",
+  "sources": ["steve.c", "../../steve/st_core.c"],
+  "stereo": true,
+  "defaults": [16384, 21000, 0, 32767],
+  "page2_defaults": [0, 8192, 0],
+  "screen": { "svg": "steve.svg", "symbol": "SCREEN_steve" }
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="320px" height="160px" viewBox="0 0 320 160">
+<!-- steve: the disc (copies drawn as spokes by steve.c) and the waveform strip's frame -->
+<circle fill="none" stroke="#6F7173" stroke-width="1" cx="52" cy="54" r="38"/>
+<circle fill="none" stroke="#6F7173" stroke-width="1" cx="52" cy="54" r="20"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="104" y1="20" x2="308" y2="20"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="104" y1="60" x2="308" y2="60"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="104" y1="17" x2="104" y2="23"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="308" y1="17" x2="308" y2="23"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="104" y1="57" x2="104" y2="63"/>
+<line fill="none" stroke="#6F7173" stroke-width="1" x1="308" y1="57" x2="308" y2="63"/>
+</svg>
