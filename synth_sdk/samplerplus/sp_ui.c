@@ -1,6 +1,6 @@
 /* sampler+ pages (docs/46, mock-up: display/samplerplus_preview.py): T1 play (screen 6, replaces the stock sampler
- * page), T2 envelope and filter (screen 0x16, replaces the ADSR page), the sample browser (T1 white press: the stock
- * sampler presets). Drawn in code on two screen objects of the iter class (empty SVG), swapped into the screen table
+ * page), T2 envelope and filter (screen 0x16, replaces the ADSR page), the sample browser (T1 white press: the core's,
+ * screens/sbrowse.c). Drawn in code on two screen objects of the iter class (empty SVG), swapped into the screen table
  * while the current synth slot is sampler+ (spu_sync, from the core's se_swap). The region / loop points are edited in
  * the sample editor (synth + scissors), shown read-only here. */
 #include "../op1_synth.h"
@@ -19,8 +19,6 @@
 #define PATCH_OBJ(s)    ((void *)(0x01DDD7E8 + (s) * 0x38))
 #define PATCH_SET_KNOBS ((void (*)(void *, const int16_t *))0x01A00D14)   /* knob words -> JSON, patch changed */
 #define QUEUE_TYPE_JOB  ((void (*)(int, int))0x01940FD0)                /* (selection, slot): synth type job */
-#define PRESETS         0x01DDDB68                                        /* preset table, 0x38 each (JSON at +4) */
-#define PRESET_N        (*(const volatile int32_t *)0x018B6114)
 #define JV_CGET   ((const void *(*)(const void *, const char *))0x019BEB70)
 
 extern sp_extra sp_x[8];
@@ -35,7 +33,7 @@ static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00
                      c_white[4] = { 0xFF, 0xFF, 0xFF, 0xFF }, c_grey[4] = { 0x6F, 0x71, 0x73, 0xFF },
                      c_red[4] = { 0xFF, 0x3A, 0x5D, 0xFF }, c_lilac[4] = { 0xDF, 0xD9, 0xFF, 0xFF },
                      c_pale[4] = { 0xAE, 0xB1, 0xDC, 0xFF }, c_dark[4] = { 0x3A, 0x22, 0x28, 0xFF },
-                     c_dim[4] = { 0x3A, 0x3B, 0x3D, 0xFF }, c_sel[4] = { 0x00, 0x59, 0x3A, 0xFF };
+                     c_dim[4] = { 0x3A, 0x3B, 0x3D, 0xFF };
 static const uint8_t *const col4[4] = { c_blue, c_green, c_white, c_red };
 static void ln(void *r, int x0, int y0, int x1, int y1, int w, const uint8_t *c)
 {
@@ -60,29 +58,12 @@ static void changed(int slot, int extras)
     PATCH_SET_KNOBS(PATCH_OBJ(slot), op1_synth_knobs(slot));   /* marks the patch changed (JSON saved) */
 }
 
-/* ---- browser: the sampler presets (factory + user), as the stock browser's "sampler" children ---- */
-#define BR_MAX 96
-static uint8_t br_open;
-static int16_t br_idx[BR_MAX], br_n, br_sel;
-static uint8_t jv_type(const void *v) { return ((const uint8_t *)v)[8]; }
-static const char *jv_str(const void *json, const char *key)
+/* ---- browser: the core's (screens/sbrowse.c, sb_*: the sampler presets) ---- */
+#define br_open sb_is_open(SB_SAMPLERPLUS)
+static const char *jv_str(const void *json, const char *key)       /* a string member, else 0 */
 {
     const void *v = JV_CGET(json, key);
-    return v && jv_type(v) == 4 ? *(const char *const *)v : 0;
-}
-static int str_eq(const char *a, const char *b) { if (!a) return 0; while (*a && *a == *b) a++, b++; return *a == *b; }
-static void br_scan(void)
-{
-    br_n = 0;
-    int n = PRESET_N;
-    for (int i = 0; i < n && br_n < BR_MAX; i++)
-        if (str_eq(jv_str((const uint8_t *)(PRESETS + i * 0x38) + 4, "type"), "sampler")) br_idx[br_n++] = (int16_t)i;
-    if (br_sel >= br_n) br_sel = 0;
-}
-static const char *br_name(int k)
-{
-    const char *s = k >= 0 && k < br_n ? jv_str((const uint8_t *)(PRESETS + br_idx[k] * 0x38) + 4, "name") : 0;
-    return s ? s : "?";
+    return v && ((const uint8_t *)v)[8] == 4 ? *(const char *const *)v : 0;
 }
 
 /* ---- screens ---- */
@@ -101,7 +82,7 @@ void spu_sync(int editor_open_on_6)
     if (!ready) return;
     if (!editor_open_on_6) SCREEN_TABLE[6] = spu_screen_for(6);
     SCREEN_TABLE[0x16] = spu_screen_for(0x16);
-    if (!slot_plus()) br_open = 0;
+    if (!slot_plus() && br_open) sb_close();
 }
 static int page(void)
 {
@@ -117,11 +98,7 @@ int spu_knob(int knob, int delta)
     int pg = page();
     if (pg < 0 || knob < 0 || knob > 3) return 0;
     if (br_open) {                                                   /* browser: white scrolls */
-        if (knob == 2) {
-            acc[2] += delta;
-            int st = acc[2] / 1024; acc[2] -= st * 1024;
-            br_sel = (int16_t)(br_sel + st < 0 ? 0 : br_sel + st >= br_n ? br_n - 1 : br_sel + st);
-        }
+        if (knob == 2) sb_turn(delta);
         return 1;
     }
     int shift = SHIFT_HELD, f = turn_field[pg][shift ? 1 : 0][knob], slot = SLOT_CUR;
@@ -147,24 +124,23 @@ int spu_knob(int knob, int delta)
 int spu_key(int code, int pressed)
 {
     int pg = page();
-    if (pg < 0) { br_open = 0; return 0; }
-    if (code == 0x06 && pressed && br_open) { br_open = 0; return 1; }   /* T1 closes the browser */
+    if (pg < 0) { if (br_open) sb_close(); return 0; }
+    if (code == 0x06 && pressed && br_open) { sb_close(); return 1; }   /* T1 closes the browser */
     if (code < 0x3B || code > 0x3E) return 0;
     if (!pressed) return 1;
     int k = code - 0x3B, slot = SLOT_CUR;
     sp_extra *x = &sp_x[slot];
     if (br_open) {
-        if (k == 2 && br_n) {                                         /* white press: load (the stock job, sampler+ kept) */
-            sp_keep_next[slot] = 1;
-            QUEUE_TYPE_JOB(-br_idx[br_sel], slot);
-            br_open = 0;
-        } else if (k == 3) br_open = 0;
+        if (k == 2) {                                                 /* white press: load (the stock job, sampler+ kept) */
+            int id = sb_pick();
+            if (id <= 0) { sp_keep_next[slot] = 1; QUEUE_TYPE_JOB(id, slot); }
+        } else if (k == 3) sb_close();
         return 1;
     }
     if (pg == T1) {
         if (k == 0) sp_extra_set(x, 14, !x->loop_mode);
         else if (k == 1) sp_extra_set(x, 15, !x->loop_rel);
-        else if (k == 2) { br_scan(); br_open = 1; return 1; }
+        else if (k == 2) { sb_open(SB_SAMPLERPLUS); return 1; }
         else {                                                        /* reverse: knob word 4 bit 14 */
             int16_t *w = (int16_t *)op1_synth_knobs(slot);
             w[4] = (int16_t)(w[4] >= 0x4000 ? 12000 : 20000);
@@ -182,8 +158,7 @@ int spu_key(int code, int pressed)
 }
 
 /* ---- text ---- */
-enum { TX_TITLE, TX_SHIFT, TX_LAB, TX_VAL = TX_LAB + 4, TX_PRS = TX_VAL + 4, TX_ROW = TX_PRS + 4,
-       TX_N = TX_ROW + 5 };
+enum { TX_TITLE, TX_SHIFT, TX_LAB, TX_VAL = TX_LAB + 4, TX_PRS = TX_VAL + 4, TX_N = TX_PRS + 4 };
 static uint32_t tx[TX_N][OP1_TEXT_SIZE / 4];
 static char shown[TX_N][14];
 static const int32_t ident[9] = { 1024, 0, 0, 0, 1024, 0, 0, 0, 1024 };
@@ -198,7 +173,6 @@ static void tx_init(void)
         op1_text_ctor(tx[TX_VAL + k], Q(8 + 78 * k), 127, TS, c_white);
         op1_text_ctor(tx[TX_PRS + k], Q(8 + 78 * k), 94, TS, col4[k]);   /* press states: row above the bars */
     }
-    for (int i = 0; i < 5; i++) op1_text_ctor(tx[TX_ROW + i], Q(22), 20 + 15 * i, TS, c_green);
     tx_made = 1;
 }
 static void txt(void *r, int i, const char *s)
@@ -350,31 +324,14 @@ static void draw_t2(void *r, int slot)
         }
     }
 }
-static void draw_browser(void *r)
-{
-    int first = br_sel - 2; if (first > br_n - 5) first = br_n - 5; if (first < 0) first = 0;
-    for (int i = 0; i < 5 && first + i < br_n; i++) {
-        if (first + i == br_sel) ln(r, Q(18), Q(26 + 15 * i), Q(168), Q(26 + 15 * i), 0x3400, c_sel);   /* 13 px bar */
-        txt(r, TX_ROW + i, br_name(first + i));
-    }
-    if (br_n > 5) {                                                   /* scroll bar */
-        int y0 = 20 + 72 * first / br_n, y1 = 20 + 72 * (first + 5) / br_n;
-        ln(r, Q(180), Q(20), Q(180), Q(92), 0x400, c_grey);
-        ln(r, Q(180), Q(y0), Q(180), Q(y1), 0x800, c_green);
-    }
-    char v[16];
-    put(num(put(num(v, br_n ? br_sel + 1 : 0, 0), "/"), br_n, 0), "");
-    txt(r, TX_LAB + 2, "sample"); txt(r, TX_VAL + 2, v); txt(r, TX_PRS + 2, "load"); txt(r, TX_PRS + 3, "back");
-}
-
 static void update(void *s, int dt)
 {
     op1_screen_draw(s, dt);
     tx_init();
     void *r = op1_raster();
     int pg = s == (void *)scr[1] ? T2 : T1, slot = SLOT_CUR, shift = SHIFT_HELD;
+    if (pg == T1 && br_open) { sb_page(); return; }                 /* the core's browser page */
     for (int k = 0; k < 4; k++) ln(r, Q(8 + 78 * k), Q(110), Q(78 + 78 * k), Q(110), 0x800, col4[k]);
-    if (pg == T1 && br_open) { txt(r, TX_TITLE, "samples"); draw_browser(r); return; }
     const char *name = jv_str((const uint8_t *)PATCH_OBJ(slot) + 4, "name");
     txt(r, TX_TITLE, name && name[0] ? name : "sampler");
     if (shift) txt(r, TX_SHIFT, "shift");

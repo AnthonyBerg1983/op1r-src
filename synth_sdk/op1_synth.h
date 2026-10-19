@@ -36,6 +36,11 @@ static inline int op1_db_write(void *db2_handle, const char *sql)
 /* audio-thread cycle counters for the resource monitor (screens/sysmon.c): custom synth engines, sampler voices,
  * drum voices, synth envelopes, custom FX; incremented around the hooked calls */
 enum { SMC_SYNTH, SMC_SAMPLER, SMC_DRUM, SMC_ENV, SMC_FX, SMC_N };
+/* the sample browser (screens/sbrowse.c, exported to plugins): owner = who opened it (engine number 1..63, or
+ * SB_SAMPLERPLUS); sb_pick returns the selection's synth type job id (-preset index, <= 0) and closes, 1 = none */
+#define SB_SAMPLERPLUS 0x100
+void sb_open(int owner), sb_close(void), sb_turn(int delta), sb_page(void);
+int sb_is_open(int owner), sb_pick(void);
 extern volatile uint32_t sm_cy[SMC_N];
 #ifndef OP1_HOST
 static inline uint32_t op1_cycles(void) { uint32_t c; __asm__ volatile ("%0 = CYCLES;" : "=d"(c)); return c; }

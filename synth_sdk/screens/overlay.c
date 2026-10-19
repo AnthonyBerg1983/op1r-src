@@ -92,6 +92,7 @@ void op1_overlay(const op1_tool_t *t)
 }
 void tool_service(void)                                         /* main loop: services, then the overlay */
 {
+    { extern void sb_service(void); sb_service(); }              /* sample browser: page after an engine load */
     for (int i = 0; i < op1_tool_count; i++) if (op1_tools[i]->service) op1_tools[i]->service();
     if (!ov_obj) return;
     uintptr_t *obj = page_obj();

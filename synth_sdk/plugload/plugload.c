@@ -116,6 +116,9 @@ static const struct { const char *name; void *addr; } exports[] = {
     { "dpu_sync_auto", (void *)dpu_sync_auto },
     /* chord mode (docs/50): a consumed key for the MIDI recorder input I */
     { "op1_key_played", (void *)op1_key_played },
+    /* the sample browser (screens/sbrowse.c): sampler+ T1 */
+    { "sb_open", (void *)sb_open }, { "sb_close", (void *)sb_close }, { "sb_is_open", (void *)sb_is_open },
+    { "sb_turn", (void *)sb_turn }, { "sb_pick", (void *)sb_pick }, { "sb_page", (void *)sb_page },
     /* sampler engine (docs/46) */
     { "sp_adsr_stock", (void *)sp_adsr_stock },
     /* tools */
