@@ -101,26 +101,21 @@ const op1_fx_t FX_steve = { sv_init, sv_render, { OP1_PRESS_PAGE, OP1_PRESS_PAGE
                             sv_render_stereo };
 
 /* ======================= screen (GUI thread) =======================
- * steve.svg: the disc's rings and the waveform strip's frame. Drawn here: the copies as spokes on the disc (one spoke
- * per unit, each set turning with its copy: in unison they cover each other, drifting they fan into a moire, in steps
- * mode they lock onto each other), the offset arc between A and B, the loop's waveform with a playhead per copy, the
- * capture filling the disc; texts in the stock font (bottom row as granular / sampler+). */
+ * steve.svg is empty. Drawn here: one rabbit per copy, each on its lane, hopping from left to right at its copy's
+ * playhead (3 frames, the hop follows the distance run: a faster copy hops ahead); unit ticks on the ground in steps
+ * mode; while capturing A runs along in red. Texts in the stock font: state, offset, loops; bottom row as granular. */
 #ifndef OP1_HOST
 #pragma GCC optimize ("Os")
 #endif
 #include "op1_synth.h"
 #define Q(v)  ((v) << 10)
 #define TS    12
-#define CX    52
-#define CY    54
-#define R_IN  20
-#define R_OUT 38
-#define R_ARC 42
-#define WX0   104
-#define WX1   308
-#define WYC   40
-#define WH    16
-#define NCOL  68                                            /* waveform columns, 3 px each */
+#define X0      10                                           /* rabbits: left end of the run, px */
+#define X1      290                                          /* right end (the rabbit's nose ends at X1 + RW) */
+#define RW      22                                           /* rabbit width */
+#define HOP     7                                            /* px run per animation frame */
+#define LANE_Y0 36                                           /* ground of lane 0 (A); lanes 16 px apart */
+#define LANE_DY 17
 
 static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00, 0xED, 0x95, 0xFF },
                      c_white[4] = { 0xFF, 0xFF, 0xFF, 0xFF }, c_red[4] = { 0xFF, 0x3A, 0x5D, 0xFF },
@@ -131,9 +126,7 @@ static const uint8_t *const copy_col[ST_COPIES] = { c_blue, c_white, c_green, c_
 enum { TX_LAB, TX_VAL = 4, TX_PRS = 8, TX_OFS = 10, TX_LOOPS, TX_STATE, TX_N };
 static uint32_t tx[TX_N][OP1_TEXT_SIZE / 4];
 static char shown[TX_N][14];
-static uint8_t tx_made, peak[NCOL];
-static uint32_t peak_take = ~0u;
-static int16_t peak_pos = -1;
+static uint8_t tx_made;
 
 static void ln(void *r, int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t w, const uint8_t *c)
 {
@@ -173,12 +166,19 @@ static void len_text(char *s, int32_t v, int32_t cap)
         if (ms < 1000) put(num(s, ms, 0), "ms"); else put(num(s, ms / 10, 2), "s");
     }
 }
-/* a point on the disc: angle a (8192 a turn, 0 = up, clockwise), radius r px -> Q10 */
-static inline int32_t dx(int32_t a, int32_t r) { return Q(CX) + (Q(r) * OP1_SINE_TABLE[a & 8191] >> 15); }
-static inline int32_t dy(int32_t a, int32_t r) { return Q(CY) - (Q(r) * OP1_SINE_TABLE[(a + 2048) & 8191] >> 15); }
-static int32_t angle(const st_t *s, int k)                  /* copy k's playhead, 8192 a turn */
+/* the rabbit, facing right, 3 frames (crouch, leap, land): polylines in px relative to its tail on the ground,
+ * y up negative; -128 ends a polyline, -127 the frame */
+static const int8_t rabbit_pts[3][64] = {
+    { 2, 0, 0, -3, 3, -7, 7, -9, 11, -8, 13, -7, -128, 13, -7, 14, -10, 17, -11, 19, -9, 18, -7, 15, -6, -128, 14, -10, 13, -16, -128, 16, -11, 17, -16, -128, 15, -6, 15, 0, 17, 0, -128, 2, 0, 12, 0, -128, 0, -3, -2, -4, -1, -6, -128, -127 },   /* crouch: sitting */
+    { 0, -6, 4, -10, 10, -12, 15, -11, -128, 15, -11, 17, -14, 20, -14, 21, -12, 19, -10, 16, -10, -128, 17, -14, 12, -18, -128, 18, -14, 14, -19, -128, 16, -10, 21, -6, -128, 1, -6, -4, -2, -128, 1, -6, 15, -10, -128, 0, -6, -2, -7, -1, -9, -128, -127 },   /* leap: stretched, off the ground */
+    { 1, -8, 5, -11, 10, -10, 14, -6, -128, 14, -6, 16, -9, 19, -9, 20, -7, 18, -5, 15, -4, -128, 16, -9, 15, -15, -128, 17, -9, 19, -15, -128, 15, -4, 16, 0, 18, 0, -128, 2, -7, 0, -4, -128, 2, -7, 14, -4, -128, 1, -8, -1, -9, 0, -11, -128, -127 },   /* land: front paws down */ };
+static void rabbit(void *r, int32_t x, int32_t y, int f, const uint8_t *c)
 {
-    return s->len > 0 ? (int32_t)(((uint64_t)s->p[k].i << 13) / (uint32_t)s->len) : 0;
+    const int8_t *p = rabbit_pts[f];
+    while (*p != -127) {
+        while (p[2] != -128) { ln(r, x + p[0] * 1024, y + p[1] * 1024, x + p[2] * 1024, y + p[3] * 1024, 0x600, c); p += 2; }
+        p += 3;
+    }
 }
 
 static void sv_screen_init(void *scr) { (void)scr; }
@@ -199,9 +199,9 @@ static void sv_screen_update(void *scr, int dt)
         }
         op1_text_ctor(tx[TX_PRS], Q(8 + 78 * 2), 94, TS, c_white);
         op1_text_ctor(tx[TX_PRS + 1], Q(8 + 78 * 3), 94, TS, c_red);
-        op1_text_ctor(tx[TX_OFS], Q(WX0), 70, TS, c_red);
-        op1_text_ctor(tx[TX_LOOPS], Q(WX0 + 70), 70, TS, c_grey);
-        op1_text_ctor(tx[TX_STATE], Q(WX0), 6, TS, c_grey);
+        op1_text_ctor(tx[TX_STATE], Q(X0), 4, TS, c_grey);
+        op1_text_ctor(tx[TX_OFS], Q(200), 4, TS, c_red);
+        op1_text_ctor(tx[TX_LOOPS], Q(262), 4, TS, c_grey);
         tx_made = 1;
     }
     op1_screen_draw(scr, dt);
@@ -210,66 +210,26 @@ static void sv_screen_update(void *scr, int dt)
     for (int i = 0; i < 3; i++) page[i] = op1_fx_page[pos][i] != 0;
     int32_t cap = s->cap - ST_XF - 2;
 
-    /* the disc: one set of spokes per copy */
-    int nsp = steps ? q.div : 12;
-    if (s->state == ST_PLAY || (s->len && s->state != ST_CAPTURE)) {
-        for (int c = copies - 1; c >= 0; c--) {             /* A last: on top */
-            int32_t a0 = angle(s, c);
-            for (int i = 0; i < nsp; i++) {
-                int32_t a = a0 + i * 8192 / nsp;
-                int32_t r0 = i ? R_IN + 6 : R_IN - 6;           /* the spoke at the playhead reaches further in */
-                ln(r, dx(a, r0), dy(a, r0), dx(a, R_OUT), dy(a, R_OUT), i ? 0x500 : 0x800, copy_col[c]);
+    /* the rabbits: one per copy, hopping left to right along its lane at the copy's playhead */
+    for (int c = 0; c < copies; c++) {
+        int32_t gy = LANE_Y0 + LANE_DY * c;
+        ln(r, Q(X0), Q(gy + 1), Q(X1 + RW), Q(gy + 1), 0x300, c_dim);         /* the ground */
+        if (steps && s->len)                                                   /* the units */
+            for (int i = 0; i <= q.div; i++) {
+                int32_t x = Q(X0 + RW / 2) + Q(X1 - X0) * i / q.div;
+                ln(r, x, Q(gy + 1), x, Q(gy + 4), 0x300, c_grey);
             }
-        }
-        int32_t a = angle(s, 0), o = (int32_t)((uint64_t)st_offset(s, 1) * 8192 / (uint32_t)s->len);
-        int segs = 1 + o * 24 / 8192;                       /* the offset arc, A -> B, up to 24 segments */
-        for (int i = 0; i < segs && o > 16; i++) {
-            int32_t b0 = a + o * i / segs, b1 = a + o * (i + 1) / segs;
-            ln(r, dx(b0, R_ARC), dy(b0, R_ARC), dx(b1, R_ARC), dy(b1, R_ARC), 0x600, c_red);
-        }
-    } else if (s->state == ST_CAPTURE) {                    /* capture: the ring fills, red */
-        int32_t f = (int32_t)((int64_t)s->wp * 8192 / (s->want + ST_XF + 1));
-        int segs = 1 + f * 32 / 8192;
-        for (int i = 0; i < segs; i++) {
-            int32_t b0 = f * i / segs, b1 = f * (i + 1) / segs;
-            ln(r, dx(b0, R_ARC), dy(b0, R_ARC), dx(b1, R_ARC), dy(b1, R_ARC), 0x600, c_red);
-            ln(r, dx(b1, R_IN), dy(b1, R_IN), dx(b1, R_OUT), dy(b1, R_OUT), 0x300, c_red);
-        }
-    } else {                                                /* empty / armed: the idle spokes, grey */
-        for (int i = 0; i < nsp; i++) {
-            int32_t a = i * 8192 / nsp;
-            ln(r, dx(a, R_IN + 6), dy(a, R_IN + 6), dx(a, R_OUT), dy(a, R_OUT), 0x400, s->state == ST_ARMED ? c_red : c_dim);
-        }
+        int32_t x, f = 0;
+        const uint8_t *col = copy_col[c];
+        if (s->state == ST_PLAY) {
+            x = Q(X0) + (int32_t)((int64_t)Q(X1 - X0) * s->p[c].i / s->len);
+            f = (x >> 10) / HOP % 3;                                           /* the hop follows the distance run */
+        } else if (s->state == ST_CAPTURE && c == 0) {                         /* capturing: A runs along, red */
+            x = Q(X0) + (int32_t)((int64_t)Q(X1 - X0) * s->wp / (s->want + ST_XF + 1));
+            f = (x >> 10) / HOP % 3; col = c_red;
+        } else { x = Q(X0); col = s->state == ST_ARMED ? c_red : c_grey; }    /* sitting at the start */
+        rabbit(r, x, Q(gy), f, col);
     }
-
-    /* the waveform strip: the loop and a playhead per copy */
-    if (s->len && (s->takes != peak_take || peak_pos != pos)) {   /* new loop: its peaks, once */
-        peak_take = s->takes; peak_pos = (int16_t)pos;
-        for (int c = 0; c < NCOL; c++) {
-            int32_t a = s->len * c / NCOL, b = s->len * (c + 1) / NCOL, m = 0;
-            for (int32_t i = a; i < b; i += 16) { int32_t v = s->buf[i] < 0 ? -s->buf[i] : s->buf[i]; if (v > m) m = v; }
-            peak[c] = (uint8_t)(m * WH >> 15);
-        }
-    }
-    if (s->len && s->state != ST_CAPTURE) {
-        for (int c = 0; c < NCOL; c++) {
-            int32_t h = peak[c] ? peak[c] : 1, x = Q(WX0 + 3 * c + 1);
-            ln(r, x, Q(WYC - h), x, Q(WYC + h), 0x300, c_grey);
-        }
-        if (steps)                                          /* the unit grid */
-            for (int i = 1; i < q.div; i++) {
-                int32_t x = Q(WX0) + Q(WX1 - WX0) * i / q.div;
-                ln(r, x, Q(WYC + WH + 2), x, Q(WYC + WH + 5), 0x300, c_white);
-            }
-        for (int c = copies - 1; c >= 0; c--) {
-            int32_t x = Q(WX0) + (int32_t)((int64_t)Q(WX1 - WX0) * s->p[c].i / s->len);
-            ln(r, x, Q(WYC - WH - 3), x, Q(WYC + WH + 3), c ? 0x400 : 0x600, copy_col[c]);
-        }
-    } else if (s->state == ST_CAPTURE) {                    /* the capture so far, live */
-        int32_t x = Q(WX0) + (int32_t)((int64_t)Q(WX1 - WX0) * s->wp / (s->want + ST_XF + 1));
-        ln(r, Q(WX0), Q(WYC), x, Q(WYC), 0x300, c_red);
-        ln(r, x, Q(WYC - WH), x, Q(WYC + WH), 0x600, c_red);
-    } else ln(r, Q(WX0), Q(WYC), Q(WX1), Q(WYC), 0x300, c_dim);
 
     /* offset and loops */
     char v[16];
