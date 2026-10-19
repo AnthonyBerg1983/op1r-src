@@ -100,6 +100,11 @@ typedef struct { uint32_t alloc; union { char buf[16]; char *ptr; } u; uint32_t 
 #define TOTAL_CAP  (1024u * 1024)                              /* all loaded plugins together */
 
 void plug_apply_synth(int *patch);
+/* debug print (op1_plugin.h): empty; op1emu logs each call by its address (OP1EMU_DBG = _op1_dbg in build/synth.sym) */
+__attribute__((noinline, used)) void op1_dbg(const char *text, int a, int b)
+{
+    __asm__ volatile ("" : : "r"(text), "r"(a), "r"(b) : "memory");
+}
 extern int se_is_open(void);                                    /* screens/sampedit.c */
 static const struct { const char *name; void *addr; } exports[] = {
     { "op1_eng_page", (void *)op1_eng_page }, { "op1_fx_page", (void *)op1_fx_page },
@@ -115,7 +120,7 @@ static const struct { const char *name; void *addr; } exports[] = {
     /* drum engine (docs/43) */
     { "dpu_sync_auto", (void *)dpu_sync_auto },
     /* chord mode (docs/50): a consumed key for the MIDI recorder input I */
-    { "op1_key_played", (void *)op1_key_played },
+    { "op1_key_played", (void *)op1_key_played }, { "op1_dbg", (void *)op1_dbg },
     /* the sample browser (screens/sbrowse.c): sampler+ T1 */
     { "sb_open", (void *)sb_open }, { "sb_close", (void *)sb_close }, { "sb_is_open", (void *)sb_is_open },
     { "sb_turn", (void *)sb_turn }, { "sb_pick", (void *)sb_pick }, { "sb_page", (void *)sb_page },

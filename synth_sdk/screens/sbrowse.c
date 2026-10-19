@@ -83,7 +83,7 @@ int sb_key(int n, int code, int pressed)
     int k = code - 0x3B;
     if (!sb_open_n) {
         if (op1_engines[n]->press[k] != OP1_PRESS_BROWSE) return 0;
-        if (pressed) sb_open(n);
+        if (pressed) { sb_open(n); op1_dbg("sb open: engine, presets", n, br_n); }
         return 1;
     }
     if (!pressed) return 1;
@@ -164,6 +164,7 @@ int sb_job(void *job, void (*type_job)(void *))
     int slot = *(int32_t *)((uint8_t *)job + 4), sel = *(int32_t *)((uint8_t *)job + 8);
     if ((unsigned)slot >= 8 || !sb_keep[slot]) return 0;
     sb_keep[slot] = 0;
+    op1_dbg("sb_job: slot, selection", slot, sel);
     if (sel > 0) return 0;
     uint8_t *patch = (uint8_t *)SYNTH_PATCHES + slot * 0x38;
     uint32_t saved[4];

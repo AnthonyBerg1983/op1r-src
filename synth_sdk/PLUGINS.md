@@ -60,6 +60,9 @@ Include only `op1_plugin.h`.
 **Helpers**: `OP1_SINE_TABLE` (8192 x int16), `op1_sat16`, `op1_mul16` (Q15). Second knob pages and latching
 presses: the `press` field (see the comments in `op1_plugin.h`).
 
+**Debugging**: `op1_dbg("text", a, b)` writes `dbg: text a b` to the op1emu log (`tools/emu_ctl.py dbg`), stderr in
+host builds, and does nothing on the OP-1 (an empty call: fine in any thread, but not per sample).
+
 ## Rules (the code runs in the audio interrupt)
 
 A crash, a very long block or an endless loop locks the OP-1 until it is switched off.

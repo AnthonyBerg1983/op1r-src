@@ -274,6 +274,14 @@ void op1_overlay(const op1_tool_t *t);                /* any thread */
  * op1_inst_fade(1) starts the fade out and returns 1 until the bus is silent (a few ms: call it again on the next
  * passes), then 0; op1_inst_fade(0) fades back in. */
 int op1_inst_fade(int out);
+/* debug print: in op1emu (OP1EMU_DBG, set by tools/emu_ctl.py) the text and both values go to the emulator log as
+ * "dbg: text a b"; on the OP-1 an empty call. Any thread; not per sample. Host builds: stderr. */
+#ifndef OP1_HOST
+void op1_dbg(const char *text, int a, int b);
+#else
+#include <stdio.h>
+static inline void op1_dbg(const char *text, int a, int b) { fprintf(stderr, "dbg: %s %d %d\n", text, a, b); }
+#endif
 #ifndef OP1_HOST
 #define op1_find_node(scr, id) (((void *(*)(void *, const char *))0x01A3B580)((scr), (id)))
 #define op1_node_set_transform(node, m9) (((void (*)(void *, const int32_t *))0x019EAD58)((node), (m9)))
