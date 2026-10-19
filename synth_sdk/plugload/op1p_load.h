@@ -5,7 +5,7 @@
 #include "op1p.h"
 
 #define OP1P_API          1                /* = OP1_PLUGIN_API (op1_plugin.h) */
-#define OP1P_MAX_IMAGE    (512u * 1024)    /* per plugin, code + data and bss each */
+#define OP1P_MAX_IMAGE    (2048u * 1024)   /* per plugin, code + data and bss each (heap 0 has ~9 MB free, docs/02) */
 #define OP1P_MAX_IMPORTS  32
 
 enum { OP1P_E_SIZE = 1, OP1P_E_MAGIC, OP1P_E_CRC, OP1P_E_VERSION, OP1P_E_HEADER, OP1P_E_RELOC, OP1P_E_IMPORT };

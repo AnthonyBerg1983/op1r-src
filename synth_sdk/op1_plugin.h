@@ -146,6 +146,9 @@ typedef struct {
     void (*init)(int pos);                                         /* FX (re)created at pos      */
     void (*render)(int pos, int16_t *buf, const int16_t *params);   /* 64 samples, in place       */
     uint8_t press[4];        /* encoder press per knob (blue..red): OP1_PRESS_NONE / _PAGE / _LATCH */
+    /* optional, plugin.json "stereo": true: the master position (pos 2) calls this instead of render with the mix's
+     * own left / right (64 samples each, in place); synth / drum FX still get render (their bus is mono) */
+    void (*render_stereo)(int pos, int16_t *l, int16_t *r, const int16_t *params);
 } op1_fx_t;
 /* Encoder presses on a custom FX page (dispatcher.c hooks the KeyHandler dispatch):
  *  OP1_PRESS_PAGE : press toggles the knob between its normal parameter (params[k]) and a second

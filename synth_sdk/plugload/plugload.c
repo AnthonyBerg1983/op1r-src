@@ -21,6 +21,7 @@ const char         *op1_sample_engine_names[OP1_SLOTS + 1];
 const op1_screen_t *op1_engine_screens[OP1_SLOTS];
 const char         *op1_engine_svgs[OP1_SLOTS];
 const op1_fx_t     *op1_fxs[OP1_SLOTS];
+uint8_t            op1_fx_stereo[OP1_SLOTS];   /* the FX has render_stereo (file flag OP1P_F_STEREO, or built in) */
 int                 op1_fx_count;
 const char         *op1_fx_names[OP1_SLOTS + 1];
 const op1_screen_t *op1_fx_screens[OP1_SLOTS];
@@ -58,6 +59,7 @@ static void tables_init(void)
     for (int i = 0; op1_builtin_sample_engine_names[i]; i++) op1_sample_engine_names[i] = op1_builtin_sample_engine_names[i];
     for (int i = 0; i < nf; i++) {
         op1_fxs[i] = op1_builtin_fxs[i];
+        op1_fx_stereo[i] = op1_fxs[i] && op1_fxs[i]->render_stereo;
         op1_fx_screens[i] = op1_builtin_fx_screens[i];
         op1_fx_svgs[i] = op1_builtin_fx_svgs[i];
         op1_fx_names[i] = op1_builtin_fx_names[i];
@@ -97,7 +99,7 @@ typedef struct { uint32_t alloc; union { char buf[16]; char *ptr; } u; uint32_t 
 #define DIR_PATH   "/yaffs2/plugins"
 #define MARKER     "/yaffs2/plugins/.boot"
 #define MAX_FILES  32
-#define TOTAL_CAP  (1024u * 1024)                              /* all loaded plugins together */
+#define TOTAL_CAP  (4096u * 1024)                              /* all loaded plugins together (heap 0: ~9 MB free, docs/02) */
 
 void plug_apply_synth(int *patch);
 /* debug print (op1_plugin.h): empty; op1emu logs each call by its address (OP1EMU_DBG = _op1_dbg in build/synth.sym) */
@@ -455,6 +457,7 @@ static int load_one(void *db, const char *file)
             if (v.hdr->flags & OP1P_F_USES_SAMPLE) reg_list(op1_sample_engine_names, name);
         } else {
             op1_fxs[n] = (const op1_fx_t *)(mem + v.hdr->entry_off);
+            op1_fx_stereo[n] = (v.hdr->flags & OP1P_F_STEREO) != 0;     /* older files: the struct ends at press */
             reg_name(op1_fx_names, n, &op1_fx_count, name);
             op1_fx_screens[n] = scr; op1_fx_svgs[n] = svg;
         }

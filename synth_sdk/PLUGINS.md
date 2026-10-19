@@ -56,6 +56,12 @@ Include only `op1_plugin.h`.
 - Knobs: convert with `op1_fx_param_q15(params, i)` (raw words -> 0..32767).
 - Memory: `op1_fx_scratch(pos)`, 176 KB per position (shared with the stock FX: it starts with foreign data, clear
   or track what you use).
+- More memory: static arrays (bss) are allocated from the firmware heap when the plugin loads: up to 2 MB per
+  plugin, 4 MB for all plugins together (about 9 MB of the heap is free, docs/02). Taken as long as the plugin is
+  installed, used or not.
+- Stereo on the master: set `render_stereo(pos, l[64], r[64], params)` in `op1_fx_t` and `"stereo": true` in
+  plugin.json; the master position then gets the mix's own left / right instead of the mono sum. Synth / drum FX
+  still get `render` (their bus is mono).
 
 **Helpers**: `OP1_SINE_TABLE` (8192 x int16), `op1_sat16`, `op1_mul16` (Q15). Second knob pages and latching
 presses: the `press` field (see the comments in `op1_plugin.h`).
