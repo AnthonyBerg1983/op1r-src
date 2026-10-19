@@ -4,7 +4,7 @@
  *   green: sweep: how far the envelope pushes the interpolation up from the start (0%..100% of the whole range)
  *   white: vibrato depth
  *   red  : vibrato frequency (the orange knob)
- * Copyright (C) <year> <you>. GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
+ * Copyright (C) 2026 nick (nvmsocool). GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "op1_plugin.h"
 #include "warp_table.h"
 
@@ -91,6 +91,7 @@ static void brass_render(void *self, int16_t *out, const int16_t *params)
 
     uint32_t ph = v->ph; int32_t lp = v->lp;
     uint32_t vibrato_phase = v->vibrato_phase;
+    int32_t vg = op1_voice_vel_gain(self);             /* note velocity */
 
     /* ---- per-block control values ---- */
 
@@ -182,8 +183,9 @@ static void brass_render(void *self, int16_t *out, const int16_t *params)
         /* One-pole low-pass filter. */
         lp += ((sample - lp) * 16384) >> 15;
 
-        /* Saturate and output (firmware applies the gain envelope). */
-        out[n] = op1_sat16(lp);
+        /* Velocity, half scale as the other engines (six voices on the synth bus); the firmware applies the
+         * gain envelope. */
+        out[n] = op1_sat16((lp * vg) >> 16);
     }
     v->ph = ph; v->lp = lp;
     v->interp_start = interp_start;

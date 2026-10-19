@@ -5,7 +5,8 @@
  *   white knob: balloon inflates (0 = 25% size, full = 100% size)
  *   red knob  : fidget spinner speed (0 = still, full = fast spin)
  *
- * Colors: blue (#4D9EFF), green (#00ED95), white (#FFFFFF), red (#FF3A5D), yellow (#FFD700) */
+ * Colors: blue (#4D9EFF), green (#00ED95), white (#FFFFFF), red (#FF3A5D), yellow (#FFD700)
+ * Copyright (C) 2026 nick (nvmsocool). GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "op1_synth.h"
 
 //static const uint8_t C_BLUE[4]  = { 0x4D, 0x9E, 0xFF, 0xFF };
@@ -76,20 +77,6 @@ static void horn_update(void *scr, int dt)
         trans_mat(m, OP1_Q10(ext), OP1_Q10(0));
         op1_node_set_transform(green_move_node, m);
     }
-    /* Green knob: draw stretch lines with moving right endpoints */
-    {
-        int32_t ext = (int32_t)k[1] * 61440 >> 15;  /* Q10: 0..60 */
-        void *r = op1_raster();
-        static const int16_t y4[] = { 14, 47, 20, 41 };
-        for (int i = 0; i < 4; i++) {
-            int32_t x0 = OP1_Q10(184.6);
-            int32_t x1 = OP1_Q10(206.7) + ext;
-            int32_t y = OP1_Q10(y4[i]);
-            op1_pt a = { x0, y }, b = { x1, y };
-            op1_raster_line(r, &a, &b, OP1_Q10(2), C_GREEN);
-        }
-    }
-
     /* White knob: balloon scale (0 = 25%, full = 100%) + vibrato shake */
     if (balloon_node) {
         int32_t s = 8192 + ((int32_t)k[2] * 24575 >> 15);  /* Q10: 256..1024 */
@@ -110,7 +97,21 @@ static void horn_update(void *scr, int dt)
         op1_node_rotate(spinner_node, OP1_Q10(208.1), OP1_Q10(104.8), tsin(angle), tcos(angle));
     }
 
-    op1_screen_draw(scr, dt);
+    op1_screen_draw(scr, dt);                       /* the SVG first: raster lines drawn before it are lost */
+
+    /* Green knob: draw stretch lines with moving right endpoints */
+    {
+        int32_t ext = (int32_t)k[1] * 61440 >> 15;  /* Q10: 0..60 */
+        void *r = op1_raster();
+        static const int16_t y4[] = { 14, 47, 20, 41 };
+        for (int i = 0; i < 4; i++) {
+            int32_t x0 = OP1_Q10(184.6);
+            int32_t x1 = OP1_Q10(206.7) + ext;
+            int32_t y = OP1_Q10(y4[i]);
+            op1_pt a = { x0, y }, b = { x1, y };
+            op1_raster_line(r, &a, &b, OP1_Q10(2), C_GREEN);
+        }
+    }
 }
 
 const op1_screen_t SCREEN_horn = { horn_init, horn_update };
