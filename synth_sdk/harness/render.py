@@ -21,7 +21,9 @@ STATES_BY_NAME = {
     'granular': [('defaults, note', None, 1, 8, -1),
                  ('red page 2: sample gain 1x (unset)', None, 1, 8, -1, 0b1000, 0, 0, 0),
                  ('red page 2: gain 3x', None, 1, 8, -1, 0b1000, 0, 0, 24576),
-                 ('page 1 again, gain 3x kept', None, 1, 8, -1, 0, 0, 0, 24576)],
+                 ('page 1 again, gain 3x kept', None, 1, 8, -1, 0, 0, 0, 24576),
+                 ('far position, long grains, wide spray, dense', (26000, 30000, 20000, 32767), 1, 8, -1),
+                 ('start, short grains, no spray, sparse', (0, 0, 0, 0), 1, 8, -1)],
 }
 STATES_BY_NAME['aether'] = [                     # HOST_ACCEL: sensor X,Y,Z after the note-on (home = flat)
     ('flat (home), note held', None, 1, 40, -1),

@@ -8,6 +8,7 @@
  *   knob 1 (green) : grain size - ~10 ms .. ~370 ms
  *   knob 2 (white) : spray      - random start jitter around position (0 .. ~1.5 s)
  *   knob 3 (orange): density    - grains per grain-length, 0.5x .. 4x overlap
+ *   white press    : sample browser (core, screens/sbrowse.c): the sampler presets, as sampler+
  *   red press      : page 2 = sample gain (params[7]: 1..32767 = 0..4x linear, 8192 = 1x; 0 = 1x, the
  *                    default of existing patches)
  *   keyboard       : pitch (C4 plays the recording at original speed); random +-detune per grain
@@ -142,47 +143,71 @@ static void gr_render(void *self, int16_t *out, const int16_t *params)
     }
 }
 
-const op1_engine_t ENGINE_granular = { gr_note_on, gr_render, 0, { 0, 0, 0, OP1_PRESS_PAGE } };
+const op1_engine_t ENGINE_granular = { gr_note_on, gr_render, 0, { 0, 0, OP1_PRESS_BROWSE, OP1_PRESS_PAGE } };
 
 /* ======================= screen (GUI thread) =======================
- * display/granular.svg: frame for the sample window (x 20..300, y 20..100) + four dials (bar0..3).
- * Drawn here each frame: recorded waveform (peak table), position marker + spray range, live grains. */
+ * granular.svg: the sample window frame (x 20..300, y 20..90). Drawn here each frame: the recorded waveform (peak
+ * table), position marker + spray range + grain size, live grains; below, as sampler+ T1: a bar per knob (y 110),
+ * its label (y 114) and value (y 127) in the stock font. Red page 2: label / value "gain". */
+#include "op1_synth.h"                    /* stock-font text (firmware calls, no imports) */
 #define WX0 20
 #define WX1 300
-#define WYC 60
-#define WH  38            /* half height in px */
+#define WYC 55
+#define WH  29            /* half height in px */
+#define TS  12
+#define Q(v) ((v) << 10)
 
-static void *bars[4];
 static const uint8_t COL_WAVE[4] = { 0x6F, 0x71, 0x73, 0xFF };
 static const uint8_t COL_POS[4]  = { 0x4D, 0x9E, 0xFF, 0xFF };   /* blue  = position */
-static const uint8_t COL_SIZE[4] = { 0x00, 0xED, 0x95, 0xFF };   /* green = grain size bar */
+static const uint8_t COL_SIZE[4] = { 0x00, 0xED, 0x95, 0xFF };   /* green = grain size */
 static const uint8_t COL_SPRAY[4]= { 0xFF, 0xFF, 0xFF, 0xFF };   /* white = spray range */
-static const uint8_t COL_GRAIN[4]= { 0xFF, 0x3A, 0x5D, 0xFF };   /* orange/red = grains */
-static const int DIAL_X[4] = { 70, 130, 190, 250 };
+static const uint8_t COL_GRAIN[4]= { 0xFF, 0x3A, 0x5D, 0xFF };   /* red   = grains, density */
+static const uint8_t *const COL4[4] = { COL_POS, COL_SIZE, COL_SPRAY, COL_GRAIN };
+static uint32_t gt_lab[4][OP1_TEXT_SIZE / 4], gt_val[4][OP1_TEXT_SIZE / 4];
+static char gt_shown[8][12];
+static int gt_made;
 
-static void gr_screen_init(void *scr)
-{
-    static const char *ids[4] = { "bar0", "bar1", "bar2", "bar3" };
-    for (int i = 0; i < 4; i++) bars[i] = op1_find_node(scr, ids[i]);
-}
+static void gr_screen_init(void *scr) { (void)scr; }
 
 static inline void vline(void *r, int32_t x, int32_t y0, int32_t y1, const uint8_t *c)
 {
     op1_pt a = { x, y0 }, b = { x, y1 };
     op1_raster_line(r, &a, &b, 0x300, c);
 }
-static inline void hline(void *r, int32_t x0, int32_t x1, int32_t y, const uint8_t *c)
+static inline void hline(void *r, int32_t x0, int32_t x1, int32_t y, const uint8_t *c, int32_t w)
 {
     op1_pt a = { x0, y }, b = { x1, y };
-    op1_raster_line(r, &a, &b, 0x300, c);
+    if (x1 > x0) op1_raster_line(r, &a, &b, w, c);
 }
 static inline int32_t xpos(int32_t sample, int32_t len)            /* sample -> Q10 x */
 {
-    if (len <= 0) return OP1_Q10(WX0);
+    if (len <= 0) return Q(WX0);
     if (sample < 0) sample = 0;
     if (sample > len) sample = len;
     while (len > 0xFFFFF) { len >>= 1; sample >>= 1; }             /* keep sample << 11 within 31 bits */
-    return OP1_Q10(WX0) + ((sample << 11) / len) * ((WX1 - WX0) * 1024 / 2048);   /* 32-bit only */
+    return Q(WX0) + ((sample << 11) / len) * ((WX1 - WX0) * 1024 / 2048);   /* 32-bit only */
+}
+static char *gt_num(char *p, int32_t v, int dec)                   /* v in 1/10^dec, e.g. 125, 2 -> "1.25" */
+{
+    char t[12]; int n = 0;
+    do { t[n++] = (char)('0' + v % 10); v /= 10; } while (v || n <= dec);
+    while (n) { *p++ = t[--n]; if (n == dec && dec) *p++ = '.'; }
+    return p;
+}
+static char *gt_cat(char *p, const char *s) { while (*s) *p++ = *s++; return p; }
+static void gt_ms(char *s, int32_t samples)                         /* "120ms", "1.25s" */
+{
+    int32_t ms = (samples * 10 + 220) / 441;
+    char *p = ms < 1000 ? gt_cat(gt_num(s, ms, 0), "ms") : gt_cat(gt_num(s, ms / 10, 2), "s");
+    *p = 0;
+}
+static void gt_text(void *r, uint32_t *t, char *shown, const char *s)
+{
+    static const int32_t ident[9] = { 1024, 0, 0, 0, 1024, 0, 0, 0, 1024 };
+    int same = 1, j = 0;
+    for (; s[j] || shown[j]; j++) if (s[j] != shown[j]) { same = 0; break; }
+    if (!same) { op1_text_set(t, s); for (j = 0; j < 11 && s[j]; j++) shown[j] = s[j]; shown[j] = 0; }
+    op1_text_draw(t, r, ident);
 }
 
 static void gr_screen_update(void *scr, int dt)
@@ -190,63 +215,69 @@ static void gr_screen_update(void *scr, int dt)
     int slot = OP1_SCREEN_SLOT & 7;
     int16_t k[4];
     op1_synth_knobs_live(slot, k);                 /* includes LFO modulation, like the stock screens */
-
-    /* dials: knob 0..32767 -> -135..+135 degrees (firmware sine table: 8192 = one turn) */
-    int pg = op1_eng_page[3];                                          /* red page 2: needle = sample gain */
-    if (pg) k[3] = op1_synth_knobs(slot)[7] > 0 ? op1_synth_knobs(slot)[7] : 8192;
-    for (int i = 0; i < 4; i++) if (bars[i]) {
-        int32_t a = ((int32_t)k[i] * 6144 >> 15) - 3072;              /* -3072..3072 = -135..135 deg */
-        int32_t s = OP1_SINE_TABLE[a & 8191];                         /* table[k] = sin(2*pi*k/8192) */
-        int32_t c = OP1_SINE_TABLE[(a + 2048) & 8191];
-        op1_node_rotate(bars[i], OP1_Q10(DIAL_X[i]), OP1_Q10(133), s, c);
+    int pg = op1_eng_page[3];                      /* red page 2: sample gain */
+    if (!gt_made) {                                /* stock-font texts: built once, after boot (GUI thread) */
+        for (int i = 0; i < 4; i++) {
+            op1_text_ctor(gt_lab[i], Q(8 + 78 * i), 114, TS, COL4[i]);
+            op1_text_ctor(gt_val[i], Q(8 + 78 * i), 127, TS, COL_SPRAY);
+        }
+        for (int i = 0; i < 8; i++) gt_shown[i][0] = 0;
+        gt_made = 1;
     }
     op1_screen_draw(scr, dt);                                          /* SVG first, then overlays */
-
     void *r = op1_raster();
-    if (pg) {                                                          /* page-2 ring around the red dial */
-        op1_pt p = { OP1_Q10(DIAL_X[3]) + OP1_Q10(17), OP1_Q10(133) };
-        for (int a = 512; a <= 8192; a += 512) {
-            op1_pt q = { OP1_Q10(DIAL_X[3]) + (OP1_Q10(17) * OP1_SINE_TABLE[(a + 2048) & 8191] >> 15),
-                         OP1_Q10(133) + (OP1_Q10(17) * OP1_SINE_TABLE[a & 8191] >> 15) };
-            op1_raster_line(r, &p, &q, 0x500, COL_GRAIN);
-            p = q;
-        }
-    }
+
     const uint8_t *sb = op1_sample_buffer(slot);
-    if (!sb) return;
-    const int16_t *pk = op1_sample_peaks(sb);
-    int32_t len = recorded_length(sb);
+    int32_t len = sb ? recorded_length(sb) : 0;
+    int32_t pos = (int32_t)(((uint64_t)(uint16_t)k[0] * (uint32_t)len) >> 15);
+    int32_t size = 441 + (int32_t)(((uint32_t)k[1] * 16000u) >> 15);
+    int32_t spray = (int32_t)(((uint32_t)k[2] * 66150u) >> 15);
+    int32_t ovl8 = 4 + (k[3] >> 10);                                   /* as gr_render */
+
+    /* bottom row: bars, labels, values */
+    for (int i = 0; i < 4; i++) hline(r, Q(8 + 78 * i), Q(78 + 78 * i), Q(110), COL4[i], 0x800);
+    static const char *const lab[5] = { "pos", "size", "spray", "dens", "gain" };
+    char v[4][12];
+    *gt_cat(gt_num(v[0], (pos + 220) / 441, 2), "s") = 0;              /* position always in s: 0.00s .. */
+    gt_ms(v[1], size);
+    gt_ms(v[2], spray);
+    if (!pg) *gt_cat(gt_num(v[3], ovl8 * 10 / 8, 1), "x") = 0;          /* overlap 0.5 .. 4.3x */
+    else {
+        int32_t g = op1_synth_knobs(slot)[7] > 0 ? op1_synth_knobs(slot)[7] : 8192;
+        *gt_cat(gt_num(v[3], g * 10 / 8192, 1), "x") = 0;               /* sample gain 0 .. 4x */
+    }
+    for (int i = 0; i < 4; i++) {
+        gt_text(r, gt_lab[i], gt_shown[i], lab[i == 3 && pg ? 4 : i]);
+        gt_text(r, gt_val[i], gt_shown[4 + i], v[i]);
+    }
+
     if (len < 256) {                                                   /* nothing recorded: flat line */
-        hline(r, OP1_Q10(WX0), OP1_Q10(WX1), OP1_Q10(WYC), COL_WAVE);
+        hline(r, Q(WX0), Q(WX1), Q(WYC), COL_WAVE, 0x300);
         return;
     }
-    /* waveform: one column per 2 px from the 256-sample peak table */
-    int nb = (len + 255) >> 8;
+    const int16_t *pk = op1_sample_peaks(sb);
+    int nb = (len + 255) >> 8;                                         /* waveform: a column per 2 px */
     for (int x = 0; x < WX1 - WX0; x += 2) {
         int b0 = x * nb / (WX1 - WX0), b1 = (x + 2) * nb / (WX1 - WX0);
         int m = 0;
         for (int b = b0; b <= b1 && b < nb; b++) if (pk[b] > m) m = pk[b];
         int32_t h = (m * WH) >> 15; if (h < 1) h = 1;
-        vline(r, OP1_Q10(WX0 + x), OP1_Q10(WYC - h), OP1_Q10(WYC + h), COL_WAVE);
+        vline(r, Q(WX0 + x), Q(WYC - h), Q(WYC + h), COL_WAVE);
     }
-    /* position marker, spray range (white, under the window), grain size (green, from position) */
-    int32_t pos = (int32_t)(((uint64_t)(uint16_t)k[0] * (uint32_t)len) >> 15);
-    int32_t spray = (int32_t)(((uint32_t)k[2] * 66150u) >> 15);
-    int32_t size = 441 + (int32_t)(((uint32_t)k[1] * 16000u) >> 15);
+    /* spray range (white, under the window), grain size (green, above), position marker */
     int32_t s0 = pos - spray < 0 ? 0 : pos - spray, s1 = pos + spray > len ? len : pos + spray;
-    hline(r, xpos(s0, len), xpos(s1, len), OP1_Q10(WYC + WH + 6), COL_SPRAY);
-    hline(r, xpos(pos, len), xpos(pos + size > len ? len : pos + size, len), OP1_Q10(WYC - WH - 6), COL_SIZE);
-    vline(r, xpos(pos, len), OP1_Q10(WYC - WH - 2), OP1_Q10(WYC + WH + 2), COL_POS);
+    hline(r, xpos(s0, len), xpos(s1, len), Q(WYC + WH + 3), COL_SPRAY, 0x300);
+    hline(r, xpos(pos, len), xpos(pos + size > len ? len : pos + size, len), Q(WYC - WH - 3), COL_SIZE, 0x300);
+    vline(r, xpos(pos, len), Q(WYC - WH - 1), Q(WYC + WH + 1), COL_POS);
 
     /* live grains of all voices: height = current window amplitude */
-    for (int v = 0; v < OP1_VOICES; v++)
+    for (int vi = 0; vi < OP1_VOICES; vi++)
         for (int i = 0; i < MAX_GRAINS; i++) {
-            const grain_t *g = &gv[v].g[i];
+            const grain_t *g = &gv[vi].g[i];
             if (!g->winc) continue;
             int32_t w = OP1_SINE_TABLE[(g->wph >> 19) & 8191];           /* sin(pi*t), 0..32767 */
             int32_t h = 2 + ((w * (WH - 4)) >> 15);
-            int32_t x = xpos((int32_t)(g->pos >> FRAC), len);
-            vline(r, x, OP1_Q10(WYC - h), OP1_Q10(WYC + h), COL_GRAIN);
+            vline(r, xpos((int32_t)(g->pos >> FRAC), len), Q(WYC - h), Q(WYC + h), COL_GRAIN);
         }
 }
 

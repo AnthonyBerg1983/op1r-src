@@ -76,7 +76,9 @@ typedef struct {
     void (*render)(void *self, int16_t *out, const int16_t *params);   /* out[128] int16 */
     void (*note_off)(void *self);                                       /* may be 0 */
     uint8_t press[4];   /* encoder press per knob on the engine screen: OP1_PRESS_PAGE toggles page 2, where the
-                         * knob edits preset word OP1_ENG_PAGE_WORD(k) (saved with the patch) instead of params[k] */
+                         * knob edits preset word OP1_ENG_PAGE_WORD(k) (saved with the patch) instead of params[k];
+                         * OP1_PRESS_BROWSE (engines with "uses_sample") opens the core's sample browser: the sampler
+                         * presets as in sampler+, white loads one into the slot's sample buffer, the patch stays */
 } op1_engine_t;
 /* page-2 word per knob: blue 5, green 6, white 7, red 7 (white and red share word 7: page one of them only) */
 #define OP1_ENG_PAGE_WORD(k) ((k) < 3 ? 5 + (k) : 7)
@@ -151,7 +153,7 @@ typedef struct {
  *  OP1_PRESS_LATCH: press toggles a flag (not saved), e.g. freeze
  * State per FX position (0 synth, 1 drum, 2 master): op1_fx_page[pos][k] = 1 while page 2 / latch is on.
  * FX state must be kept per position 0..2 (the master can run the same custom FX as an instrument). */
-enum { OP1_PRESS_NONE = 0, OP1_PRESS_PAGE = 1, OP1_PRESS_LATCH = 2 };
+enum { OP1_PRESS_NONE = 0, OP1_PRESS_PAGE = 1, OP1_PRESS_LATCH = 2, OP1_PRESS_BROWSE = 3 };   /* BROWSE: synth engines */
 extern volatile uint8_t op1_fx_page[3][4];
 
 /* ---- beat clock (read-only; read it once per render block, never per sample) ----

@@ -60,4 +60,9 @@ void *spc_screen_for(int id) { return op1_sampler ? op1_sampler->screen_for(id) 
 void spc_sync(int editor_open_on_6) { if (op1_sampler) op1_sampler->sync(editor_open_on_6); }
 int spc_knob(int knob, int delta) { return op1_sampler ? op1_sampler->knob(knob, delta) : 0; }
 int spc_key(int code, int pressed) { return op1_sampler ? op1_sampler->key(code, pressed) : 0; }
-void sp_type_job(void *job) { if (op1_sampler) op1_sampler->type_job(job); else STOCK_TYPE_JOB(job); }
+int sb_job(void *job, void (*type_job)(void *));                 /* screens/sbrowse.c: engine sample browser load */
+void sp_type_job(void *job)
+{
+    void (*j)(void *) = op1_sampler ? op1_sampler->type_job : STOCK_TYPE_JOB;
+    if (!sb_job(job, j)) j(job);
+}

@@ -500,6 +500,14 @@ static uint8_t  eng_ready[MAX_ENG];
 static void    *iter_screen;
 
 extern const op1_screen_t SCREEN_iterlab;                  /* stock iter: lab screen (screens/iterlab.c) */
+int sb_key(int n, int code, int pressed), sb_knob(int n, int knob, int delta), sb_draw(int n);   /* screens/sbrowse.c */
+static const op1_screen_t *eng_sc[MAX_ENG];
+static void eng_update(void *self, int dt)          /* engine screens: the sample browser over it while open */
+{
+    for (int e = 1; e < MAX_ENG; e++)
+        if (self == (void *)eng_scr[e] && eng_sc[e]) { if (!sb_draw(e)) eng_sc[e]->update(self, dt); return; }
+    if (eng_sc[0]) eng_sc[0]->update(self, dt);
+}
 static void engine_screens_ctor(void)
 {
     for (int e = 0; e < op1_engine_count && e < MAX_ENG; e++) {
@@ -509,7 +517,8 @@ static void engine_screens_ctor(void)
         SCREEN_CTOR(eng_scr[e], ITER_SCREEN_ID, e ? op1_engine_svgs[e] : "iterlab.svg");
         SCREEN_TABLE[ITER_SCREEN_ID] = saved;
         for (int i = 0; i < 10; i++) eng_vt(e)[i] = ITER_SCREEN_VT[i];   /* keeps is_visible */
-        eng_vt(e)[3 * 2 + 1] = (uint32_t)sc->update;                    /* +0x1c update */
+        eng_sc[e] = sc;
+        eng_vt(e)[3 * 2 + 1] = (uint32_t)eng_update;                    /* +0x1c update (sc->update, browser) */
         eng_vt(e)[4 * 2 + 1] = (uint32_t)sc->init;                      /* +0x24 init   */
         eng_scr[e][3] = (uint32_t)eng_vt(e);
     }
@@ -940,6 +949,7 @@ void key_event_hook(int code, int pressed)
             if (q->key(*(volatile int *)0x01DE4C40 == 1, code, pressed, knob, *(volatile uint8_t *)0x01DD7F78)) return;
         }
     }
+    if (sb_key(custom_engine_page(), code, pressed)) return;     /* engine sample browser (screens/sbrowse.c) */
     if (code >= 0x3B && code <= 0x3E && quad_lfo_page()) {      /* quad LFO: press selects LFO 1..4 */
         if (pressed) ql_press(lfo_page_pos(), press_knob[code - 0x3B]);
         return;
@@ -1102,6 +1112,7 @@ void knob_event_hook(int knob, int16_t *delta)
         return;
     }
     int n = custom_engine_page();
+    if (sb_knob(n, knob, *delta)) return;                        /* engine sample browser: white scrolls */
     if (n && knob >= 0 && knob < 4 && op1_eng_page[knob] && op1_engines[n]->press[knob] == OP1_PRESS_PAGE) {
         int16_t *w = (int16_t *)op1_synth_knobs(*(volatile int *)0xFF8016D4 & 7);   /* this slot's words */
         /* shortcut: 0 (unset word of older patches) starts at 8192 = granular's 1x gain; per-engine default if
