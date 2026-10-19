@@ -10,7 +10,7 @@ def main(out=None):
     exe = os.path.join(HERE, 'build', 'grids_render')
     os.makedirs(os.path.dirname(exe), exist_ok=True)
     subprocess.run(['cc', '-O1', '-Wall', '-DOP1_HOST', '-fsanitize=address,undefined', '-I', SDK, os.path.join(HERE, 'grids_render.c'),
-                    os.path.join(SDK, 'grids', 'gr_ui.c'), os.path.join(SDK, 'grids', 'gr_core.c'), '-o', exe], check=True)
+                    os.path.join(SDK, 'grids', 'gr_fw.c'), os.path.join(SDK, 'grids', 'gr_ui.c'), os.path.join(SDK, 'grids', 'gr_core.c'), '-o', exe], check=True)
     frames = [json.loads(l) for l in subprocess.run([exe], check=True, capture_output=True, text=True).stdout.splitlines()]
     cairo = R.cairo; S = 3; W, H, pad, lab = 320 * S, 160 * S, 12, 22
     surf = cairo.ImageSurface(cairo.FORMAT_RGB24, W + 2 * pad, len(frames) * (H + pad + lab) + pad)

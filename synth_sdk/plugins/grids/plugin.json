@@ -1,0 +1,15 @@
+{
+  "name": "grids",
+  "author": "pcppcp",
+  "kind": "seq",
+  "symbol": "SEQ_grids",
+  "sources": [
+    "../../grids/gr_fw.c",
+    "../../grids/gr_ui.c",
+    "../../grids/gr_core.c"
+  ],
+  "screen": {
+    "svg": "gridsseq.svg",
+    "symbol": "SCREEN_grids"
+  }
+}

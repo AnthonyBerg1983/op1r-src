@@ -1,5 +1,6 @@
 /* Preview frames of the grids sequencer page (grids/gr_ui.c) for render_grids.py, one JSON frame per line.
- *   cc -DOP1_HOST -I.. grids_render.c ../grids/gr_ui.c ../grids/gr_core.c -o build/grids_render */
+ * plus a test of the player glue (grids/gr_fw.c): notes on the 96-per-beat ticks, gates, swing, synth keys.
+ *   cc -DOP1_HOST -I.. grids_render.c ../grids/gr_fw.c ../grids/gr_ui.c ../grids/gr_core.c -o build/grids_render */
 #include "../op1_synth.h"
 #include "../grids/gr_ui.h"
 #include <assert.h>
@@ -37,10 +38,48 @@ static void frame(const char *label, int m, int shift)
     printf("]}\n");
 }
 static void play(int m, int steps) { for (int t = 0; t < steps; t++) gr_ui_step(m, t % GR_STEPS); }
+int sq_join(char *out, int n, const int *v, int k) { (void)out; (void)n; (void)v; return k; }
+int sq_split(const char *s, int len, int *v, int k) { (void)s; (void)len; (void)v; return k; }
+void gr_tick(int m); void gr_turn(int m, int knob, int delta, int shift); void gr_press(int m, int knob);
+int gr_key_down(int m, int key); void gr_key_up(int m, int key); void gr_restart(int m);
+static char nlog[2048]; static int now;
+void host_gr_note(int m, int note, int vel, int on)
+{ (void)m; sprintf(nlog + strlen(nlog), "%d%c%d/%d ", now, on ? '+' : '-', note, vel); }
+static void ticks(int m, int n) { for (int i = 0; i < n; i++, now++) gr_tick(m); }
+
+static void glue_test(void)
+{
+    gr_tick(1);                                             /* creates the bank */
+    gr_set *s = &gr_b[1].g.s;
+    s->x = 0; s->y = 0; s->chaos = 0; s->density[0] = 255; s->density[1] = 0; s->density[2] = 0;   /* BD only */
+    gr_restart(1); nlog[0] = 0; now = 0;
+    ticks(1, 13);                                           /* step 0 (BD, level 143: accent? no) at tick 0, off 12 ticks later */
+    if (!strstr(nlog, "0+53/80 12-53/0 ")) { fprintf(stderr, "log: %s\n", nlog); assert(0); }   /* (after the setup tick's note off) */
+    uint32_t hits[3], acc[3]; gr_bar(&gr_b[1].g, hits, acc);
+    int want = 0; for (int t = 0; t < 32; t += 2) want += hits[0] >> t & 1;   /* 1/16: even steps */
+    nlog[0] = 0; now = 0; gr_restart(1); ticks(1, 384);
+    int got = 0; for (char *p = nlog; (p = strchr(p, '+')); p++) got++;
+    assert(got == want);                                    /* one bar: the even steps' hits */
+    gr_b[1].swing = 42; nlog[0] = 0; now = 0; gr_restart(1);
+    gr_b[1].g.s.density[0] = 255; ticks(1, 48);             /* step 2 (the second 16th) 8 ticks late, if it hits */
+    if (hits[0] >> 2 & 1) assert(strstr(nlog, "32+53/"));
+    gr_b[1].swing = 0;
+    /* synth: held keys give the notes, lowest -> BD */
+    gr_tick(0); gr_set *z = &gr_b[0].g.s; z->x = 0; z->y = 0; z->density[0] = 255; z->density[1] = 0; z->density[2] = 0;
+    assert(gr_key_down(0, 7) == 1 && gr_key_down(0, 3) == 1);   /* midi 60, 56: BD plays 56 */
+    nlog[0] = 0; now = 0; gr_restart(0); ticks(0, 2);
+    if (!strstr(nlog, "0+56/")) { fprintf(stderr, "synth log: %s\n", nlog); assert(0); }
+    gr_key_up(0, 3); gr_key_up(0, 7);
+    gr_press(0, 3); assert(!gr_b[0].playing);               /* red press: stop, notes off */
+    nlog[0] = 0; ticks(0, 400); assert(!strchr(nlog, '+'));
+    gr_press(0, 3);
+    gr_ui_init(0); gr_ui_init(1);
+    fprintf(stderr, "grids glue ok\n");
+}
 
 int main(void)
 {
-    gr_ui_init(0); gr_ui_init(1);
+    glue_test();
     play(1, 11); frame("drum mode, defaults (centre of the map, fill 50%), step 10", 1, 0);
     gr_ui_turn(1, 0, -32, 0); gr_ui_turn(1, 1, -32, 0);
     for (int i = 0; i < 3; i++) { gr_ui_turn(1, 2, 12, 0); gr_ui_press(1, 2); }
