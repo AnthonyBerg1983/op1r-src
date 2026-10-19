@@ -279,8 +279,8 @@ int op1_inst_fade(int out);
 #define op1_node_set_visible(node, on) (((volatile uint8_t *)(node))[0x50] = (uint8_t)((on) != 0))
 /* the colour of an SVG node's own line / fill style: RGBA bytes, writable, shown from the next frame (Screen::
  * set_linestyle 0x01A3B854 / set_fillstyle 0x01A3B96C, as stock screens recolour parts). Call once at init (the node
- * id must exist and have that style, else the firmware asserts) and keep the pointer. Give recoloured nodes a colour
- * no other node uses: the parser may share equal styles between nodes. */
+ * id must exist and have that style, else the firmware asserts) and keep the pointer. One style per element (equal
+ * colours are not shared, docs/16): a multi-element shape needs an id and a pointer per element. */
 #define op1_node_line_rgba(scr, id) (((uint8_t *(*)(void *, const char *))0x01A3B854)((scr), (id)))
 #define op1_node_fill_rgba(scr, id) (((uint8_t *(*)(void *, const char *))0x01A3B96C)((scr), (id)))
 #define op1_screen_draw(scr, dt) (((void (*)(void *, int))0x01A3B4C8)((scr), (dt)))   /* render SVG */
