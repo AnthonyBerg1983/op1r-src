@@ -26,11 +26,13 @@ STATES_BY_NAME = {
                  ('start, short grains, no spray, sparse', (0, 0, 0, 0), 1, 8, -1)],
 }
 STATES_BY_NAME['dddd'] = [
-    ('defaults: noise wall, note held', None, 1, 40, -1),
-    ('silent (no note)', None, 0, 10, -1),
-    ('metal, feedback screaming, destroy max', (32767, 32767, 32767, 8000), 1, 40, -1),
-    ('hands at the top: stutter, tears', (16000, 26000, 26000, 32767), 1, 50, -1),
-    ('clean noise, low feedback, still', (0, 6000, 0, 0), 1, 40, -1),
+    ('defaults, note held', None, 1, 40, -1),
+    ('silent: the wasp at rest', (0, 0, 0, 0), 0, 10, -1),
+    ('feedback max: stretched', (6000, 32767, 0, 0), 1, 40, -1),
+    ('destroy max: jagged, coarse', (6000, 12000, 32767, 0), 1, 40, -1),
+    ('source metal: angular, larger wings', (32767, 12000, 0, 0), 1, 40, -1),
+    ('hands max: jumps, torn', (16000, 26000, 26000, 32767), 1, 50, -1),
+    ('everything max', (32767, 32767, 32767, 32767), 1, 50, -1),
     ('page 2 on blue / green / white', (6000, 24000, 20000, 8000), 1, 40, -1, 0b0111, 20000, 16000, 12000),
 ]
 STATES_BY_NAME['aether'] = [                     # HOST_ACCEL: sensor X,Y,Z after the note-on (home = flat)
