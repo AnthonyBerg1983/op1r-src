@@ -29,12 +29,15 @@ typedef struct {
     int32_t  dcx, dcy;                  /* DC blocker */
     int32_t  gain, peak;                /* limiter: gain (Q15), this block's peak */
     int32_t  hands_n, h_cut, h_spread, h_src, gate, gate_n, gate_g;   /* the hands' targets, stutter */
+    uint32_t jumps;                     /* hands jumps so far (the screen tears on a new one) */
 } dd_t;
 
 void dd_init(dd_t *d, uint32_t seed);
 void dd_reset_loop(dd_t *d);                                  /* note-on with nothing held: no stale howl */
 /* the held keys (midi notes, newest last): loop taps and the oscillators' pitch (block rate) */
 void dd_set_notes(dd_t *d, const uint8_t *notes, int n);
+/* the same from the firmware's phase increments (2^32 = a cycle per sample), newest last */
+void dd_set_incs(dd_t *d, const uint32_t *inc, int n);
 void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n);
 uint32_t dd_period(int midi);                                 /* samples per cycle (Q8) */
 #endif

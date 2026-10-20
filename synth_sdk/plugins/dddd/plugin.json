@@ -1,0 +1,9 @@
+{
+  "name": "dddd",
+  "author": "pcppcp",
+  "kind": "synth",
+  "symbol": "ENGINE_dddd",
+  "sources": ["dddd.c", "../../dddd/dd_core.c"],
+  "defaults": [6000, 24000, 20000, 8000],
+  "screen": { "svg": "dddd.svg", "symbol": "SCREEN_dddd" }
+}

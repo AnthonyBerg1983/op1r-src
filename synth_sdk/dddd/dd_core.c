@@ -44,6 +44,19 @@ void dd_set_notes(dd_t *d, const uint8_t *notes, int n)
     d->inc = (uint32_t)(((uint64_t)1 << 40) / (per ? per : 1));
 }
 
+void dd_set_incs(dd_t *d, const uint32_t *inc, int n)
+{
+    if (n <= 0) return;
+    if (n > DD_TAPS) { inc += n - DD_TAPS; n = DD_TAPS; }
+    for (int i = 0; i < n; i++) {
+        uint32_t t = inc[i] ? (uint32_t)(((uint64_t)1 << 32) / inc[i]) : DD_BUF / 2;   /* per key change (block rate) */
+        while (t >= DD_BUF / 2) t >>= 1;
+        d->tap[i] = (int32_t)(t < 2 ? 2 : t);
+    }
+    d->ntaps = n;
+    d->inc = inc[n - 1];
+}
+
 void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n)
 {
     /* ---- per block ---- */
@@ -76,6 +89,7 @@ void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n)
         /* the hands: jump the cutoff, the loop spread and the source mix */
         if (--d->hands_n <= 0) {
             d->hands_n = interval;
+            d->jumps++;
             d->h_cut = (int32_t)(((int32_t)(r >> 16) - 32768) * hands >> 15);   /* +-hands */
             d->h_spread = (int32_t)((xr(d) >> 16) & 0xFFFF) - 32768;
             d->h_src = (int32_t)(((int32_t)((xr(d) >> 17) & 0x7FFF) - 16384) * hands >> 16);
