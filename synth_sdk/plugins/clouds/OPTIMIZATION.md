@@ -41,8 +41,8 @@ words are used before/after. Work is the difference between cumulative runs of
 and early grain buildup are excluded from the measured interval.
 
 These are executed instruction packets, **not physical cycles or sysmon CPU
-percentages**. Cache/SDRAM stalls are absent. This is a controlled provider probe
-using the equivalent kennel mono wrapper, not a comparison of complete firmware.
+percentages**. Cache/SDRAM stalls are absent. This is a controlled probe
+using an equivalent mono wrapper, not a comparison of complete firmware.
 Physical OP-1 acceptance is still needed; no deadline guarantee is claimed.
 
 | Probe case | Upstream packets/render | Patched | Reduction |
@@ -63,12 +63,10 @@ and clamping. Word 4 is the plugin marker and is not a DSP control.
 | C | 20000 | 30000 | 2000 | 30000 | 4000 | 32767 | 0 |
 | D | 8000 | 32767 | 0 | 0 | 32767 | 32767 | 32767 |
 
-The measured DSP/header SHA-256 values (unchanged in this patch):
+## Capture hashes at the time of the change
 
-- `clouds_dsp.c`: `690636c3e57db0f9920eef834ba057c8ef0551827cf0911d5d9bd76a9f772f28`
-- `clouds_dsp.h`: `0094888957ace2763ee6984ac8950aed11d2fb447c57f7da43e6f8c1b52bfabb`
-
-## Accepted capture hashes
+For reference only: they change with any later edit of the clouds DSP. `clouds_exact_verify.py` does not use
+them; it compares the patched tree with the base revision directly.
 
 | Configuration | Scenario | Bytes | SHA-256 |
 |---|---|---:|---|

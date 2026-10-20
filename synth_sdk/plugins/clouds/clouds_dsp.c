@@ -149,22 +149,6 @@ static inline int32_t buf_read(const clouds_t *c, int quality, int32_t i, uint32
 }
 
 /* ---------------- Grain ---------------- */
-static void __attribute__((unused)) grain_start(clouds_grain_t *g, int32_t pre_delay, int32_t bufsize, int32_t start, int32_t width,
-                        int32_t inc, int32_t window_shape, int quality)
-{
-    g->pre_delay = pre_delay;
-    g->width = width;
-    g->first_sample = (start + bufsize) % bufsize;
-    g->phase_increment = inc;
-    g->phase = 0;
-    g->env_phase = 0;
-    g->env_increment = width > 0 ? (uint32_t)(0x80000000u / (uint32_t)width) : 0x80000000u;
-    if (window_shape >= 16384) { g->env_smoothness = (window_shape - 16384) * 2; g->env_slope = 0; }
-    else { g->env_smoothness = 0; g->env_slope = (int32_t)((2048LL * 32768) / (window_shape + 328)); }
-    g->env_slope_limit = g->env_slope ? (int32_t)((32767u << 12) / (uint32_t)g->env_slope) : 32767;   /* once per grain */
-    g->active = 1;
-    g->quality = (uint8_t)quality;
-}
 #define ENV_END INT32_MIN
 static void grain_envelope(clouds_grain_t *g, int32_t *dst, int n)
 {
@@ -268,7 +252,7 @@ static void grain_tpl(const clouds_t *c, const clouds_params_t *p, int32_t windo
     t->width = (int32_t)(gs >> 8) & ~1;
     t->offset = (int32_t)((((available * p->position) >> 15) + eaten_play) >> 8);
     t->inc = (int32_t)ratio;
-    /* Grain::Start's envelope set-up (grain_start) */
+    /* Grain::Start's envelope set-up */
     t->env_increment = t->width > 0 ? (uint32_t)(0x80000000u / (uint32_t)t->width) : 0x80000000u;
     if (window_shape >= 16384) { t->env_smoothness = (window_shape - 16384) * 2; t->env_slope = 0; }
     else { t->env_smoothness = 0; t->env_slope = (int32_t)((2048LL * 32768) / (window_shape + 328)); }
@@ -479,22 +463,18 @@ static void pitch_shifter(clouds_t *c, int32_t *io, int n, uint64_t ratio_q30, i
 }
 
 /* ---------------- Reverb (FxEngine<16384, 12 bit>) ---------------- */
-static const int16_t rv_len[10] = { 113, 162, 241, 399, 1653, 2038, 3411, 1913, 1663, 4782 };
-static int32_t rv_base[10];
-#define RV(i, off) c->rev_buf[(c->rev_wp + rv_base[i] + (off)) & 16383]
-#define RV_TAIL(i) RV(i, rv_len[i] - 1)
 static inline int32_t rv_dec(int16_t v) { return (int32_t)v * 8; }          /* Q12 -> Q15 */
 static inline int16_t rv_enc(int32_t v) { return (int16_t)clip16(v / 8); }       /* truncate like the float cast */
-static inline int32_t rv_interp(clouds_t *c, int i, int32_t off_q16)
-{
-    int32_t k = off_q16 >> 16, f = off_q16 & 65535;
-    int32_t a = rv_dec(RV(i, k)), b = rv_dec(RV(i, k + 1)), d = b - a;
-    return a + (((d * (f >> 8)) + ((d * (f & 255)) >> 8)) >> 8);       /* = (d * f) >> 16 exactly, 32-bit */
-}
-/* The same reverb with its state in registers and the line offsets as constants (rv_base[] for rv_len[]); a
- * buffer word v is v * 8 in Q15 (rv_dec), so mulq15(v * 8, k) = (v * k) >> 12 exactly, one 16 x 16 multiply. */
-enum { RB0 = 0, RB1 = 114, RB2 = 277, RB3 = 519, RB4 = 919, RB5 = 2573, RB6 = 4612, RB7 = 8024, RB8 = 9938, RB9 = 11602,
-       RT0 = 112, RT1 = 275, RT2 = 517, RT3 = 917, RT4 = 2571, RT5 = 4610, RT6 = 8022, RT7 = 9936, RT8 = 11600 };
+/* The reverb with its state in registers and the line offsets as constants: lines of 113, 162, 241, 399, 1653, 2038,
+ * 3411, 1913, 1663, 4782 samples (FxEngine), line k at RBk (each line + 1 after the previous), its tail at
+ * RTk = RBk + length - 1. A buffer word v is v * 8 in Q15 (rv_dec), so mulq15(v * 8, k) = (v * k) >> 12 exactly,
+ * one 16 x 16 multiply. */
+enum { RL0 = 113, RL1 = 162, RL2 = 241, RL3 = 399, RL4 = 1653, RL5 = 2038, RL6 = 3411, RL7 = 1913, RL8 = 1663,
+       RB0 = 0, RB1 = RB0 + RL0 + 1, RB2 = RB1 + RL1 + 1, RB3 = RB2 + RL2 + 1, RB4 = RB3 + RL3 + 1, RB5 = RB4 + RL4 + 1,
+       RB6 = RB5 + RL5 + 1, RB7 = RB6 + RL6 + 1, RB8 = RB7 + RL7 + 1, RB9 = RB8 + RL8 + 1,
+       RT0 = RB0 + RL0 - 1, RT1 = RB1 + RL1 - 1, RT2 = RB2 + RL2 - 1, RT3 = RB3 + RL3 - 1, RT4 = RB4 + RL4 - 1,
+       RT5 = RB5 + RL5 - 1, RT6 = RB6 + RL6 - 1, RT7 = RB7 + RL7 - 1, RT8 = RB8 + RL8 - 1 };
+typedef char rv_layout_ok[RB1 == 114 && RB5 == 2573 && RB9 == 11602 && RT0 == 112 && RT8 == 11600 ? 1 : -1];
 #define RW(o) rb[(wp + (o)) & 16383]
 #define VK(v, k) (((int32_t)(v) * (k)) >> 12)                       /* mulq15(rv_dec(v), k), |k| < 2^15 */
 static inline int32_t rv_interp_at(const int16_t *rb, int32_t wp, int32_t base, int32_t off_q16)
@@ -565,7 +545,6 @@ void clouds_init(clouds_t *c, void *mem, int mode)
     for (int i = 0; i < 2048; i++) c->diff_buf[i] = 0;
     for (int i = 0; i < 16384; i++) c->rev_buf[i] = 0;
     for (int i = 0; i < 4096; i++) c->ps_buf[i] = 0;
-    for (int i = 0, b = 0; i < 10; i++) { rv_base[i] = b; b += rv_len[i] + 1; }
     /* reverb LFOs: stmlib CosineOscillator::InitApproximate(f * 32), f = 0.5 Hz, 0.3 Hz (Q29) */
     for (int k = 0; k < 2; k++) {
         int64_t f = ((int64_t)(k ? 3 : 5) * 32 << 29) / (10LL * CLOUDS_SR);        /* frequency * 32 / SR */
