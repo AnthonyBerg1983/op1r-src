@@ -21,7 +21,8 @@ const char         *op1_sample_engine_names[OP1_SLOTS + 1];
 const op1_screen_t *op1_engine_screens[OP1_SLOTS];
 const char         *op1_engine_svgs[OP1_SLOTS];
 const op1_fx_t     *op1_fxs[OP1_SLOTS];
-uint8_t            op1_fx_stereo[OP1_SLOTS];   /* the FX has render_stereo (file flag OP1P_F_STEREO, or built in) */
+uint8_t            op1_fx_stereo[OP1_SLOTS];
+uint8_t            op1_engine_coarse[OP1_SLOTS];   /* synth: knobs (bit k) turned in 8 steps (file flag) */   /* the FX has render_stereo (file flag OP1P_F_STEREO, or built in) */
 int                 op1_fx_count;
 const char         *op1_fx_names[OP1_SLOTS + 1];
 const op1_screen_t *op1_fx_screens[OP1_SLOTS];
@@ -455,6 +456,7 @@ static int load_one(void *db, const char *file)
             reg_name(op1_engine_names, n, &op1_engine_count, name);
             op1_engine_screens[n] = scr; op1_engine_svgs[n] = svg;
             if (v.hdr->flags & OP1P_F_USES_SAMPLE) reg_list(op1_sample_engine_names, name);
+            op1_engine_coarse[n] = (uint8_t)OP1P_COARSE(v.hdr->flags);
         } else {
             op1_fxs[n] = (const op1_fx_t *)(mem + v.hdr->entry_off);
             op1_fx_stereo[n] = (v.hdr->flags & OP1P_F_STEREO) != 0;     /* older files: the struct ends at press */

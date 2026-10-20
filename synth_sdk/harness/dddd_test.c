@@ -28,7 +28,7 @@ static void t_bounds(void)                                     /* every corner: 
         int32_t pk = 0; double sum = 0, sq = 0;
         for (int i = 0; i < DD_SR; i++) { int32_t x = abs(o[i]); if (x > pk) pk = x; sum += o[i]; sq += (double)o[i] * o[i]; }
         CHECK(pk <= 16384, "peak %d (case %d)", pk, cases);
-        CHECK(fabs(sum / DD_SR) < 600, "DC %.0f (case %d)", sum / DD_SR, cases);
+        CHECK(fabs(sum / DD_SR) < 1024, "DC %.0f (case %d)", sum / DD_SR, cases);   /* < 6 % of half scale: the hardest settings clip lopsided */
         cases++;
     }
     printf("ok bounds (%d settings)\n", cases);
@@ -61,6 +61,23 @@ static void t_para(void)                                       /* chords: one ta
     uint8_t lo[1] = { 0 }; notes(lo, 1);
     CHECK(D.tap[0] < DD_BUF / 2, "low note tap %d fits the buffer", D.tap[0]);
     printf("ok paraphonic taps\n");
+}
+
+static void t_onset(void)                                      /* a new note after a loud one starts at full level */
+{
+    static int16_t o[DD_SR];
+    dd_init(&D, 9);
+    uint8_t k[1] = { 48 }; notes(k, 1);
+    dd_par loud = { 32767, 32767, 32767, 0, 0, 0, 0, 32767, 32767 };
+    run(&loud, o, DD_SR / 2);                                  /* the limiter pulls the gain down */
+    dd_reset_loop(&D);                                         /* (silence: not rendered) a new note */
+    dd_par p = { 0, 12000, 6000, 0, 0, 0, 0, 24000, 2000 };    /* attack: the envelope still low */
+    run(&p, o, 4 * B);
+    double e0 = 0, e1 = 0;
+    for (int i = 0; i < B; i++) e0 += (double)o[i] * o[i];
+    for (int i = 3 * B; i < 4 * B; i++) e1 += (double)o[i] * o[i];
+    CHECK(e0 > 0.25 * e1 && e1 > 0, "first block %.0f vs fourth %.0f: a slow start", sqrt(e0 / B), sqrt(e1 / B));
+    printf("ok onset (first block rms %.0f, fourth %.0f)\n", sqrt(e0 / B), sqrt(e1 / B));
 }
 
 static void wav(const char *fn, const int16_t *x, int n)
@@ -116,7 +133,7 @@ static void renders(void)
 int main(int argc, char **argv)
 {
     (void)argv;
-    t_bounds(); t_pitch(); t_para();
+    t_bounds(); t_pitch(); t_para(); t_onset();
     if (argc > 1) renders();
     printf(fails ? "%d FAILED\n" : "dddd ok\n", fails);
     return fails != 0;

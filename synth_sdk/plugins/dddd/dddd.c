@@ -1,5 +1,6 @@
 /* "dddd" - harsh noise, paraphonic (docs/53). DSP in dddd/dd_core.c: one shared wall for all keys.
  *   blue  : source  noise -> crackle -> chaos -> metal         page 2: filter  LP -> BP -> HP
+ *           (both in 8 steps per range: plugin.json "coarse", op1r 44 firmware; older: the stock fine steps)
  *   green : feedback (past ~80 % it screams)                   page 2: loop spread (the hands throw the taps)
  *   white : destroy  fold -> clip -> crush                     page 2: rate crush 1 .. 1/32
  *   red   : hands    random movement; stutter at the top

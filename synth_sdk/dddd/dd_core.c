@@ -66,7 +66,7 @@ void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n)
     for (int k = 0; k < d->ntaps; k++) tap[k] = clampi(d->tap[k] + ((d->tap[k] * spread) >> 15), 2, DD_BUF - 2);
     const int32_t inv = inv_n[d->ntaps];
     const int32_t fbg = (clampi(p->feedback, 0, 32767) * 5) >> 2;                  /* 0 .. 1.25: past 0.8 it screams */
-    int32_t cut = 4000 + ((p->env * 22000) >> 15) + d->h_cut;
+    int32_t cut = 12000 + ((p->env * 20000) >> 15) + d->h_cut;   /* open enough at the attack: no muffled start */
     cut = clampi(cut, 300, 32767);
     const int32_t f = 300 + ((((cut * cut) >> 15) * 29000) >> 15), q = 20000;   /* SVF: f ~ 2 sin(pi fc / fs), damping */
     const int32_t fm = clampi(p->filter, 0, 32767);
@@ -82,7 +82,7 @@ void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n)
     const int32_t interval = 88200 >> ((hands * 7) >> 15);                        /* the hands: 2 s .. 15 ms */
     const int stutter = hands > 26000;
     const uint32_t inc = d->inc;
-    int32_t peak = 0;
+    int32_t peak = 0, pre[256];                                 /* (n <= 256) the block before the limiter */
 
     for (int i = 0; i < n; i++) {
         uint32_t r = xr(d);
@@ -152,13 +152,21 @@ void dd_render(dd_t *d, const dd_par *p, int16_t *out, int n)
         y = (y * d->gate_g) >> 15;
         int32_t o = y - d->dcx + ((d->dcy * 32604) >> 15);    /* 0.995 */
         d->dcx = y; d->dcy = clampi(o, -65536, 65535);
-        o = (d->dcy * d->gain) >> 15;
-        int32_t a = o < 0 ? -o : o;
+        int32_t a = d->dcy < 0 ? -d->dcy : d->dcy;
         if (a > peak) peak = a;
-        out[i] = (int16_t)clampi(o, -16384, 16384);            /* half scale, as the other engines */
+        pre[i] = d->dcy;
     }
-    /* limiter gain for the next block: the peak to ~16000 (one division per block) */
-    int32_t tgt = peak > 16000 ? (int32_t)(((int64_t)16000 * d->gain) / peak) : 32767;
-    d->gain += (tgt - d->gain) >> (tgt < d->gain ? 1 : 4);     /* fast down, slow up */
-    d->gain = clampi(d->gain, 512, 32767);
+    /* limiter on this block (no lag: a new note starts at full level): the gain ramps over the block from the last
+     * block's to the one that brings this peak to ~16000; one division per block */
+    int32_t tgt = peak > 16000 ? (int32_t)(((int64_t)16000 * 32767) / peak) : 32767;
+    int32_t g = d->gain, step = (tgt - g) / (n > 0 ? n : 1);
+    int32_t x1 = d->dc2x, y1 = d->dc2y;
+    for (int i = 0; i < n; i++) {                              /* + a second DC blocker after the gain (the clipped */
+        g += step;                                             /* loop's rails are lopsided) */
+        int32_t x = (pre[i] * g) >> 15;
+        y1 = clampi(x - x1 + ((y1 * 32604) >> 15), -65536, 65535); x1 = x;
+        out[i] = (int16_t)clampi(y1, -16384, 16384);           /* half scale */
+    }
+    d->dc2x = x1; d->dc2y = y1;
+    d->gain = tgt;
 }

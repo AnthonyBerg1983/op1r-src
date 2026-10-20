@@ -26,7 +26,7 @@ typedef struct {
     int32_t  lp, bp;                    /* SVF state */
     int32_t  fbk;                       /* last loop output */
     int32_t  hold, hold_n, crush_n;     /* rate crusher: held sample, samples left */
-    int32_t  dcx, dcy;                  /* DC blocker */
+    int32_t  dcx, dcy, dc2x, dc2y;      /* DC blockers (before / after the limiter) */
     int32_t  gain, peak;                /* limiter: gain (Q15), this block's peak */
     int32_t  hands_n, h_cut, h_spread, h_src, gate, gate_n, gate_g;   /* the hands' targets, stutter */
     uint32_t jumps;                     /* hands jumps so far (the screen tears on a new one) */

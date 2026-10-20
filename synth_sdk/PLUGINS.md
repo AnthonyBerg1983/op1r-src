@@ -66,6 +66,9 @@ Include only `op1_plugin.h`.
 **Helpers**: `OP1_SINE_TABLE` (8192 x int16), `op1_sat16`, `op1_mul16` (Q15). Second knob pages and latching
 presses: the `press` field (see the comments in `op1_plugin.h`).
 
+**Coarse knobs** (synth engines): `"coarse": [0]` in plugin.json turns knob 0 (both pages) in 8 steps over its
+range instead of the stock ~50 (a selector, a mode); firmware op1r 44 and later.
+
 **Debugging**: `op1_dbg("text", a, b)` writes `dbg: text a b` to the op1emu log (`tools/emu_ctl.py dbg`), stderr in
 host builds, and does nothing on the OP-1 (an empty call: fine in any thread, but not per sample).
 

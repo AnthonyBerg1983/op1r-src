@@ -14,6 +14,7 @@ plugin.json fields (paths relative to the plugin folder):
   page2_defaults (fx, optional) initial page-2 knob positions
   uses_sample    (synth, optional) engine reads the slot's sampler recording (synth_<slot>.raw loaded at boot)
   stereo         (fx, optional) op1_fx_t.render_stereo is set: the master position renders left / right itself
+  coarse         (synth, optional) knob numbers 0..3 turned in 8 steps over the range (both pages), e.g. a selector
   screen         (optional) {"svg": file name, must not clash with stock content/display, "symbol": op1_screen_t}
 Orders 1..31 per kind (OP1_MAX_ORDER in op1_plugin.h).
 """
