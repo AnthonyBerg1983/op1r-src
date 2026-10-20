@@ -31,7 +31,7 @@ void gr_ui_init(int m)
         b->note[i] = m ? drum_pad_def[i] : synth_note_def[i];
     }
     b->accent = 47;                                           /* velocity 127 accents, 80 others */
-    b->playing = 1;
+    b->playing = 0;                                           /* stopped until red press (not saved) */
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }

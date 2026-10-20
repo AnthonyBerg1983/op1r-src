@@ -49,7 +49,9 @@ static void ticks(int m, int n) { for (int i = 0; i < n; i++, now++) gr_tick(m);
 
 static void glue_test(void)
 {
-    gr_tick(1);                                             /* creates the bank */
+    gr_tick(1);                                             /* creates the bank: stopped */
+    nlog[0] = 0; ticks(1, 400); assert(!strchr(nlog, '+'));   /* off by default: no notes */
+    gr_press(1, 3); assert(gr_b[1].playing);                /* red press: play */
     gr_set *s = &gr_b[1].g.s;
     s->x = 0; s->y = 0; s->chaos = 0; s->density[0] = 255; s->density[1] = 0; s->density[2] = 0;   /* BD only */
     gr_restart(1); nlog[0] = 0; now = 0;
@@ -65,7 +67,7 @@ static void glue_test(void)
     if (hits[0] >> 2 & 1) assert(strstr(nlog, "32+53/"));
     gr_b[1].swing = 0;
     /* synth: held keys give the notes, lowest -> BD */
-    gr_tick(0); gr_set *z = &gr_b[0].g.s; z->x = 0; z->y = 0; z->density[0] = 255; z->density[1] = 0; z->density[2] = 0;
+    gr_tick(0); gr_press(0, 3); gr_set *z = &gr_b[0].g.s; z->x = 0; z->y = 0; z->density[0] = 255; z->density[1] = 0; z->density[2] = 0;
     assert(gr_key_down(0, 7) == 1 && gr_key_down(0, 3) == 1);   /* midi 60, 56: BD plays 56 */
     nlog[0] = 0; now = 0; gr_restart(0); ticks(0, 2);
     if (!strstr(nlog, "0+56/")) { fprintf(stderr, "synth log: %s\n", nlog); assert(0); }
@@ -80,6 +82,7 @@ static void glue_test(void)
 int main(void)
 {
     glue_test();
+    gr_b[0].playing = gr_b[1].playing = 1;                  /* the frames show a running pattern */
     play(1, 11); frame("drum mode, defaults (centre of the map, fill 50%), step 10", 1, 0);
     gr_ui_turn(1, 0, -32, 0); gr_ui_turn(1, 1, -32, 0);
     for (int i = 0; i < 3; i++) { gr_ui_turn(1, 2, 12, 0); gr_ui_press(1, 2); }

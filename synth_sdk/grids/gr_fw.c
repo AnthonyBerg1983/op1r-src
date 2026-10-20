@@ -3,7 +3,8 @@
  * second 16th of each 8th (Grids: step & 2) by up to 1/3 of a 16th. Gates: half a step (drums: notes end at once).
  * Drum mode: each part plays its pad (key 0..23). Synth mode: the held keys (lowest -> BD, middle -> SD, highest ->
  * HH; fewer keys repeat), none held: the stored notes; keys held on the grids page are consumed (they set notes).
- * Red press: play / stop (starts on the next tick at step 0); MIDI START restarts at step 0. */
+ * Stopped by default (not saved); red press: play / stop (starts on the next tick at step 0); MIDI START restarts at
+ * step 0. */
 #include "../op1_synth.h"
 #include "../seq/seq_text.h"
 #include "gr_ui.h"
