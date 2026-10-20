@@ -25,7 +25,7 @@ static void dd_note_on(void *self, const int16_t *params)
     (void)params;
     if (!inited) { dd_init(&dd, 0x5EEDu); inited = 1; }
     for (int u = 0; u < OP1_VOICES; u++) if (u != v && alive(u)) any = 1;
-    if (!any) dd_reset_loop(&dd);                              /* nothing sounding: no stale howl */
+    if (!any) { dd_reset_loop(&dd); op1_dbg("dddd reset: voice", v, 0); }   /* nothing sounding: no stale howl */
     order[v] = ++order_n;
     last_call[v] = calls; alive_seen[v] = 1;
 }
