@@ -443,6 +443,11 @@ _sp_adsr_stock:
 	P5 = R2;
 	jump.l _sp_adsr_cont;                        /* link.ld: 0x0191212C */
 
+/* master FX source (screens/fxroute.c): the LFO / seq tick 0x019C9D04 (only caller: L1 after tape_play_mix) -> fr_snap,
+ * which also does the tick's stock body */
+	.section .hook_frsnap,"ax"
+	jump.l _fr_snap;
+
 	.section .hook_dpkeep,"ax"
 	.global __hook_dpkeep
 __hook_dpkeep:

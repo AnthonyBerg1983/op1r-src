@@ -12,6 +12,7 @@ void pu_block(void) {}
 void inst_fade_block(void) {}
 void pu_service(void) {}
 #include "../tape/countin.c"
+void fr_capture(void) {}
 void host_metro_render(void)
 {
     int32_t step = M_TAPE ? (host_tape_speed >> 21) * 0x4000 : 0x100000;   /* as the stock render */

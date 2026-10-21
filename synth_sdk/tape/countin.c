@@ -74,6 +74,7 @@ extern void tool_service(void);                            /* screens/overlay.c:
 extern void inst_fade_block(void);
 void ci_metro_render(void)
 {
+    { extern void fr_capture(void); fr_capture(); }               /* master FX source: instrument part (docs/54) */
     pu_block();                                                   /* punch: marker crossings (audio thread) */
     inst_fade_block();                                            /* tools: instrument fade (screens/overlay.c) */
 #ifndef OP1_HOST

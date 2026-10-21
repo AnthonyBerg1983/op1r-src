@@ -73,6 +73,7 @@ SECTIONS {
   .hook_pparse4 0x01A051F8 : { KEEP(*(.hook_pparse4)) }
   .hook_dpkeep 0x01A044A8 : { KEEP(*(.hook_dpkeep)) }
   .hook_spadsr 0x01912128 : { KEEP(*(.hook_spadsr)) }
+  .hook_frsnap 0x019C9D04 : { KEEP(*(.hook_frsnap)) }
   .hook_dpload 0x01A04BC0 : { KEEP(*(.hook_dpload)) }
   .hook_dpbrowse 0x01977900 : { KEEP(*(.hook_dpbrowse)) }
   .hook_usbbuf1 0x01A69730 : { KEEP(*(.hook_usbbuf1)) }
