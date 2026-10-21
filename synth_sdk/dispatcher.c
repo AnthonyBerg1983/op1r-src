@@ -166,6 +166,7 @@ void fx_init_stereo(void *self)
     FILTER_ST_INIT(self);
 }
 
+extern void fr_route(void (*fx)(void *, int16_t *, int16_t *, const int16_t *), void *self, int16_t *l, int16_t *r, const int16_t *params);
 static void fx_sanitize(void);
 static void fx_render_stereo_(void *self, int16_t *l, int16_t *r, const int16_t *params);
 void fx_render_stereo(void *self, int16_t *l, int16_t *r, const int16_t *params)
@@ -348,7 +349,6 @@ static int st_ready;
 #define MIXOV_SCREEN_ID 0x30
 extern const op1_screen_t SCREEN_fxroute;
 extern void fxroute_turn(int knob, int delta);
-extern void fr_route(void (*fx)(void *, int16_t *, int16_t *, const int16_t *), void *self, int16_t *l, int16_t *r, const int16_t *params);
 static uint32_t fr_scr[32], fr_vt[10];
 static void *mixov_screen;
 static uint8_t fr_ready, fr_on;

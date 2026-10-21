@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "../screens/fxroute.c"
 
 static struct { int32_t x0, y0, x1, y1, w; uint8_t c[4]; } L[256]; static int nl;
@@ -48,6 +49,22 @@ int main(int argc, char **argv)
     for (int i = 0; i < 64; i++) { l[i] = fr_host_tape[0][i]; r[i] = fr_host_tape[1][i]; }
     fr_route(fx_gain2, 0, l, r, 0); assert(l[5] == 1080 && r[5] == -280);         /* only the instrument doubled */
     fr_route(fx_gain2, 0, l, r, 0); assert(l[5] == 2160);                          /* no fresh capture: whole mix */
+    fxroute_turn(1, 1024); assert(fr_out == 1 && fr_host_saved == 3);
+    frame("green right: mono tape", render);
+    for (int i = 0; i < 64; i++) { fr_host_bus[i] = (int16_t)(i * 100 - 3000); fr_host_tape[0][i] = 500; fr_host_tape[1][i] = 500; }
+    fr_snap();
+    for (int i = 0; i < 64; i++) { fr_host_tape[0][i] += fr_host_bus[i] / 2; fr_host_tape[1][i] += fr_host_bus[i] / 4; }   /* gains 0.5 / 0.25 */
+    fr_capture();
+    for (int i = 0; i < 64; i++) { l[i] = fr_host_tape[0][i]; r[i] = fr_host_tape[1][i]; }
+    int16_t bus0[64]; memcpy(bus0, fr_host_bus, sizeof bus0);
+    fr_route(fx_gain2, 0, l, r, 0);
+    for (int i = 0; i < 64; i++) {
+        assert(fr_host_bus[i] == 2 * bus0[i]);                                      /* recorded: wet mono */
+        int el = 500 + bus0[i], er = 500 + bus0[i] / 2;                             /* monitor: wet x track gain */
+        assert(abs(l[i] - el) <= 2 && abs(r[i] - er) <= 2);
+    }
+    fxroute_turn(0, -1024); fxroute_turn(1, -1024); assert(fr_out == 1);            /* green: instrument only */
+    fxroute_turn(0, 1024); fxroute_turn(1, -1024); assert(fr_out == 0 && fr_host_saved == 1);
     fxroute_turn(0, 1024); assert(fr_src == 1);                                    /* clamped */
     fxroute_turn(1, -4096); assert(fr_src == 1);
     fxroute_turn(0, -1024); assert(fr_src == 0 && fr_host_saved == 0);
