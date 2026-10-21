@@ -38,12 +38,16 @@ int main(int argc, char **argv)
     frame("off (default)", render);
     scale_turn(1, 1024); assert(sc_type == 1 && scale_host_saved == 16);
     frame("C major, snap", render);
-    for (int i = 0; i < 3; i++) scale_turn(0, -1024); assert(sc_root == 9);   /* wraps: C -> A */
-    for (int i = 0; i < 10; i++) scale_turn(1, 1024); assert(sc_type == 11);
+    for (int i = 0; i < 3; i++) scale_turn(0, -1024);
+    assert(sc_root == 9);   /* wraps: C -> A */
+    for (int i = 0; i < 10; i++) scale_turn(1, 1024);
+    assert(sc_type == 11);
     scale_turn(2, 1024); assert(sc_mode == 1);
     frame("A minor penta, white keys", render);
-    for (int i = 0; i < 5; i++) scale_turn(1, 1024); assert(sc_type == 12);
-    for (int i = 0; i < 4; i++) scale_turn(2, 1024); assert(sc_mode == 2);   /* clamped */
+    for (int i = 0; i < 5; i++) scale_turn(1, 1024);
+    assert(sc_type == 12);
+    for (int i = 0; i < 4; i++) scale_turn(2, 1024);
+    assert(sc_mode == 2);   /* clamped */
     scale_turn(3, 1024); assert(sc_mode == 2);
     scale_host_saved = 9 + 16 * 11 + 256; sp_init(0); assert(sc_root == 9 && sc_type == 11 && sc_mode == 1);
     if (!render) printf("ok\n");
