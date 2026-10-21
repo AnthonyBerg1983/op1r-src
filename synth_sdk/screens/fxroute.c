@@ -59,12 +59,13 @@ void fr_route(void (*fx)(void *, int16_t *, int16_t *, const int16_t *), void *s
             sl += (fr_il[i] * m) >> 8; sr += (fr_ir[i] * m) >> 8; sm += (m * m) >> 8;
         }
         fx(self, a, b, params);
-        int32_t gl = 0, gr = 0;                             /* Q14 track gain of the bus in the mix */
-        if (sm > 64) {
+        static int32_t gl, gr;                              /* Q14 track gain of the bus in the mix: kept while the
+                                                               bus is quiet (FX tail), smoothed (crackle) */
+        if (sm > 2048) {
             while (sm >= 1 << 15) { sm >>= 1; sl >>= 1; sr >>= 1; }   /* sl * 16384 stays in 32 bits */
             sl = sl > 2 * sm ? 2 * sm : sl < -2 * sm ? -2 * sm : sl;
             sr = sr > 2 * sm ? 2 * sm : sr < -2 * sm ? -2 * sm : sr;
-            gl = sl * 16384 / sm; gr = sr * 16384 / sm;
+            gl += (sl * 16384 / sm - gl) >> 2; gr += (sr * 16384 / sm - gr) >> 2;
         }
         for (int i = 0; i < 64; i++) {
             int32_t w = (a[i] + b[i]) >> 1, d = w - BUS[i];

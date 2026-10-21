@@ -32,6 +32,8 @@ static void frame(const char *label, int render)
 
 static void fx_gain2(void *s, int16_t *l, int16_t *r, const int16_t *p) { (void)s; (void)p; for (int i = 0; i < 64; i++) { l[i] *= 2; r[i] *= 2; } }
 
+void fx_tail(void *s, int16_t *l, int16_t *r, const int16_t *p) { (void)p; memcpy(l, s, 128); memcpy(r, s, 128); }
+
 int main(int argc, char **argv)
 {
     int render = argc > 1 && !strcmp(argv[1], "render");
@@ -51,18 +53,29 @@ int main(int argc, char **argv)
     fr_route(fx_gain2, 0, l, r, 0); assert(l[5] == 2160);                          /* no fresh capture: whole mix */
     fxroute_turn(1, 1024); assert(fr_out == 1 && fr_host_saved == 3);
     frame("green right: mono tape", render);
-    for (int i = 0; i < 64; i++) { fr_host_bus[i] = (int16_t)(i * 100 - 3000); fr_host_tape[0][i] = 500; fr_host_tape[1][i] = 500; }
-    fr_snap();
-    for (int i = 0; i < 64; i++) { fr_host_tape[0][i] += fr_host_bus[i] / 2; fr_host_tape[1][i] += fr_host_bus[i] / 4; }   /* gains 0.5 / 0.25 */
-    fr_capture();
-    for (int i = 0; i < 64; i++) { l[i] = fr_host_tape[0][i]; r[i] = fr_host_tape[1][i]; }
-    int16_t bus0[64]; memcpy(bus0, fr_host_bus, sizeof bus0);
-    fr_route(fx_gain2, 0, l, r, 0);
+    int16_t bus0[64];
+    for (int blk = 0; blk < 40; blk++) {                                           /* gain estimate settles */
+        for (int i = 0; i < 64; i++) { fr_host_bus[i] = (int16_t)(i * 100 - 3000); fr_host_tape[0][i] = 500; fr_host_tape[1][i] = 500; }
+        fr_snap();
+        for (int i = 0; i < 64; i++) { fr_host_tape[0][i] += fr_host_bus[i] / 2; fr_host_tape[1][i] += fr_host_bus[i] / 4; }   /* gains 0.5 / 0.25 */
+        fr_capture();
+        for (int i = 0; i < 64; i++) { l[i] = fr_host_tape[0][i]; r[i] = fr_host_tape[1][i]; }
+        memcpy(bus0, fr_host_bus, sizeof bus0);
+        fr_route(fx_gain2, 0, l, r, 0);
+    }
     for (int i = 0; i < 64; i++) {
         assert(fr_host_bus[i] == 2 * bus0[i]);                                      /* recorded: wet mono */
         int el = 500 + bus0[i], er = 500 + bus0[i] / 2;                             /* monitor: wet x track gain */
         assert(abs(l[i] - el) <= 2 && abs(r[i] - er) <= 2);
     }
+    /* bus silent (FX tail): the gain is kept, not dropped to 0 */
+    static int16_t tail[64]; for (int i = 0; i < 64; i++) tail[i] = 1000;
+    for (int i = 0; i < 64; i++) { fr_host_bus[i] = 0; fr_host_tape[0][i] = fr_host_tape[1][i] = 0; }
+    fr_snap(); fr_capture();
+    memset(l, 0, sizeof l); memset(r, 0, sizeof r);
+    void fx_tail(void *, int16_t *, int16_t *, const int16_t *);
+    fr_route(fx_tail, tail, l, r, 0);
+    assert(fr_host_bus[0] == 1000 && abs(l[0] - 500) <= 2 && abs(r[0] - 250) <= 2);
     fxroute_turn(0, -1024); fxroute_turn(1, -1024); assert(fr_out == 1);            /* green: instrument only */
     fxroute_turn(0, 1024); fxroute_turn(1, -1024); assert(fr_out == 0 && fr_host_saved == 1);
     fxroute_turn(0, 1024); assert(fr_src == 1);                                    /* clamped */
