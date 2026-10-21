@@ -1,0 +1,46 @@
+/* Scale mode, firmware side (docs/55): called from the VoiceCtl key_down / key_up stubs (hook.S) before the MIDI
+ * recorder and the stock body. The note record (int[4]: note, velocity, MIDI-send flag, ?) belongs to the caller
+ * (a sequencer may keep it), so a changed note goes out in a copy. Mapped: synth mode, callers in the stock code
+ * (keyboard 0x019AC0B0 / 0x019AC2F8, stock sequencers, arpeggio, tombola ...), except received MIDI (VoiceCtl note on
+ * / off 0x01A858D8..0x01A85C16). Not mapped: our code (euclid, dots, chord, grids, plugins, MIDI sequencer), and
+ * nothing while one of our sequencers runs (the stock finger code it is built on previews its keys). */
+#include "../op1_synth.h"
+#include "sc_core.h"
+
+#define MODE_SYNTH (*(volatile int *)0x01DE4C40 == 0)
+extern int seq_ours_live(void);
+static int32_t sc_rec[8][4];
+static uint8_t sc_ri;
+
+static int stock_caller(uint32_t ret)
+{
+    if (ret >= 0x01A858D8 && ret < 0x01A85C16) return 0;   /* received MIDI */
+    return (ret >= 0x01900000 && ret < 0x01E00000) || ret >= 0xFFA00000;
+}
+
+static int32_t *copy_with(const int32_t *rec, int note)
+{
+    int32_t *c = sc_rec[sc_ri++ & 7];
+    c[0] = note; c[1] = rec[1]; c[2] = rec[2]; c[3] = rec[3];
+    return c;
+}
+
+/* returns the record to play, 0 = do not play */
+int32_t *sc_vc_down(int32_t *rec, uint32_t ret)
+{
+    int n = rec[0];
+    if (n < 0 || n > 127) return rec;                       /* the stock assert stays the stock's */
+    int m = sc_down(n, sc_type != SC_OFF && MODE_SYNTH && stock_caller(ret) && !seq_ours_live());
+    if (m < 0) return 0;
+    return m == n ? rec : copy_with(rec, m);
+}
+
+/* returns the record to release; note -1 = nothing (VoiceCtl key_up ignores notes outside 0..127) */
+int32_t *sc_vc_up(int32_t *rec, uint32_t ret)
+{
+    (void)ret;
+    int n = rec[0];
+    if (n < 0 || n > 127) return rec;
+    int m = sc_up(n);
+    return m == n ? rec : copy_with(rec, m);
+}

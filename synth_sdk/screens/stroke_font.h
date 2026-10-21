@@ -50,6 +50,7 @@ static const struct { char c; uint8_t n; uint8_t seg[8][4]; } sf_font[] = {
     { 'X', 2, { {0,0,4,6},{4,0,0,6} } },
     { 'K', 3, { {0,0,0,6},{4,0,0,3},{0,3,4,6} } },
     { 'Z', 3, { {0,0,4,0},{4,0,0,6},{0,6,4,6} } },
+    { 'J', 3, { {4,0,4,6},{4,6,0,6},{0,6,0,4} } },
     { ':', 2, { {2,1,2,2},{2,4,2,5} } },
 };
 /* text at (x, y) top-left, scale s px per grid unit (Q10); returns the x after the text */

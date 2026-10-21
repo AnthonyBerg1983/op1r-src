@@ -287,6 +287,9 @@ void *seq_player_get(void)                       /* create_player case 3 (hook):
     int k = seq_cur[CUR_MODE()];
     return k >= 0 ? op1_seqs[k]->player_get() : ((void *(*)(void))0x019ED460)();
 }
+/* scale mode (scale/sc_fw.c): one of our sequencers is selected in synth mode: its keys are its control (euclid,
+ * dots, chord, grids ...; they are not in the stock player list 0x01AAD47C, emulator), so the scale stays out */
+int seq_ours_live(void) { return seq_cur[0] >= 0; }
 extern volatile uint8_t eu_rec_play;            /* seq/seq_core.c */
 #define EUCLID_SCREEN_ID 0x2D
 static uint32_t seq_scr[OP1_SEQ_MAX][32], seq_scr_vt[OP1_SEQ_MAX][10];
@@ -345,6 +348,11 @@ extern const op1_screen_t SCREEN_settings;
 extern void settings_turn(int knob, int delta);
 static uint32_t st_scr[32], st_vt[10];
 static int st_ready;
+/* scale page (screens/scalepg.c, docs/55): clock slot overlay on T4 (sm_on 4) */
+extern const op1_screen_t SCREEN_scale;
+extern void scale_turn(int knob, int delta), scale_boot(void);
+static uint32_t sc_scr[32], sc_vt[10];
+static int sc_ready;
 /* master FX source page (screens/fxroute.c, docs/54): Shift + mixer (mode 0x0D, screen 0x30) T2; T1 = stock overview */
 #define MIXOV_SCREEN_ID 0x30
 extern const op1_screen_t SCREEN_fxroute;
@@ -661,6 +669,15 @@ void *screens_ctor_hook(void)
         st_vt[4 * 2 + 1] = (uint32_t)SCREEN_settings.init;
         st_scr[3] = (uint32_t)st_vt;
     }
+    {                                                            /* scale page object (clock slot, T4) */
+        void *saved = SCREEN_TABLE[CLOCK_SCREEN_ID];
+        SCREEN_CTOR(sc_scr, CLOCK_SCREEN_ID, "usbout.svg");      /* empty svg: drawn in code */
+        SCREEN_TABLE[CLOCK_SCREEN_ID] = saved;
+        for (int i = 0; i < 10; i++) sc_vt[i] = ITER_SCREEN_VT[i];
+        sc_vt[3 * 2 + 1] = (uint32_t)SCREEN_scale.update;
+        sc_vt[4 * 2 + 1] = (uint32_t)SCREEN_scale.init;
+        sc_scr[3] = (uint32_t)sc_vt;
+    }
     {                                                            /* master FX source page object (slot 0x30, T2) */
         void *saved = SCREEN_TABLE[MIXOV_SCREEN_ID];
         SCREEN_CTOR(fr_scr, MIXOV_SCREEN_ID, "usbout.svg");      /* empty svg: drawn in code */
@@ -731,6 +748,10 @@ void screens_load_hook(void *table)
     if (st_scr[2] && clock_screen) {                             /* settings page (slot 0x2A on T3) */
         st_scr[0] = (uint32_t)SVG_LOAD((void *)st_scr[2]);
         if (st_scr[0]) { SCREEN_settings.init(st_scr); st_ready = 1; }
+    }
+    if (sc_scr[2] && clock_screen) {                             /* scale page (slot 0x2A on T4) */
+        sc_scr[0] = (uint32_t)SVG_LOAD((void *)sc_scr[2]);
+        if (sc_scr[0]) { SCREEN_scale.init(sc_scr); sc_ready = 1; }
     }
     if (fr_scr[2]) {                                             /* master FX source page (slot 0x30 on T2) */
         fr_scr[0] = (uint32_t)SVG_LOAD((void *)fr_scr[2]);
@@ -965,11 +986,11 @@ void key_event_hook(int code, int pressed)
         }
         if (fr_on && CUR_MODE_ID != 0x0D) { fr_on = 0; SCREEN_TABLE[MIXOV_SCREEN_ID] = mixov_screen; }
     }
-    if (((code == 0x06 && sm_ready) || (code == 0x07 && us_ready) || (code == 0x08 && st_ready)) && CUR_MODE_ID == 0x0C) {  /* clock + T1 / T2 / T3 */
+    if (((code == 0x06 && sm_ready) || (code == 0x07 && us_ready) || (code == 0x08 && st_ready) || (code == 0x09 && sc_ready)) && CUR_MODE_ID == 0x0C) {  /* clock + T1 / T2 / T3 */
         if (pressed) {                                          /* monitor / usb out / settings page on, again: base view */
             int want = code - 0x05;
             sm_on = sm_on == want ? 0 : want;
-            SCREEN_TABLE[CLOCK_SCREEN_ID] = sm_on == 1 ? (void *)sm_scr : sm_on == 2 ? (void *)us_scr : sm_on == 3 ? (void *)st_scr : clock_base();
+            SCREEN_TABLE[CLOCK_SCREEN_ID] = sm_on == 1 ? (void *)sm_scr : sm_on == 2 ? (void *)us_scr : sm_on == 3 ? (void *)st_scr : sm_on == 4 ? (void *)sc_scr : clock_base();
         }
         return;
     }
@@ -1141,6 +1162,7 @@ void knob_event_hook(int knob, int16_t *delta)
     if (knob == 0 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_turn(*delta); return; }   /* usb out: blue */
     if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_seq_turn(*delta); return; }   /* sequencer on / off: green */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
+    if (knob >= 0 && knob < 4 && sm_on == 4 && CUR_MODE_ID == 0x0C) { scale_turn(knob, *delta); return; }
     if (knob >= 0 && knob < 4 && fr_on && CUR_MODE_ID == 0x0D) { fxroute_turn(knob, *delta); return; }
     if (knob >= 0 && knob < 4 && !mx_pan[knob] && *(volatile uint8_t *)0x01DD7F78 && fr_src == 2 && CUR_SCREEN_ID == MIXER_SCREEN_ID) {
         fr_send_turn(knob, *delta); mx_changed = 1; return;

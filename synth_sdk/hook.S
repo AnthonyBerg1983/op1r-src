@@ -61,6 +61,16 @@ _fx_screen_case5:
 	.text
 	.align 2
 _ms_vc_down_stub:
+	[--SP] = RETS;			/* scale mode (scale/sc_fw.c): R0 = the record to play, 0 = skip */
+	[--SP] = R1;
+	R1 = RETS;
+	SP += -12;
+	call _sc_vc_down;
+	SP += 12;
+	R1 = [SP++];
+	RETS = [SP++];
+	CC = R0 == 0;
+	IF CC JUMP 1f;
 	[--SP] = RETS;
 	[--SP] = R0;
 	[--SP] = R1;
@@ -73,8 +83,15 @@ _ms_vc_down_stub:
 	RETS = [SP++];
 	LINK 16;
 	jump.l _vc_down_body;
+1:	rts;
 	.align 2
 _ms_vc_up_stub:
+	[--SP] = RETS;			/* scale mode: R0 = the record to release */
+	R1 = RETS;
+	SP += -12;
+	call _sc_vc_up;
+	SP += 12;
+	RETS = [SP++];
 	[--SP] = RETS;
 	[--SP] = R0;
 	R1 = RETS;
