@@ -22,10 +22,23 @@ int16_t fr_host_bus[64];
 #define TAPE_L fr_host_tape[0]
 #define TAPE_R fr_host_tape[1]
 #define BUS    fr_host_bus
+int16_t fr_host_meter[4], fr_host_peak, fr_host_level = 0x7FFF; uint8_t fr_host_mflag = 1; int32_t fr_host_track;
+#define METER     fr_host_meter
+#define PEAK      fr_host_peak
+#define TAPE_LVL  fr_host_level
+#define METER_ON  fr_host_mflag
+#define TRACK     fr_host_track
 #else
 #define TAPE_L ((int16_t *)0xFF800D34)
 #define TAPE_R ((int16_t *)0xFF800DB4)
 #define BUS    ((int16_t *)0xFF800BB4)                       /* synth_mix_bus: recorded after Core_mix_master */
+/* the record meter (Core_mix_master loop 1): block peak W[0xFF801084] = max |bus x tape level [0x01B4EF6E]|, then
+ * the selected track's meter W[0xFF802990 + 2t] += peak if B[0xFF80103C] (0xFFA00FE0..0xFFA01002) */
+#define METER     ((volatile int16_t *)0xFF802990)
+#define PEAK      (*(volatile int16_t *)0xFF801084)
+#define TAPE_LVL  (*(volatile int16_t *)0x01B4EF6E)
+#define METER_ON  (*(volatile uint8_t *)0xFF80103C)
+#define TRACK     (*(volatile int32_t *)0xFF802964)
 #endif
 
 void fr_snap(void)                                          /* audio ISR, after the tape mix */
@@ -67,12 +80,18 @@ void fr_route(void (*fx)(void *, int16_t *, int16_t *, const int16_t *), void *s
             sr = sr > 2 * sm ? 2 * sm : sr < -2 * sm ? -2 * sm : sr;
             gl += (sl * 16384 / sm - gl) >> 2; gr += (sr * 16384 / sm - gr) >> 2;
         }
+        int32_t pk = 0, tl = TAPE_LVL;
         for (int i = 0; i < 64; i++) {
             int32_t w = (a[i] + b[i]) >> 1, d = w - BUS[i];
+            int32_t v = (w * tl) >> 15; if (v < 0) v = -v; if (v > pk) pk = v;
             BUS[i] = (int16_t)w;
             l[i] = op1_sat16(l[i] + ((d * gl) >> 14));
             r[i] = op1_sat16(r[i] + ((d * gr) >> 14));
         }
+        if (pk > 32767) pk = 32767;
+        uint32_t t = (uint32_t)TRACK;                        /* record meter: the wet peak instead of the dry one */
+        if (METER_ON && t < 4) METER[t] = op1_sat16(METER[t] - PEAK + pk);
+        PEAK = (int16_t)pk;
         return;
     }
     for (int i = 0; i < 64; i++) { a[i] = fr_il[i]; b[i] = fr_ir[i]; }

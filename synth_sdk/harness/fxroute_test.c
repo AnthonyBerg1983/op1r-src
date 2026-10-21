@@ -63,6 +63,14 @@ int main(int argc, char **argv)
         memcpy(bus0, fr_host_bus, sizeof bus0);
         fr_route(fx_gain2, 0, l, r, 0);
     }
+    fr_host_meter[0] = 100; fr_host_peak = 50;                                    /* dry peak already added */
+    for (int i = 0; i < 64; i++) { fr_host_bus[i] = bus0[i]; fr_host_tape[0][i] = 500; fr_host_tape[1][i] = 500; }
+    fr_snap();
+    for (int i = 0; i < 64; i++) { fr_host_tape[0][i] += fr_host_bus[i] / 2; fr_host_tape[1][i] += fr_host_bus[i] / 4; }
+    fr_capture();
+    for (int i = 0; i < 64; i++) { l[i] = fr_host_tape[0][i]; r[i] = fr_host_tape[1][i]; }
+    fr_route(fx_gain2, 0, l, r, 0);
+    assert(fr_host_peak == 6599 && fr_host_meter[0] == 100 - 50 + 6599);         /* wet peak 2 * 3300 x 0x7FFF */
     for (int i = 0; i < 64; i++) {
         assert(fr_host_bus[i] == 2 * bus0[i]);                                      /* recorded: wet mono */
         int el = 500 + bus0[i], er = 500 + bus0[i] / 2;                             /* monitor: wet x track gain */
