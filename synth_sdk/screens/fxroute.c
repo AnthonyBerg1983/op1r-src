@@ -158,10 +158,10 @@ static void fr_update(void *scr, int dt)
 {
     op1_screen_draw(scr, dt);
     void *r = op1_raster();
-    sf_text(r, FR_LX, FR_Y0, FR_S, "FX SOURCE", FR_W, c_blue);
+    sf_text(r, FR_LX, FR_Y0, FR_S, "FX2 SOURCE", FR_W, c_blue);
     sf_text(r, FR_LX, FR_Y1, FR_S, fr_src ? "INSTRUMENT" : "MASTER", FR_W, c_blue);
     if (!fr_src) return;                                    /* master source: stereo to master only */
-    sf_text(r, FR_LX, FR_Y2, FR_S, "OUTPUT", FR_W, c_green);
+    sf_text(r, FR_LX, FR_Y2, FR_S, "FX2 OUTPUT", FR_W, c_green);
     sf_text(r, FR_LX, FR_Y3, FR_S, fr_out ? "MONO TAPE" : "STEREO MASTER", FR_W, c_green);
 }
 const op1_screen_t SCREEN_fxroute = { fr_init, fr_update };
