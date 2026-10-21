@@ -20,6 +20,7 @@
 #define PATCH_SET_KNOBS ((void (*)(void *, const int16_t *))0x01A00D14)   /* knob words -> JSON, patch changed */
 #define QUEUE_TYPE_JOB  ((void (*)(int, int))0x01940FD0)                /* (selection, slot): synth type job */
 #define JV_CGET   ((const void *(*)(const void *, const char *))0x019BEB70)
+#define ADSR_W(s)       ((const volatile int16_t *)(0x01B60EF0 + ((s) & 7) * 16))   /* the slot's 8 ADSR words */
 
 extern sp_extra sp_x[8];
 extern sp_pre sp_c[8];
@@ -46,7 +47,8 @@ static void ln(void *r, int x0, int y0, int x1, int y1, int w, const uint8_t *c)
 /* turn targets per (page, shift, knob): sp_extra field, or -2 = the stock gain word (knob 7) */
 static const int8_t turn_field[2][2][4] = {
     { { 16, 12, 20, 19 }, { 18, 13, 17, -2 } },       /* T1: xfade | p env | sync | drive; rnd st | p time | vel>st | gain */
-    { { 0, 2, 3, 4 }, { 8, 9, 10, 11 } },             /* T2: attack | decay | sustain | release; cutoff | reso | env>cut | vel>cut */
+    { { 0, 2, 3, 4 }, { -3, -4, 8, 9 } },             /* T2: attack | decay | sustain | release; play mode | portamento
+                                                         (stock words, the playmode controller) | cutoff | reso */
 };
 static const uint8_t hold_steps[4] = { 0, 40, 64, 90 }, vel_steps[3] = { 0, 64, 127 };
 
@@ -67,8 +69,8 @@ static const char *jv_str(const void *json, const char *key)       /* a string m
 }
 
 /* ---- screens ---- */
-static uint32_t obj[2][32], vt[10], *scr[2];
-static void *stock[2];
+static uint32_t obj[3][32], vt[10], *scr[3];          /* T1 (6), T2 (0x16), T2 with Shift (playmode slot 0x28) */
+static void *stock[3];                                 /* 6, 0x16, 0x28 (playmode: Shift on the ADSR page) */
 static uint8_t ready;
 static int slot_plus(void) { int s = SLOT_CUR; return SYNTH_MODE && sp_isplus[s] && SLOT_TYPE[s] == 6; }
 void *spu_screen_for(int id)
@@ -82,6 +84,7 @@ void spu_sync(int editor_open_on_6)
     if (!ready) return;
     if (!editor_open_on_6) SCREEN_TABLE[6] = spu_screen_for(6);
     SCREEN_TABLE[0x16] = spu_screen_for(0x16);
+    SCREEN_TABLE[0x28] = slot_plus() ? (void *)scr[2] : stock[2];   /* Shift: our T2 page with the play mode */
     if (!slot_plus() && br_open) sb_close();
 }
 static int page(void)
@@ -90,6 +93,7 @@ static int page(void)
     int id = CURRENT_SCREEN;
     if (id == 6 && SCREEN_TABLE[6] == (void *)scr[0]) return T1;
     if (id == 0x16 && SCREEN_TABLE[0x16] == (void *)scr[1]) return T2;
+    if (id == 0x28 && SCREEN_TABLE[0x28] == (void *)scr[2]) return T2;   /* Shift held on T2: the playmode slot */
     return -1;
 }
 
@@ -102,6 +106,7 @@ int spu_knob(int knob, int delta)
         return 1;
     }
     int shift = SHIFT_HELD, f = turn_field[pg][shift ? 1 : 0][knob], slot = SLOT_CUR;
+    if (f == -3 || f == -4) return 0;                                /* play mode / portamento: the stock controller */
     int unit = f == 20 ? 2048 : 512;                                 /* sync: one step per detent */
     if ((acc[knob] > 0 && delta < 0) || (acc[knob] < 0 && delta > 0)) acc[knob] = 0;
     acc[knob] += delta;
@@ -148,7 +153,13 @@ int spu_key(int code, int pressed)
             return 1;
         }
     } else {
-        if (k == 0) sp_extra_set(x, 5, !x->curve_exp);
+        static const int8_t mod_steps[5] = { -127, -64, 0, 64, 127 };   /* Shift + white / red: env > cut, vel > cut */
+        if (SHIFT_HELD && k >= 2) {
+            int f = k == 2 ? 10 : 11, v = sp_extra_get(x, f), i = 0;
+            while (i < 4 && mod_steps[i] <= v) i++;                  /* the next step up, wrapping */
+            sp_extra_set(x, f, mod_steps[i == 4 && mod_steps[4] <= v ? 0 : i]);
+        }
+        else if (k == 0) sp_extra_set(x, 5, !x->curve_exp);
         else if (k == 1) { int i = 0; while (i < 3 && hold_steps[i] < x->hold) i++; sp_extra_set(x, 1, hold_steps[(i + 1) & 3]); }
         else if (k == 2) sp_extra_set(x, 7, (x->filter + 1) & 3);
         else { int i = 0; while (i < 2 && vel_steps[i] < x->vel_amt) i++; sp_extra_set(x, 6, vel_steps[i == 2 ? 0 : i + 1]); }
@@ -204,12 +215,20 @@ static const char *const ftype[4] = { "off", "lp", "hp", "bp" };
 static void texts(int pg, int shift, int k, int slot, char *lab, char *val, char *prs)
 {
     static const char *const lab_t1[2][4] = { { "xfade", "p env", "sync", "drive" }, { "rnd st", "p time", "vel>st", "gain" } };
-    static const char *const lab_t2[2][4] = { { "attack", "decay", "sustain", "release" }, { "cutoff", "reso", "env>cut", "vel>cut" } };
+    static const char *const lab_t2[2][4] = { { "attack", "decay", "sustain", "release" }, { "play", "porta", "cutoff", "reso" } };
     const sp_extra *x = &sp_x[slot];
     put(lab, (pg == T1 ? lab_t1 : lab_t2)[shift ? 1 : 0][k]);
     int f = turn_field[pg][shift ? 1 : 0][k];
     val[0] = prs[0] = 0;
     if (f == -2) put(num(val, op1_synth_knobs(slot)[7] * 100 / 32767, 0), "%");
+    else if (f == -3) {                                               /* as the playmode screen (0x01A0DAD8) */
+        static const char *const pm[4] = { "poly", "mono", "legato", "unison" };
+        int32_t i = ((ADSR_W(slot)[4] - 2048) * 3 + 4092) / 8184;
+        put(val, pm[i < 0 ? 0 : i > 3 ? 3 : i]);
+    } else if (f == -4) {
+        int32_t v = (ADSR_W(slot)[5] - 64 + 64) / 128;               /* 0 off .. 128 max */
+        if (v <= 0) put(val, "off"); else if (v >= 128) put(val, "max"); else num(val, v, 0);
+    }
     else if (f == 16) ms(val, (uint32_t)x->xfade * 32);
     else if (f == 20) put(val, sync_names[x->sync]);
     else if (f == 12 || f == 10 || f == 11) num(val, sp_extra_get(x, f), 1);
@@ -217,7 +236,11 @@ static void texts(int pg, int shift, int k, int slot, char *lab, char *val, char
     else if (f == 8) { int hz = dp_cutoff_hz[x->cutoff]; if (hz >= 1000) { char *p = num(val, hz / 1000, 0); *p++ = '.'; put(num(p, hz % 1000 / 100, 0), "k"); } else num(val, hz, 0); }
     else if (f == 3) put(num(val, x->sustain * 100 / 127, 0), "%");
     else num(val, sp_extra_get(x, f), 0);
-    if (shift) return;
+    if (shift) {                                                      /* Shift + white / red press: the filter's mod */
+        if (pg == T2 && k == 2) put(num(put(prs, "env "), x->fenv, 1), "");
+        if (pg == T2 && k == 3) put(num(put(prs, "vel "), x->vel_cutoff, 1), "");
+        return;
+    }
     if (pg == T1) {
         const int16_t *w = op1_synth_knobs(slot);
         put(prs, k == 0 ? (x->loop_mode ? "pong" : "fwd") : k == 1 ? (x->loop_rel ? "rel" : "") : k == 2 ? "file" : (w[4] >= 0x4000 ? "rev" : ""));
@@ -329,7 +352,7 @@ static void update(void *s, int dt)
     op1_screen_draw(s, dt);
     tx_init();
     void *r = op1_raster();
-    int pg = s == (void *)scr[1] ? T2 : T1, slot = SLOT_CUR, shift = SHIFT_HELD;
+    int pg = s == (void *)scr[0] ? T1 : T2, slot = SLOT_CUR, shift = SHIFT_HELD;
     if (pg == T1 && br_open) { sb_page(); return; }                 /* the core's browser page */
     for (int k = 0; k < 4; k++) ln(r, Q(8 + 78 * k), Q(110), Q(78 + 78 * k), Q(110), 0x800, col4[k]);
     const char *name = jv_str((const uint8_t *)PATCH_OBJ(slot) + 4, "name");
@@ -353,8 +376,8 @@ void spu_ui_build(void)
     for (int i = 0; i < 10; i++) vt[i] = ITER_SCREEN_VT[i];
     vt[3 * 2 + 1] = (uint32_t)update;
     vt[4 * 2 + 1] = (uint32_t)init;
-    for (int i = 0; i < 2; i++) {
-        int id = i ? 0x16 : 6;
+    for (int i = 0; i < 3; i++) {                                    /* (a screen shows under its own id only) */
+        int id = i == 2 ? 0x28 : i ? 0x16 : 6;
         void *saved = SCREEN_TABLE[id];
         SCREEN_CTOR(obj[i], id, "usbout.svg");
         SCREEN_TABLE[id] = saved;
@@ -364,8 +387,8 @@ void spu_ui_build(void)
 }
 void spu_ui_load(void)
 {
-    for (int i = 0; i < 2; i++) obj[i][0] = (uint32_t)SVG_LOAD((void *)obj[i][2]);
-    if (!obj[0][0] || !obj[1][0]) return;
-    stock[0] = SCREEN_TABLE[6]; stock[1] = SCREEN_TABLE[0x16];
-    ready = stock[0] && stock[1];
+    for (int i = 0; i < 3; i++) obj[i][0] = (uint32_t)SVG_LOAD((void *)obj[i][2]);
+    if (!obj[0][0] || !obj[1][0] || !obj[2][0]) return;
+    stock[0] = SCREEN_TABLE[6]; stock[1] = SCREEN_TABLE[0x16]; stock[2] = SCREEN_TABLE[0x28];
+    ready = stock[0] && stock[1] && stock[2];
 }
