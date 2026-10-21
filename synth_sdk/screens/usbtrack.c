@@ -40,7 +40,8 @@ volatile uint8_t usb_tracks_live;
 
 void tr_resample(int32_t pos, int32_t inc, const int16_t *gain_inc)
 {
-    if (!usb_tracks_live) { tr_rec[0] = 0; return; }        /* master only: no track work */
+    extern volatile uint8_t fr_aux_live;                    /* FX2 aux with a send up (screens/fxroute.c) */
+    if (!usb_tracks_live && !fr_aux_live) { tr_rec[0] = 0; return; }   /* no track work */
     int n = tr_rec[0] > 16 ? 16 : tr_rec[0];
     uint8_t got = 0;
     for (int r = 0; r < n; r++) {                          /* gather: same offsets as the mixed buffers */

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "../screens/fxroute.c"
+int16_t tr_out[4][64];
 
 static struct { int32_t x0, y0, x1, y1, w; uint8_t c[4]; } L[256]; static int nl;
 typedef struct { int32_t x, y; uint8_t c[4]; char s[32]; } txt_t;
@@ -86,10 +87,32 @@ int main(int argc, char **argv)
     assert(fr_host_bus[0] == 1000 && abs(l[0] - 500) <= 2 && abs(r[0] - 250) <= 2);
     fxroute_turn(0, -1024); fxroute_turn(1, -1024); assert(fr_out == 1);            /* green: instrument only */
     fxroute_turn(0, 1024); fxroute_turn(1, -1024); assert(fr_out == 0 && fr_host_saved == 1);
-    fxroute_turn(0, 1024); assert(fr_src == 1);                                    /* clamped */
+    fxroute_turn(0, 1024); assert(fr_src == 2); fxroute_turn(0, 1024); assert(fr_src == 2);   /* clamped at aux */
+    fxroute_turn(0, -1024); assert(fr_src == 1);
     fxroute_turn(1, -4096); assert(fr_src == 1);
     fxroute_turn(0, -1024); assert(fr_src == 0 && fr_host_saved == 0);
     fr_host_saved = 1; fr_init(0); assert(fr_src == 1);                            /* loaded */
+    /* aux: post-fader sends from the track outs */
+    fr_src = 0; fr_out = 0;
+    fxroute_turn(0, 1024); fxroute_turn(0, 1024); assert(fr_src == 2 && fr_host_saved == 4 && !fr_aux_live);
+    frame("blue: aux", render);
+    for (int i = 0; i < 64; i++) { tr_out[0][i] = 1000; tr_out[1][i] = 2000; tr_out[2][i] = 0; tr_out[3][i] = 0; l[i] = r[i] = 0; }
+    fr_route(fx_gain2, 0, l, r, 0); assert(l[0] == 0);                             /* no send up: FX on the mix */
+    for (int i = 0; i < 40; i++) fr_send_turn(0, 1024);                            /* track 1 send 40 */
+    assert(fr_send[0] == 40 && fr_aux_live);
+    fr_send_turn(1, 1024 * 200); assert(fr_send[1] == 100);                        /* clamped */
+    fr_send_turn(1, -1024 * 50); assert(fr_send[1] == 50);
+    fr_host_mute[1] = 0;                                                           /* track 2 muted: no send */
+    fr_route(fx_gain2, 0, l, r, 0);                                                /* aux = 1000 * 0.4 = ~400, +aux */
+    assert(abs(l[0] - 400) <= 3 && abs(r[0] - 400) <= 3);
+    fr_save_sends(); fr_send[0] = 0; fr_host_saved = 4; fr_init(0); assert(fr_send[0] == 40 && fr_send[1] == 50);
+    fr_host_mute[1] = 0x7FFF;
+    fxroute_turn(1, 1024); assert(fr_out == 1 && fr_host_saved == 5);             /* aux, mono tape */
+    fr_host_track = 1;                                                             /* recording track 2: its send muted */
+    for (int i = 0; i < 64; i++) { fr_host_bus[i] = 0; l[i] = r[i] = 0; }
+    fr_route(fx_gain2, 0, l, r, 0);
+    assert(abs(fr_host_bus[0] - 800) <= 4);                                        /* FX(aux) = 2 x 400 recorded */
+    assert(abs(l[0] - 800) <= 8 && abs(r[0] - 800) <= 8);                          /* monitor at track 2's gains */
     if (!render) printf("ok\n");
     return 0;
 }

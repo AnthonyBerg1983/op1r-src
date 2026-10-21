@@ -9,6 +9,7 @@
 
 extern volatile intptr_t tr_rec[]; extern int16_t tr_out[4][64];
 void tr_resample(int32_t pos, int32_t inc, const int16_t *gain_inc);
+volatile uint8_t fr_aux_live;
 static int16_t coef[16 * 64];
 const int16_t *tr_host_coef = coef; int16_t tr_host_gain = 32767;
 static int16_t track[4][2000], mixL[600];                  /* mixL lives at "address" 0x1000 for the hooks */
@@ -28,6 +29,7 @@ static void master(const int16_t *src, int32_t pos, int32_t inc, int16_t *out)
 
 int main(void)
 {
+    extern volatile uint8_t usb_tracks_live; usb_tracks_live = 1;          /* the track work is gated (usbout.c) */
     for (int k = 0; k < 16; k++)                              /* 64-phase windowed sinc, 16 taps */
         for (int ph = 0; ph < 64; ph++) {
             double x = (k - 7.5) + ph / 64.0, w = 0.5 + 0.5 * cos(M_PI * (k - 7.5 + ph / 64.0) / 8.0);

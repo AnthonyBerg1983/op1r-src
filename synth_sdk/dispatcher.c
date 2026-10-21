@@ -352,6 +352,13 @@ extern void fxroute_turn(int knob, int delta);
 static uint32_t fr_scr[32], fr_vt[10];
 static void *mixov_screen;
 static uint8_t fr_ready, fr_on;
+/* mixer T1 with FX2 = aux (screens/mixaux.c): encoder held + turned = the track's send */
+extern void mx_attach(void *scr);
+extern void fr_send_turn(int t, int delta), fr_save_sends(void);
+extern uint8_t fr_src;
+static uint8_t mx_held[4], mx_changed;
+#define MIXER_SCREEN_ID 0x1F
+#define CUR_SCREEN_ID (*(volatile int *)0x018B65C8)
 /* count-in (tape/countin.c) */
 extern int ci_start(void), ci_counting(void);
 extern void ci_cancel(void);
@@ -729,6 +736,7 @@ void screens_load_hook(void *table)
         mixov_screen = SCREEN_TABLE[MIXOV_SCREEN_ID];
         if (fr_scr[0] && mixov_screen) { SCREEN_fxroute.init(fr_scr); fr_ready = 1; }
     }
+    mx_attach(SCREEN_TABLE[MIXER_SCREEN_ID]);
     if (se_scr[2]) {                                             /* sample editor (swapped into slot 6) */
         se_scr[0] = (uint32_t)SVG_LOAD((void *)se_scr[2]);
         sampler_screen = SCREEN_TABLE[6];
@@ -944,6 +952,12 @@ void key_event_hook(int code, int pressed)
         if (!pressed && code == 0x22 && play_swallow) { play_swallow = 0; return; }
         if (pressed && pu_key(code)) { if (code == 0x22) play_swallow = 1; return; }
     }
+    if (code >= 0x3B && code <= 0x3E) {                         /* encoder held: aux send on mixer T1 */
+        int k = press_knob[code - 0x3B];
+        mx_held[k] = (uint8_t)pressed;
+        if (!pressed && mx_changed) { mx_changed = 0; fr_save_sends(); }
+        if (fr_src == 2 && CUR_SCREEN_ID == MIXER_SCREEN_ID) return;
+    }
     if (fr_ready) {                                             /* Shift + mixer: T1 overview (default), T2 FX source */
         if (CUR_MODE_ID == 0x0D && (code == 0x06 || code == 0x07)) {
             if (pressed) { fr_on = code == 0x07; SCREEN_TABLE[MIXOV_SCREEN_ID] = fr_on ? (void *)fr_scr : mixov_screen; }
@@ -1128,6 +1142,9 @@ void knob_event_hook(int knob, int16_t *delta)
     if (knob == 1 && sm_on == 2 && CUR_MODE_ID == 0x0C) { usbout_seq_turn(*delta); return; }   /* sequencer on / off: green */
     if (knob >= 0 && knob < 4 && sm_on == 3 && CUR_MODE_ID == 0x0C) { settings_turn(knob, *delta); return; }
     if (knob >= 0 && knob < 4 && fr_on && CUR_MODE_ID == 0x0D) { fxroute_turn(knob, *delta); return; }
+    if (knob >= 0 && knob < 4 && mx_held[knob] && fr_src == 2 && CUR_SCREEN_ID == MIXER_SCREEN_ID) {
+        fr_send_turn(knob, *delta); mx_changed = 1; return;
+    }
     { extern int ms_knob(int knob, int delta); if (ms_knob(knob, *delta)) return; }   /* MIDI seq view: white */
     if (knob == 3 && *(volatile uint8_t *)0x01DD7F78 && tape_page()) { tm_turn(*delta); return; }  /* tape: jump */
     if (knob >= 0 && knob < 4) {                                 /* sequencer plugin page (docs/44) */
