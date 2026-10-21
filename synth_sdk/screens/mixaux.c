@@ -6,6 +6,7 @@
 #include "../op1_synth.h"
 
 extern uint8_t fr_src, fr_send[4];
+uint8_t mx_pan[4];                                          /* encoder press: 1 = Shift + turn sets pan (stock), 0 = aux send (default) */
 typedef void (*mx_update_t)(void *, int);
 static mx_update_t mx_stock;
 static uint32_t mx_vt[12];
@@ -48,15 +49,17 @@ static const int16_t ptr[21][2] = { { -5720, 5720 }, { -6898, 4227 }, { -7694, 2
     { -7474, -3096 }, { -6545, -4755 }, { -5254, -6151 }, { -3673, -7208 }, { -1888, -7866 }, { 0, -8090 }, { 1888, -7866 },
     { 3673, -7208 }, { 5254, -6151 }, { 6545, -4755 }, { 7474, -3096 }, { 7990, -1265 }, { 8065, 635 }, { 7694, 2500 },
     { 6898, 4227 }, { 5720, 5720 } };                       /* send 0..100 in steps of 5: -135..+135 deg, r 7.9 */
-static const uint8_t c_ring[4] = { 0x65, 0x65, 0x79, 0xFF };   /* the pan ring's grey */
+static const uint8_t c_ring[4] = { 0x65, 0x65, 0x79, 0xFF },   /* the pan ring's grey: pan selected */
+                     c_sel[4] = { 0xAE, 0xB1, 0xDC, 0xFF };     /* aux send selected for Shift + turn */
+static const int32_t ring_cx[4] = { 43068, 124988, 204178, 283368 };   /* panring1..4 cx (mixer.svg) in Q10 */
 
 void mx_draw_sends(void *r, void *scr)
 {
     for (int t = 0; t < 4; t++) {
-        int32_t cx = 43068 + t * 81920, cy = 90 * 1024;      /* under pan ring t (42.058 + 80 t, 66) */
+        int32_t cx = ring_cx[t], cy = 90 * 1024;            /* under pan ring t */
         for (int i = 0; i < 16; i++) {
             op1_pt a = { cx + ring[i][0], cy + ring[i][1] }, b = { cx + ring[(i + 1) & 15][0], cy + ring[(i + 1) & 15][1] };
-            op1_raster_line(r, &a, &b, 0x600, c_ring);
+            op1_raster_line(r, &a, &b, 0x600, mx_pan[t] ? c_ring : c_sel);
         }
         int v = fr_send[t], k = v / 5, f = v % 5, k1 = k < 20 ? k + 1 : 20;
         op1_pt c = { cx, cy }, p = { cx + ptr[k][0] + (ptr[k1][0] - ptr[k][0]) * f / 5, cy + ptr[k][1] + (ptr[k1][1] - ptr[k][1]) * f / 5 };

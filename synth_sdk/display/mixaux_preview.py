@@ -11,7 +11,7 @@ cairo = R.cairo
 DISP = os.path.join(SDK, '..', 'op1_246', 'content', 'display')
 FONT = svgfont.load(os.path.join(DISP, 'opfont.svg')); FW = G.widths(os.path.join(DISP, 'opfont.svg'))
 COLS = ['#698EFF', '#00ED95', '#FFFFFF', '#FF3A5D']; GREY = '#656579'
-CX = [42.058 + 80 * t for t in range(4)]                    # track column centres (pan rings)
+CX = [42.058, 122.058, 199.393, 276.727]                    # panring1..4 cx (mixer.svg)
 VOL = [91, 99, 64, 99]; SEND = [0, 40, 100, 70]             # values shown
 
 def rgb(h): return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
