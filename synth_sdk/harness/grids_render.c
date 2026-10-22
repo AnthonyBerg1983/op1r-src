@@ -68,6 +68,9 @@ static void glue_test(void)
     gr_b[1].swing = 0;
     /* synth: held keys give the notes, lowest -> BD */
     gr_tick(0); gr_press(0, 3); gr_set *z = &gr_b[0].g.s; z->x = 0; z->y = 0; z->density[0] = 255; z->density[1] = 0; z->density[2] = 0;
+    { extern int gr_host_on_page; gr_host_on_page = 0;          /* off the grids page: keys pass through, not recorded */
+      assert(gr_key_down(0, 7) == 0 && gr_key_down(0, 3) == 0); gr_key_up(0, 3); gr_key_up(0, 7);
+      gr_host_on_page = 1; }
     assert(gr_key_down(0, 7) == 1 && gr_key_down(0, 3) == 1);   /* midi 60, 56: BD plays 56 */
     nlog[0] = 0; now = 0; gr_restart(0); ticks(0, 2);
     if (!strstr(nlog, "0+56/")) { fprintf(stderr, "synth log: %s\n", nlog); assert(0); }

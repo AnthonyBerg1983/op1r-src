@@ -115,11 +115,19 @@ void gr_tick(int m)                                          /* 1/96 beat */
 
 void gr_restart(int m) { run(m)->restart = 1; }
 
-/* synth mode: keys on the page set the notes (consumed); drum mode: keys play as usual */
+/* synth mode: keys on the grids page set the notes (consumed); elsewhere and in drum mode keys play as usual */
+#ifdef OP1_HOST
+int gr_host_on_page = 1;                                             /* host tests: the grids page is shown */
+#endif
 int gr_key_down(int m, int key)
 {
     gr_run *r = run(m);
     if (m || key < 0 || key > 23) return 0;
+#ifndef OP1_HOST
+    if (*(volatile int *)0x018B65C8 != 0x2D) return 0;                 /* not on the grids page: the key plays as usual */
+#else
+    if (!gr_host_on_page) return 0;
+#endif
     int midi = key + 0x35 + gr_oct(0) * 12;
     if (r->held_n < sizeof r->held) r->held[r->held_n++] = (uint8_t)midi;
     return 1;
