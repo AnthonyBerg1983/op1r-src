@@ -36,7 +36,8 @@ int main(int argc, char **argv)
     int render = argc > 1 && !strcmp(argv[1], "render");
     sp_init(0); assert(sc_type == 0);
     frame("off (default)", render);
-    scale_turn(1, 1024); assert(sc_type == 1 && scale_host_saved == 16);
+    scale_turn(1, 1024); assert(scale_host_saved == -1);              /* not per detent */
+    scale_flush(); assert(sc_type == 1 && scale_host_saved == 16);
     frame("C major, snap", render);
     for (int i = 0; i < 3; i++) scale_turn(0, -1024);
     assert(sc_root == 9);   /* wraps: C -> A */

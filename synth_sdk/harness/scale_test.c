@@ -23,6 +23,12 @@ int main(void)
     assert(sc_map(60) == 60 && sc_map(62) == 63 && sc_map(64) == 65 && sc_map(65) == 67 && sc_map(67) == 70 && sc_map(69) == 72);
     assert(sc_map(59) == 58 && sc_map(57) == 55);                    /* below middle C */
     for (int n = 0; n < 128; n++) { int m = sc_map(n); assert(m >= -1 && m <= 127); }
+    for (int t = 1; t < SC_NTYPES; t++) for (int md = 0; md < SC_NMODES; md++) for (int r = 0; r < 12; r += 5) {
+        sc_type = (uint8_t)t; sc_mode = (uint8_t)md; sc_root = (uint8_t)r;          /* unmap: a key that plays the note */
+        for (int n = 24; n < 104; n++) { int m = sc_map(n); if (m >= 0) assert(sc_map(sc_unmap(m)) == m); }
+    }
+    sc_type = 1; sc_root = 0; sc_mode = SC_WHITE; assert(sc_unmap(62) == 62 && sc_map(64) == 64);
+    sc_type = 2; assert(sc_unmap(63) == 64);                        /* C minor white keys: Eb comes from E */
     /* held notes */
     sc_type = 1; sc_root = 0; sc_mode = SC_SNAP;
     assert(sc_down(61, 1) == 60);                                    /* C# -> C */

@@ -975,6 +975,8 @@ void key_event_hook(int code, int pressed)
         if (pressed && pu_key(code)) { if (code == 0x22) play_swallow = 1; return; }
     }
     if (mx_changed) { mx_changed = 0; fr_save_sends(); }        /* aux sends: saved at the next key event */
+    { extern void scale_flush(void), fxroute_flush(void), settings_flush(void);   /* page settings, likewise */
+      scale_flush(); fxroute_flush(); settings_flush(); }
     if (code >= 0x3B && code <= 0x3E && fr_src == 2 && CUR_SCREEN_ID == MIXER_SCREEN_ID) {   /* press: pan / aux */
         if (pressed) mx_pan[press_knob[code - 0x3B]] ^= 1;
         return;

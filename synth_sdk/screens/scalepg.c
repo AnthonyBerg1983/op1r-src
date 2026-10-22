@@ -44,6 +44,10 @@ static void sp_save(void)
 #endif
 
 static int32_t acc[3];
+static uint8_t sp_dirty;
+/* saved at the next key event (dispatcher.c), not per detent: one DB write per page visit instead of one per value.
+ * shortcut: a change made right before power-off without any key press is lost, flush from a power hook if needed */
+void scale_flush(void) { if (sp_dirty) { sp_dirty = 0; sp_save(); } }
 void scale_turn(int knob, int delta)                        /* blue root, green scale, white mode: one per detent */
 {
     if (knob > 2) return;
@@ -57,7 +61,7 @@ void scale_turn(int knob, int delta)                        /* blue root, green 
     if (knob == 0) x = (x + 12) % 12;                       /* root wraps */
     else if (x < 0 || x >= n) return;
     *v = (uint8_t)x;
-    sp_save();
+    sp_dirty = 1;
 }
 
 static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00, 0xED, 0x95, 0xFF },

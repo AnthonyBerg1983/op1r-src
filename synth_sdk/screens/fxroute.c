@@ -228,6 +228,8 @@ void fr_send_turn(int t, int delta)                         /* mixer T1, encoder
 }
 
 static int32_t acc;
+static uint8_t fr_dirty;
+void fxroute_flush(void) { if (fr_dirty) { fr_dirty = 0; fr_save(); } }   /* at the next key event (as scale_flush) */
 void fxroute_turn(int knob, int delta)                      /* blue: source, green: output (instrument only) */
 {
     if (knob > 1 || (knob == 1 && !fr_src)) return;
@@ -242,7 +244,7 @@ void fxroute_turn(int knob, int delta)                      /* blue: source, gre
     if (v < 0 || v > (knob ? 1 : 2)) return;
     *t = (uint8_t)v; fr_have = fr_snapped = 0;
     fr_live();
-    fr_save();
+    fr_dirty = 1;
 }
 
 static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF }, c_green[4] = { 0x00, 0xED, 0x95, 0xFF };

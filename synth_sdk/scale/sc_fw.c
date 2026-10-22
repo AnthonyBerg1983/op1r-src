@@ -10,6 +10,10 @@
 #define MODE_SYNTH (*(volatile int *)0x01DE4C40 == 0)
 extern int seq_ours_live(void);
 static int32_t sc_rec[8][4];
+/* the key thread and the audio interrupt (stock sequencer ticks) both play notes: the held-note tables are updated
+ * with interrupts off, else a count can be lost and a note never released */
+static uint32_t irq_off(void) { uint32_t m; __asm__ volatile ("cli %0;" : "=d"(m)); return m; }
+static void irq_on(uint32_t m) { __asm__ volatile ("sti %0;" : : "d"(m)); }
 static uint8_t sc_ri;
 
 static int stock_caller(uint32_t ret)
@@ -25,12 +29,22 @@ static int32_t *copy_with(const int32_t *rec, int note)
     return c;
 }
 
+/* MIDI recorder destination S (seqdev/ms_fw.c): the recorded note is already mapped and goes back in as a keyboard
+ * key, which is mapped again; push the key that maps to it instead (white keys mode; snap maps a scale note to itself) */
+int sc_key_note(int note)
+{
+    return sc_type != SC_OFF && MODE_SYNTH && !seq_ours_live() ? sc_unmap(note) : note;
+}
+
 /* returns the record to play, 0 = do not play */
 int32_t *sc_vc_down(int32_t *rec, uint32_t ret)
 {
     int n = rec[0];
     if (n < 0 || n > 127) return rec;                       /* the stock assert stays the stock's */
-    int m = sc_down(n, sc_type != SC_OFF && MODE_SYNTH && stock_caller(ret) && !seq_ours_live());
+    int map = sc_type != SC_OFF && MODE_SYNTH && stock_caller(ret) && !seq_ours_live();
+    uint32_t im = irq_off();
+    int m = sc_down(n, map);
+    irq_on(im);
     if (m < 0) return 0;
     return m == n ? rec : copy_with(rec, m);
 }
@@ -41,6 +55,8 @@ int32_t *sc_vc_up(int32_t *rec, uint32_t ret)
     (void)ret;
     int n = rec[0];
     if (n < 0 || n > 127) return rec;
+    uint32_t im = irq_off();
     int m = sc_up(n);
+    irq_on(im);
     return m == n ? rec : copy_with(rec, m);
 }

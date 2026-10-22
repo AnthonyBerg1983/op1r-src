@@ -38,6 +38,8 @@ static void st_save(void)                                   /* KeyHandler thread
 #endif
 
 static int32_t acc;
+static uint8_t st_dirty;
+void settings_flush(void) { if (st_dirty) { st_dirty = 0; st_save(); } }   /* at the next key event (as scale_flush) */
 void settings_turn(int knob, int delta)                     /* blue: one value per detent, clamped */
 {
     if (knob != 0) return;
@@ -48,7 +50,7 @@ void settings_turn(int knob, int delta)                     /* blue: one value p
     int v = ci_idx + (st > 0 ? 1 : -1);
     if (v < 0 || v > 2) return;
     ci_idx = (uint8_t)v; ci_beats = ci_vals[ci_idx];
-    st_save();
+    st_dirty = 1;
 }
 
 static const uint8_t c_blue[4] = { 0x4D, 0x9E, 0xFF, 0xFF };

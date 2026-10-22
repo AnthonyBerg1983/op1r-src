@@ -14,7 +14,7 @@
 
 typedef struct {
     uint32_t tick;                            /* ticks since step 0 of the bar */
-    uint8_t  held_n, held[GR_PARTS * 4];      /* synth: held keys' midi notes, in press order */
+    uint8_t  held_n, held[GR_PARTS * 4], held_key[GR_PARTS * 4];   /* synth: held keys' midi notes + key 0..23, press order */
     int16_t  on_note[GR_PARTS];               /* sounding note per part (-1 none) */
     uint8_t  off_at[GR_PARTS];                /* ticks left until its note off */
     uint8_t  swing_hits, swing_left;          /* a swung step's hits / accents, ticks until they fire */
@@ -27,7 +27,9 @@ void host_gr_note(int m, int note, int vel, int on);
 #define GR_NOTE_ON(m, note, key, vel) ((void)(key), host_gr_note((m), (note), (vel), 1))
 #define GR_NOTE_OFF(m, note)          host_gr_note((m), (note), 0, 0)
 #define GR_CHANGED()                  ((void)0)
-static int gr_oct(int m) { (void)m; return 0; }
+int gr_host_oct;                                             /* host tests: keyboard octave */
+int gr_host_held_n(void);
+static int gr_oct(int m) { (void)m; return gr_host_oct; }
 #else
 int  eu_fw_note_on(int pos, int note, int key, int vel);   /* seq/seq_core.c: VoiceCtl note on / off */
 void eu_fw_note_off(int midi);
@@ -113,6 +115,9 @@ void gr_tick(int m)                                          /* 1/96 beat */
     if (++r->tick >= (uint32_t)TICKS_STEP * GR_STEPS) r->tick = 0;
 }
 
+#ifdef OP1_HOST
+int gr_host_held_n(void) { return run(0)->held_n; }
+#endif
 void gr_restart(int m) { run(m)->restart = 1; }
 
 /* synth mode: keys on the grids page set the notes (consumed); elsewhere and in drum mode keys play as usual */
@@ -129,16 +134,18 @@ int gr_key_down(int m, int key)
     if (!gr_host_on_page) return 0;
 #endif
     int midi = key + 0x35 + gr_oct(0) * 12;
-    if (r->held_n < sizeof r->held) r->held[r->held_n++] = (uint8_t)midi;
+    if (r->held_n < sizeof r->held) { r->held_key[r->held_n] = (uint8_t)key; r->held[r->held_n++] = (uint8_t)midi; }
     return 1;
 }
-void gr_key_up(int m, int key)
+void gr_key_up(int m, int key)                               /* by key, not note: the octave may have changed meanwhile */
 {
     gr_run *r = run(m);
     if (m) return;
-    int midi = key + 0x35 + gr_oct(0) * 12;
     for (int i = 0; i < r->held_n; i++)
-        if (r->held[i] == midi) { for (int j = i; j + 1 < r->held_n; j++) r->held[j] = r->held[j + 1]; r->held_n--; break; }
+        if (r->held_key[i] == key) {
+            for (int j = i; j + 1 < r->held_n; j++) { r->held[j] = r->held[j + 1]; r->held_key[j] = r->held_key[j + 1]; }
+            r->held_n--; break;
+        }
 }
 
 /* ---- persistence: "x,y,chaos,f0,f1,f2,sel,n0,n1,n2,swing,res32,accent" ---- */

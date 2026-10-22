@@ -131,7 +131,8 @@ static void e_play(int t, int dest, int ch, int kind, int d1, int d2, int on)
         return;
     }
     if (dest == MS_DEST_SEQ) {
-        int i = d1 - 53;
+        extern int sc_key_note(int note);                         /* scale mode: the key that plays d1 (docs/55) */
+        int i = sc_key_note(d1) - 53;
         while (i < 0) i += 12;
         while (i > 23) i -= 12;
         if (!on == !kb_down[i]) return;                           /* never a second down of a held key (stock asserts) */

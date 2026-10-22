@@ -43,6 +43,16 @@ int sc_map(int note)                                        /* -1 = silent */
     return note >= 0 ? note : -1;
 }
 
+int sc_unmap(int note)                                      /* a note that sc_map turns into `note` (nearest), else note */
+{
+    if (note < 0 || note > 127 || sc_map(note) == note) return note;
+    for (int d = 1; d < 128; d++) {                             /* white keys: fewer degrees spread wider */
+        if (note - d >= 0 && sc_map(note - d) == note) return note - d;
+        if (note + d <= 127 && sc_map(note + d) == note) return note + d;
+    }
+    return note;
+}
+
 /* per played note: its mapping (-1 silent, -2 not held) and how many downs are open; per mapped note: open downs */
 static int8_t held[128] = { [0 ... 127] = -2 };
 static uint8_t ocnt[128], mcnt[128];
