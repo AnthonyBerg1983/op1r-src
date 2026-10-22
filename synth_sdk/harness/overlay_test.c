@@ -13,6 +13,7 @@ int op1_tool_count;
 static void *table[0x44];
 void **host_screen_table = table;
 int host_cur_screen;
+void sb_service(void) {}                                         /* sample browser (screens/sbrowse.c): not in this test */
 void *host_raster(void) { return table; }
 
 /* instrument fade: the decimator's gain / step words; per block the Core sets step +0x40, then the voices'

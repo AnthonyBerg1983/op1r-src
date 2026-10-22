@@ -17,6 +17,7 @@ void host_node_set_visible(void *n, int on) { (void)n; (void)on; }
 void host_screen_draw(void *s, int dt) { (void)s; (void)dt; }
 void *host_raster(void) { return 0; }
 void host_raster_line(void *r, const void *a, const void *b, int32_t w, const uint8_t *c) { (void)r; (void)a; (void)b; (void)w; (void)c; }
+uint8_t *host_node_style_rgba(void *s, const char *id) { static uint8_t c[4]; (void)s; (void)id; return c; }
 
 #define SR 44100
 static int16_t out[SR * 12];
