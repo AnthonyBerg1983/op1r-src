@@ -6,6 +6,8 @@
  *   red   : hands    random movement; stutter at the top
  * Paraphonic: the lowest sounding voice (the leader) renders the wall, the others silence; every sounding key adds a
  * loop tap (the newest four). A voice counts as sounding while it renders (a finished release is not rendered).
+ * A released key stops leading while another key is held (note_off), so the wall does not follow a fading release
+ * into silence; with no key held the lowest releasing voice leads the tail.
  * Copyright (C) 2026 pcppcp. GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE). */
 #include "op1_plugin.h"
 #include "../../dddd/dd_core.h"
@@ -14,11 +16,14 @@ static dd_t dd;
 static uint32_t calls, last_call[OP1_VOICES], order[OP1_VOICES], order_n;   /* render calls, note order */
 static uint32_t voice_inc[OP1_VOICES], taps_inc[DD_TAPS];
 static int taps_n;
-static uint8_t inited, alive_seen[OP1_VOICES];
+static uint8_t inited, alive_seen[OP1_VOICES], held[OP1_VOICES];   /* held: note on, no note off yet */
 /* the screen's view of the wall (written by the leader's render, read by the GUI) */
 static volatile int32_t level;
 
 static int alive(int v) { return alive_seen[v] && calls - last_call[v] <= OP1_VOICES + 1; }
+static int any_held(void) { for (int u = 0; u < OP1_VOICES; u++) if (held[u] && alive(u)) return 1; return 0; }
+/* leads: the lowest held voice; with nothing held, the lowest sounding one (the release tail) */
+static int leads(int u, int keys) { return alive(u) && (held[u] || !keys); }
 
 static void dd_note_on(void *self, const int16_t *params)
 {
@@ -28,8 +33,10 @@ static void dd_note_on(void *self, const int16_t *params)
     for (int u = 0; u < OP1_VOICES; u++) if (u != v && alive(u)) any = 1;
     if (!any) { dd_reset_loop(&dd); op1_dbg("dddd reset: voice", v, 0); }   /* nothing sounding: no stale howl */
     order[v] = ++order_n;
-    last_call[v] = calls; alive_seen[v] = 1;
+    last_call[v] = calls; alive_seen[v] = 1; held[v] = 1;
 }
+
+static void dd_note_off(void *self) { held[op1_voice_index(self)] = 0; }
 
 static void dd_render_voice(void *self, int16_t *out, const int16_t *params)
 {
@@ -37,8 +44,10 @@ static void dd_render_voice(void *self, int16_t *out, const int16_t *params)
     calls++;
     last_call[v] = calls; alive_seen[v] = 1;
     voice_inc[v] = (uint32_t)OP1_PITCH_INC[0];
+    int keys = any_held();
+    if (!leads(v, keys)) { for (int i = 0; i < OP1_BLOCK; i++) out[i] = 0; return; }   /* a released key while others hold */
     for (int u = 0; u < v; u++)
-        if (alive(u)) { for (int i = 0; i < OP1_BLOCK; i++) out[i] = 0; return; }   /* a lower voice leads */
+        if (leads(u, keys)) { for (int i = 0; i < OP1_BLOCK; i++) out[i] = 0; return; }   /* a lower voice leads */
     if (!inited) { dd_init(&dd, 0x5EEDu); inited = 1; }
     /* the sounding keys, oldest first (the newest four become taps) */
     int idx[OP1_VOICES], n = 0;
@@ -62,7 +71,7 @@ static void dd_render_voice(void *self, int16_t *out, const int16_t *params)
     level = pk;
 }
 
-const op1_engine_t ENGINE_dddd = { dd_note_on, dd_render_voice, 0,
+const op1_engine_t ENGINE_dddd = { dd_note_on, dd_render_voice, dd_note_off,
                                    { OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_PAGE, OP1_PRESS_NONE } };
 
 /* ======================= screen (GUI thread) =======================
