@@ -907,7 +907,9 @@ void key_event_hook(int code, int pressed)
         else if ((mode_keys | bit) == 0x0F && !(mode_keys & bit)) { mode_keys |= bit; return; }
         else mode_keys |= bit;
     }
-    if (code == 0x3F) { extern void mx_apply(void); mx_apply(); return; }   /* midi/mx.c MX_KEY */
+    /* midi/mx.c MX_KEY, marked by its state byte: R246 itself pushes key 0x3F state 1 when the host ejects the USB disk
+     * (0x019EFE6C, word 0x018E62BC) and the COM controller leaves disk mode on it, so that one must reach the stock code */
+    if (code == 0x3F && pressed == 0xA5) { extern void mx_apply(void); mx_apply(); return; }   /* MX_KEY_DOWN */
     if (du_prompt_key(code, pressed)) return;                    /* dev update prompt: T1 restart / T2 cancel */
     extern int ms_key(int code, int pressed, int on_tape);
     if (ms_key(code, pressed, tape_page())) return;              /* MIDI sequencer device: SEQ + TAPE (docs/39) */

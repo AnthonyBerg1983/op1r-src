@@ -44,7 +44,7 @@ int mx_cc(int cc, int v)
     if (push) {                                           /* one pending MX_KEY event at a time (as kb_push in ms_fw.c) */
         volatile uint32_t *rd = (volatile uint32_t *)0x01DD5244, *wr = (volatile uint32_t *)0x01DD5248;
         uint32_t w = *wr, n = (w + 1) & 0xFF;
-        if (n != *rd && !*(volatile uint8_t *)0x01DD524D) { ((volatile uint16_t *)0x01DD5044)[w] = (uint16_t)(MX_KEY | 1 << 8); *wr = n; queued = 1; }
+        if (n != *rd && !*(volatile uint8_t *)0x01DD524D) { ((volatile uint16_t *)0x01DD5044)[w] = (uint16_t)(MX_KEY | MX_KEY_DOWN << 8); *wr = n; queued = 1; }
         else push = 0;
     }
     irq_on(m);
